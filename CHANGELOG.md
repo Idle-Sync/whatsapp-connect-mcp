@@ -10,3 +10,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project scaffold: Go module, lint config, CI workflow, version package, minimal CLI entry point.
+- Config package: data directory resolution and atomic `config.json` load/save with trusted-JID lookup.
