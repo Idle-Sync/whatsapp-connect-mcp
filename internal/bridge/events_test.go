@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -337,8 +338,8 @@ func TestHandleEventMessageUpsertsChatMessageAndContact(t *testing.T) {
 	if len(fake.chats) != 1 || fake.chats[0].name != "Alice" {
 		t.Fatalf("chats = %+v, want one chat named Alice", fake.chats)
 	}
-	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Alice" {
-		t.Fatalf("contacts = %+v, want one contact with pushName Alice", fake.contacts)
+	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Alice" || fake.contacts[0].phone != "111" {
+		t.Fatalf("contacts = %+v, want one contact with pushName Alice and phone 111 (digit-shaped JID local part)", fake.contacts)
 	}
 }
 
@@ -367,8 +368,8 @@ func TestHandleEventGroupMessageUpsertsChatWithEmptyNameWhenUnknown(t *testing.T
 	}
 	// The sender's push name is still worth recording as contact info,
 	// independent of whether the group's own name is known.
-	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Bob" {
-		t.Fatalf("contacts = %+v, want one contact with pushName Bob", fake.contacts)
+	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Bob" || fake.contacts[0].phone != "333" {
+		t.Fatalf("contacts = %+v, want one contact with pushName Bob and phone 333 (sender's JID, not the group's)", fake.contacts)
 	}
 }
 
@@ -561,8 +562,8 @@ func TestHandleEventContactUpsertsFullName(t *testing.T) {
 		Action: &waSyncAction.ContactAction{FullName: proto.String("Alice Smith")},
 	})
 
-	if len(fake.contacts) != 1 || fake.contacts[0].fullName != "Alice Smith" {
-		t.Fatalf("contacts = %+v, want one contact with fullName Alice Smith", fake.contacts)
+	if len(fake.contacts) != 1 || fake.contacts[0].fullName != "Alice Smith" || fake.contacts[0].phone != "111" {
+		t.Fatalf("contacts = %+v, want one contact with fullName Alice Smith and phone 111", fake.contacts)
 	}
 }
 
@@ -571,8 +572,61 @@ func TestHandleEventPushNameUpsertsPushName(t *testing.T) {
 
 	b.handleEvent(&events.PushName{JID: types.NewJID("111", types.DefaultUserServer), NewPushName: "Alice"})
 
-	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Alice" {
-		t.Fatalf("contacts = %+v, want one contact with pushName Alice", fake.contacts)
+	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Alice" || fake.contacts[0].phone != "111" {
+		t.Fatalf("contacts = %+v, want one contact with pushName Alice and phone 111", fake.contacts)
+	}
+}
+
+func TestPhoneFromJID(t *testing.T) {
+	cases := []struct {
+		name string
+		jid  string
+		want string
+	}{
+		{"digit-shaped personal JID", "15551234567@s.whatsapp.net", "15551234567"},
+		{"group JID has no phone", "222@g.us", ""},
+		{"non-digit local part", "abc123@s.whatsapp.net", ""},
+		{"empty jid", "", ""},
+		{"unparseable jid", "not a jid", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := phoneFromJID(c.jid); got != c.want {
+				t.Fatalf("phoneFromJID(%q) = %q, want %q", c.jid, got, c.want)
+			}
+		})
+	}
+}
+
+// TestHandleEventContactIngestMakesItFindableByPhoneSearch is an
+// end-to-end regression test for the advertised phone search: it wires a
+// real store.Store (not fakeIngest) so it proves the whole path a contacts
+// event travels — decode, UpsertContact with the JID-derived phone,
+// persisted row, then found back by SearchContacts on that same number.
+func TestHandleEventContactIngestMakesItFindableByPhoneSearch(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "messages.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	b, err := Open(context.Background(), t.TempDir(), st)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	b.handleEvent(&events.Contact{
+		JID:    types.NewJID("15551234567", types.DefaultUserServer),
+		Action: &waSyncAction.ContactAction{FullName: proto.String("Alice Smith")},
+	})
+
+	rows, err := st.SearchContacts("15551234567", 0)
+	if err != nil {
+		t.Fatalf("SearchContacts: %v", err)
+	}
+	if len(rows) != 1 || rows[0].JID != "15551234567@s.whatsapp.net" {
+		t.Fatalf("SearchContacts(15551234567) = %+v, want a single row for the ingested contact", rows)
 	}
 }
 

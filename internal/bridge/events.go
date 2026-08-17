@@ -60,7 +60,7 @@ func (b *Bridge) ingestMessage(evt *events.Message) {
 	_ = b.store.UpsertMessage(m)
 
 	if !m.FromMe && evt.Info.PushName != "" {
-		_ = b.store.UpsertContact(m.SenderJID, "", evt.Info.PushName, "", "")
+		_ = b.store.UpsertContact(m.SenderJID, phoneFromJID(m.SenderJID), evt.Info.PushName, "", "")
 	}
 }
 
@@ -114,7 +114,7 @@ func (b *Bridge) ingestContact(evt *events.Contact) {
 	if !ok {
 		return
 	}
-	_ = b.store.UpsertContact(jid, "", "", fullName, "")
+	_ = b.store.UpsertContact(jid, phoneFromJID(jid), "", fullName, "")
 }
 
 func (b *Bridge) ingestPushName(evt *events.PushName) {
@@ -122,7 +122,7 @@ func (b *Bridge) ingestPushName(evt *events.PushName) {
 	if pushName == "" {
 		return
 	}
-	_ = b.store.UpsertContact(jid, "", pushName, "", "")
+	_ = b.store.UpsertContact(jid, phoneFromJID(jid), pushName, "", "")
 }
 
 func (b *Bridge) ingestGroupInfoName(evt *events.GroupInfo) {
@@ -300,6 +300,27 @@ func decodeContact(evt *events.Contact) (jid, fullName string, ok bool) {
 // PushName event. Callers should ignore a returned empty pushName.
 func decodePushName(evt *events.PushName) (jid, pushName string) {
 	return evt.JID.String(), evt.NewPushName
+}
+
+// phoneFromJID derives a phone number from jid's local part when it looks
+// like one — e.g. "15551234567@s.whatsapp.net" -> "15551234567". It returns
+// "" for anything else a contact upsert's jid argument can be: a JID that
+// fails to parse, one on a server other than the personal-account server
+// (a group JID's local part is a group id, numeric but not a phone number),
+// or a local part containing anything but digits. UpsertContact's
+// empty-never-overwrites rule means returning "" here only ever leaves
+// whatever phone (if any) is already on file, never blanks a better one.
+func phoneFromJID(jid string) string {
+	parsed, err := types.ParseJID(jid)
+	if err != nil || parsed.User == "" || parsed.Server != types.DefaultUserServer {
+		return ""
+	}
+	for _, r := range parsed.User {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return parsed.User
 }
 
 // decodeGroupInfoName is pure: it extracts a group rename from a GroupInfo
