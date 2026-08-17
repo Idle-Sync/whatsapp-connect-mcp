@@ -244,6 +244,10 @@ func (s *Store) SearchMessages(query, chatJID string, limit int) ([]MessageRow, 
 
 	var b strings.Builder
 	b.WriteString(messageSelect)
+	// sqlite-specific: joins the FTS5 shadow table back to messages via
+	// rowid, the only way a content-linked FTS5 table correlates to its
+	// source row. Postgres equivalent: join on the primary key
+	// (chat_jid, id) against a tsvector column, no rowid involved.
 	b.WriteString(` JOIN messages_fts f ON f.rowid = m.rowid WHERE f.messages_fts MATCH ?`)
 	args := []any{ftsPhrase(query)}
 	if chatJID != "" {

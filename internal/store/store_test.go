@@ -66,12 +66,39 @@ func TestOpenPassesIntegrityCheck(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
+	// sqlite-specific: quick_check is a SQLite file-integrity PRAGMA.
+	// Postgres has no equivalent client-side check; page/checksum
+	// integrity there is the server's job (data checksums, WAL replay).
 	var result string
 	if err := s.db.QueryRow(`PRAGMA quick_check`).Scan(&result); err != nil {
 		t.Fatalf("quick_check: %v", err)
 	}
 	if result != "ok" {
 		t.Fatalf("quick_check = %q, want ok", result)
+	}
+}
+
+func TestStrictTableRejectsWrongTypedValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if _, err := s.db.Exec(`INSERT INTO chats (jid) VALUES ('123@s.whatsapp.net')`); err != nil {
+		t.Fatalf("insert chat: %v", err)
+	}
+
+	// messages.ts is STRICT INTEGER; binding a non-numeric TEXT value must
+	// be rejected by the database rather than silently coerced or stored.
+	_, err = s.db.Exec(
+		`INSERT INTO messages (chat_jid, id, sender_jid, from_me, ts, kind, text)
+		 VALUES ('123@s.whatsapp.net', 'msg1', '123@s.whatsapp.net', 0, 'not-a-timestamp', 'text', 'hi')`,
+	)
+	if err == nil {
+		t.Fatal("insert with TEXT value for INTEGER column ts succeeded, want STRICT type error")
 	}
 }
 

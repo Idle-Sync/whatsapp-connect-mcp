@@ -19,6 +19,10 @@ type Store struct {
 // journaling, a 10s busy timeout, and foreign keys enabled, then applies
 // any pending schema migrations.
 func Open(path string) (*Store, error) {
+	// sqlite-specific: busy_timeout, journal_mode(WAL), and foreign_keys are
+	// SQLite PRAGMAs passed as DSN options. Postgres equivalent: ordinary
+	// connection/session settings (statement_timeout, the WAL-equivalent
+	// durability is a server default, foreign keys are always enforced).
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)",
 		path,
