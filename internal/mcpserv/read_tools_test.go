@@ -240,7 +240,7 @@ func TestListGroupParticipantsIsBannerWrapped(t *testing.T) {
 func TestDownloadMediaWritesUnderDataDirAndPathIsOutsideBanner(t *testing.T) {
 	dataDir := t.TempDir()
 	wantDestDir := filepath.Join(dataDir, "media", "chat123@s.whatsapp.net")
-	wantPath := filepath.Join(wantDestDir, "photo.jpg")
+	wantPath := filepath.Join(wantDestDir, "m1.jpg")
 
 	st := &fakeStore{mediaRef: []byte("ref-bytes"), mediaFilename: "photo.jpg", mediaKind: "image"}
 	live := &fakeLive{downloadPath: wantPath}
@@ -256,8 +256,10 @@ func TestDownloadMediaWritesUnderDataDirAndPathIsOutsideBanner(t *testing.T) {
 	if live.downloadDestDir != wantDestDir {
 		t.Fatalf("DownloadMedia called with destDir = %q, want %q", live.downloadDestDir, wantDestDir)
 	}
-	if live.downloadFilename != "photo.jpg" {
-		t.Fatalf("DownloadMedia called with filename = %q, want %q", live.downloadFilename, "photo.jpg")
+	// The SAVED file is named from the message id, never the sender-declared
+	// "photo.jpg": see savedMediaFilename.
+	if live.downloadFilename != "m1.jpg" {
+		t.Fatalf("DownloadMedia called with filename = %q, want %q (message-id-based, not the sender's name)", live.downloadFilename, "m1.jpg")
 	}
 
 	text := resultText(t, result)
@@ -269,8 +271,113 @@ func TestDownloadMediaWritesUnderDataDirAndPathIsOutsideBanner(t *testing.T) {
 	if pathIdx < closeIdx {
 		t.Fatalf("downloadMedia() saved_path appears before the banner closes, want it outside (after) the banner: %q", text)
 	}
+	// The sender-declared name is still shown as display data, inside the banner.
 	if !strings.Contains(text[:closeIdx], "photo.jpg") {
 		t.Fatalf("downloadMedia() WhatsApp-derived filename is not inside the banner: %q", text)
+	}
+	if strings.Contains(text[closeIdx:], "photo.jpg") {
+		t.Fatalf("downloadMedia() sender-declared filename leaked outside the banner (into saved_path): %q", text)
+	}
+}
+
+// TestDownloadMediaEmptyMediaFilenameStillDownloads proves the fix for
+// image/video/audio/voice/sticker media: the store never carries a
+// sender-declared filename for these kinds (only documents get one from
+// WhatsApp), and download_media must not reject that empty string the way
+// sanitizeMediaFilename alone would — the saved name comes from the message
+// id and kind instead, regardless of whether a display filename exists.
+func TestDownloadMediaEmptyMediaFilenameStillDownloads(t *testing.T) {
+	dataDir := t.TempDir()
+	wantDestDir := filepath.Join(dataDir, "media", "chat123@s.whatsapp.net")
+	wantPath := filepath.Join(wantDestDir, "m1.jpg")
+
+	st := &fakeStore{mediaRef: []byte("ref-bytes"), mediaFilename: "", mediaKind: "image"}
+	live := &fakeLive{downloadPath: wantPath}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat123@s.whatsapp.net", MessageID: "m1",
+	})
+	if err != nil {
+		t.Fatalf("downloadMedia() error = %v, want nil (empty media_filename must not block a download)", err)
+	}
+	if live.downloadFilename != "m1.jpg" {
+		t.Fatalf("DownloadMedia called with filename = %q, want %q", live.downloadFilename, "m1.jpg")
+	}
+	if !strings.Contains(resultText(t, result), "saved_path: "+wantPath) {
+		t.Fatalf("downloadMedia() text missing saved_path %q", wantPath)
+	}
+}
+
+// TestDownloadMediaTwoMessagesInSameChatDoNotCollide proves two media
+// messages in one chat — each with the same (or no) sender-declared
+// filename, as two photos named "IMG_0001.jpg" by different phones would
+// be — write to distinct saved files because the name is derived from each
+// message's own id.
+func TestDownloadMediaTwoMessagesInSameChatDoNotCollide(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "IMG_0001.jpg", mediaKind: "image"}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+
+	if _, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", MessageID: "m1",
+	}); err != nil {
+		t.Fatalf("downloadMedia() m1 error = %v", err)
+	}
+	firstName := live.downloadFilename
+
+	if _, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", MessageID: "m2",
+	}); err != nil {
+		t.Fatalf("downloadMedia() m2 error = %v", err)
+	}
+	secondName := live.downloadFilename
+
+	if firstName == secondName {
+		t.Fatalf("both messages saved as %q, want distinct filenames despite the identical sender-declared name", firstName)
+	}
+	if firstName != "m1.jpg" || secondName != "m2.jpg" {
+		t.Fatalf("saved filenames = (%q, %q), want (m1.jpg, m2.jpg)", firstName, secondName)
+	}
+}
+
+func TestSavedMediaFilename(t *testing.T) {
+	cases := []struct {
+		name           string
+		messageID      string
+		kind           string
+		senderFilename string
+		want           string
+		wantErr        bool
+	}{
+		{"image ignores sender name", "m1", "image", "photo.png", "m1.jpg", false},
+		{"video", "m1", "video", "", "m1.mp4", false},
+		{"audio", "m1", "audio", "", "m1.ogg", false},
+		{"voice", "m1", "voice", "", "m1.ogg", false},
+		{"sticker", "m1", "sticker", "", "m1.webp", false},
+		{"unknown kind falls back to bin", "m1", "other", "", "m1.bin", false},
+		{"document keeps its own extension", "m1", "document", "report.pdf", "m1.pdf", false},
+		{"document with no extension falls back to bin", "m1", "document", "README", "m1.bin", false},
+		{"document traversal name only contributes its extension", "m1", "document", "../../../../evil.sh", "m1.sh", false},
+		{"traversal message id is rejected", "../../etc/passwd", "image", "", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := savedMediaFilename(c.messageID, c.kind, c.senderFilename)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("savedMediaFilename(%q, %q, %q) error = nil, want error", c.messageID, c.kind, c.senderFilename)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("savedMediaFilename(%q, %q, %q) error = %v, want nil", c.messageID, c.kind, c.senderFilename, err)
+			}
+			if got != c.want {
+				t.Fatalf("savedMediaFilename(%q, %q, %q) = %q, want %q", c.messageID, c.kind, c.senderFilename, got, c.want)
+			}
+		})
 	}
 }
 
@@ -307,21 +414,41 @@ func TestDownloadMediaRejectsPathTraversalInChatJID(t *testing.T) {
 	}
 }
 
-func TestDownloadMediaRejectsTraversalFilename(t *testing.T) {
+// TestDownloadMediaNeutralizesTraversalFilename proves saved_path never
+// contains a sender-controlled component: a document's sender-declared
+// filename is remote-supplied data, so even a traversal payload like
+// "../../../../evil.sh" must not reach the saved file's path — only its
+// extension (".sh") is ever borrowed from it, appended to the message id.
+func TestDownloadMediaNeutralizesTraversalFilename(t *testing.T) {
 	dataDir := t.TempDir()
-	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "../../../../evil.txt", mediaKind: "document"}
-	live := &fakeLive{downloadPath: filepath.Join(dataDir, "media", "chat@s.whatsapp.net", "evil.txt")}
+	wantDestDir := filepath.Join(dataDir, "media", "chat@s.whatsapp.net")
+	wantPath := filepath.Join(wantDestDir, "m1.sh")
+
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "../../../../evil.sh", mediaKind: "document"}
+	live := &fakeLive{downloadPath: wantPath}
 	d := &toolDeps{st: st, live: live, dataDir: dataDir}
 
-	_, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", MessageID: "m1",
 	})
-
-	if err == nil {
-		t.Fatal("downloadMedia() error = nil, want an error for a traversal filename")
+	if err != nil {
+		t.Fatalf("downloadMedia() error = %v, want nil (the traversal name must be neutralized, not rejected)", err)
 	}
-	if live.downloadFilename != "" || live.downloadDestDir != "" {
-		t.Fatalf("downloadMedia() called Live.DownloadMedia (destDir=%q, filename=%q) despite a traversal filename — it must be rejected before reaching Live", live.downloadDestDir, live.downloadFilename)
+	if live.downloadFilename != "m1.sh" {
+		t.Fatalf("DownloadMedia called with filename = %q, want %q", live.downloadFilename, "m1.sh")
+	}
+	if live.downloadDestDir != wantDestDir {
+		t.Fatalf("DownloadMedia called with destDir = %q, want %q", live.downloadDestDir, wantDestDir)
+	}
+
+	text := resultText(t, result)
+	pathIdx := strings.Index(text, "saved_path: ")
+	if pathIdx == -1 {
+		t.Fatalf("downloadMedia() text missing saved_path: %q", text)
+	}
+	savedPath := text[pathIdx+len("saved_path: "):]
+	if strings.Contains(savedPath, "..") || strings.Contains(savedPath, "evil") {
+		t.Fatalf("saved_path = %q, contains a sender-controlled component", savedPath)
 	}
 }
 

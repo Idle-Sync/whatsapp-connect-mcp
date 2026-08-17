@@ -370,13 +370,55 @@ func sanitizeMediaFilename(filename string) (string, error) {
 	return base, nil
 }
 
+// savedMediaFilename derives the filename download_media writes the media
+// under: always <message_id><ext>, never the sender-declared filename.
+// Using the message id — an operator-supplied MCP argument that must
+// already match a row this server stored, not free text from the remote
+// sender — means the sender can never choose any part of saved_path, and
+// two media messages in the same chat can never collide on the file they
+// write to, the way two sender-chosen "IMG_0001.jpg" names could. The
+// extension is fixed per kind, except for documents, whose type is
+// meaningful (.pdf vs .docx): those keep the extension off the
+// sender-declared name (safe to read even from an untrusted string —
+// filepath.Ext only looks at the suffix after the final dot in the final
+// path element) and fall back to ".bin" when it has none. messageID is
+// still run through sanitizeMediaFilename before use: WhatsApp message ids
+// originate with the sending client too, so the same path-component check
+// that guards a filename guards this.
+func savedMediaFilename(messageID, kind, senderFilename string) (string, error) {
+	var ext string
+	switch kind {
+	case "image":
+		ext = ".jpg"
+	case "video":
+		ext = ".mp4"
+	case "audio", "voice":
+		ext = ".ogg"
+	case "sticker":
+		ext = ".webp"
+	case "document":
+		ext = filepath.Ext(senderFilename)
+		if ext == "" {
+			ext = ".bin"
+		}
+	default:
+		ext = ".bin"
+	}
+
+	name, err := sanitizeMediaFilename(messageID + ext)
+	if err != nil {
+		return "", fmt.Errorf("derive saved media filename: %w", err)
+	}
+	return name, nil
+}
+
 func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in downloadMediaInput) (*mcp.CallToolResult, any, error) {
 	ref, filename, kind, err := d.st.MessageMediaRef(in.ChatJID, in.MessageID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	safeName, err := sanitizeMediaFilename(filename)
+	savedName, err := savedMediaFilename(in.MessageID, kind, filename)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -386,12 +428,15 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, nil, err
 	}
 
-	path, err := d.live.DownloadMedia(ctx, ref, destDir, safeName)
+	path, err := d.live.DownloadMedia(ctx, ref, destDir, savedName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	banner := Banner(fmt.Sprintf("%s\t%s", safeName, kind))
+	// filename is the sender-declared name (possibly empty — WhatsApp only
+	// carries one for document messages) shown for the user's benefit; it
+	// plays no part in savedName or path above.
+	banner := Banner(fmt.Sprintf("%s\t%s", filename, kind))
 	return textResult(banner + "\nsaved_path: " + path), nil, nil
 }
 
