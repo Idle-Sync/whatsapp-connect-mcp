@@ -1,4 +1,4 @@
-// Command whatsapp-conn-mcp is a WhatsApp MCP server shipped as a single
+// Command whatsapp-connect-mcp is a WhatsApp MCP server shipped as a single
 // static binary.
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/idle-sync/whatsapp-conn-mcp/internal/version"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 )
 
 func main() {
@@ -19,6 +19,6 @@ func run(args []string) int {
 		return 0
 	}
 
-	fmt.Fprintln(os.Stderr, "usage: whatsapp-conn-mcp [-v|--version]")
+	fmt.Fprintln(os.Stderr, "usage: whatsapp-connect-mcp [-v|--version]")
 	return 2
 }

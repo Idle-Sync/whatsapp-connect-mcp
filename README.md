@@ -1,4 +1,4 @@
-# whatsapp-conn-mcp
+# whatsapp-connect-mcp
 
 A WhatsApp MCP server shipped as a single static Go binary.
 
