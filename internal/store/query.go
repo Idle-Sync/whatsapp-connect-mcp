@@ -212,16 +212,26 @@ func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]
 }
 
 // ftsPhrase turns arbitrary user search text into a syntactically valid
-// FTS5 MATCH argument. The whole string is wrapped as one quoted phrase,
-// with embedded double quotes doubled to escape them. This is a deliberate
-// choice over passing query through as raw FTS5 syntax: a bare word still
-// matches exactly as expected, and text containing FTS5 operator
-// characters (AND, OR, NOT, -, :, *, parentheses, an unterminated quote)
-// is matched as literal text instead of being parsed as query syntax — so
-// malformed operator input can never reach the FTS5 parser as a syntax
-// error, only ever as an (possibly empty) ordinary phrase match.
+// FTS5 MATCH argument. Each whitespace-separated token is individually
+// escaped (embedded double quotes doubled) and wrapped in its own quoted
+// phrase; the per-token phrases are then joined with spaces. Space-
+// separated phrases are an implicit AND in FTS5 query syntax, so a
+// multi-word query matches messages containing every token anywhere in
+// the text — e.g. "project deadline" matches "the deadline for the
+// project", not just a consecutive "project deadline" run. The safety
+// property is unaffected by quoting per token instead of the whole
+// string: every token becomes its own quoted-and-escaped phrase, so none
+// of FTS5's operator syntax (AND, OR, NOT, -, :, *, parentheses, an
+// unterminated quote) is ever parsed as an operator — each token can only
+// ever match as literal text, so malformed operator input can never reach
+// the FTS5 parser as a syntax error.
 func ftsPhrase(query string) string {
-	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+	tokens := strings.Fields(query)
+	phrases := make([]string, len(tokens))
+	for i, t := range tokens {
+		phrases[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
+	}
+	return strings.Join(phrases, " ")
 }
 
 // SearchMessages full-text searches message bodies via FTS5, optionally

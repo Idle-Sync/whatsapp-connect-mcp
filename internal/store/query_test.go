@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestClampLimit(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{0, 20},
+		{-5, 20},
+		{500, 100},
+		{50, 50},
+	}
+	for _, c := range cases {
+		if got := clampLimit(c.in); got != c.want {
+			t.Fatalf("clampLimit(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 // fixture is the seeded data shared by the query tests: 3 chats, 10
 // messages, 2 contacts, 2 calls.
 type fixture struct {
@@ -354,6 +370,28 @@ func TestSearchMessagesMalformedOperatorInputDoesNotError(t *testing.T) {
 		if _, err := s.SearchMessages(in, "", 0); err != nil {
 			t.Fatalf("SearchMessages(%q) error = %v, want nil (must not surface FTS5 syntax errors)", in, err)
 		}
+	}
+}
+
+func TestSearchMessagesMultiWordQueryMatchesNonConsecutiveWords(t *testing.T) {
+	s := newTestStore(t)
+	chatJID := "999@s.whatsapp.net"
+	if err := s.UpsertChat(chatJID, "Planning", false, 1000); err != nil {
+		t.Fatalf("seed chat: %v", err)
+	}
+	if err := s.UpsertMessage(Message{
+		ChatJID: chatJID, ID: "p1", SenderJID: chatJID, TS: 100, Kind: "text",
+		Text: "the deadline for the project is tomorrow",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+
+	rows, err := s.SearchMessages("project deadline", "", 0)
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "p1" {
+		t.Fatalf("SearchMessages(\"project deadline\") = %+v, want single row p1 (words present but not consecutive)", rows)
 	}
 }
 
