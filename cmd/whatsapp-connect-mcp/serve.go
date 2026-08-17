@@ -31,7 +31,8 @@ const httpShutdownTimeout = 5 * time.Second
 // SIGINT/SIGTERM arrives or an unrecoverable error occurs.
 func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	httpAddr := fs.String("http", "", "serve streamable HTTP on this address instead of stdio")
+	httpAddr := fs.String("http", "", "serve streamable HTTP on this address instead of stdio "+
+		"(no authentication — bind 127.0.0.1 unless you know what you're doing)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

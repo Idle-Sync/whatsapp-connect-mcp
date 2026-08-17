@@ -37,6 +37,12 @@ irm https://raw.githubusercontent.com/idle-sync/whatsapp-connect-mcp/main/script
 npx whatsapp-connect-mcp setup
 ```
 
+> `npx whatsapp-connect-mcp serve` works fine on its own, but for `setup`
+> prefer one of the install scripts above. `setup` injects an absolute path
+> to the running binary into each MCP client's config, and under `npx` that
+> path is inside npm's package cache — clear that cache and every client
+> config `setup` wrote now points at a binary that's gone.
+
 Each of these downloads the release binary for your OS/architecture and runs
 `setup`: it shows a QR code to scan from WhatsApp (Linked Devices → Link a
 Device), then detects installed MCP clients and offers to inject a
@@ -97,7 +103,9 @@ through one path, enforced by the server, not by prompting the model to
 3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <jid>` marks a
    contact or group as trusted, so sends to it commit on the first call
    instead of drafting. This is a CLI-only switch — no MCP tool can grant
-   trust, so a model can't trust its way around the draft step.
+   trust, so a model can't trust its way around the draft step. A running
+   `serve` process reads the trust list once at startup, so a change takes
+   effect the next time `serve` starts, not immediately.
 4. **Rate limit, always.** Every send — drafted, trusted, whatever —
    consumes a token from one rate limiter shared across all five send
    tools. The interval has a hard 5-second floor that no configuration can
@@ -181,11 +189,19 @@ whatsapp-connect-mcp trust [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 ```
 
+> **`--http` has no authentication.** Anything that can reach the address
+> you bind can read your messages and drive the send tools. Bind
+> `127.0.0.1` unless you know what you're doing and have your own access
+> control (a reverse proxy, a VPN, a firewall rule) in front of it.
+
 ## Uninstall / reset
 
 - **`whatsapp-connect-mcp remove`** deletes the local WhatsApp session
-  (unpairs). Your paired phone will show the device as removed. Prompts for
-  a typed `yes` before doing anything.
+  (unpairs this server from it locally — the next `setup` requires pairing
+  again). This is local-only: it does not notify WhatsApp's servers, so
+  your phone keeps showing this device as linked under Linked Devices until
+  you unlink it there yourself. Prompts for a typed `yes` before doing
+  anything.
 - **`whatsapp-connect-mcp reset`** does everything `remove` does, plus
   deletes stored messages, media, and settings — a full wipe back to a
   fresh install. Also prompts for a typed `yes`.
