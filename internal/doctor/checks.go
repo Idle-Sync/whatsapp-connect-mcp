@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -34,10 +33,14 @@ func registry() []Check {
 }
 
 // checkSession reports whether a WhatsApp session has been paired
-// (session.db exists under env.DataDir) and, if so, whether it is
-// currently connected (env.LoggedIn).
+// (env.NeedsPairing) and, if so, whether it is currently connected
+// (env.LoggedIn). NeedsPairing is the authoritative pairing signal, not a
+// session.db existence check: bridge.Open creates session.db on disk as
+// soon as it runs, regardless of whether pairing ever completed, so a
+// file-existence check would report "paired" for every never-paired user
+// too.
 func checkSession(_ context.Context, env Env) Finding {
-	if _, err := os.Stat(filepath.Join(env.DataDir, "session.db")); err != nil {
+	if env.NeedsPairing == nil || env.NeedsPairing() {
 		return Finding{
 			Check:  "session",
 			Status: StatusFail,

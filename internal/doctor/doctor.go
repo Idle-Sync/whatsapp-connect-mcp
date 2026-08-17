@@ -49,13 +49,18 @@ type DBChecker interface {
 // Env holds every dependency a check may need. Home is the user's home
 // directory, distinct from DataDir (this program's own data directory):
 // checkClients needs it to locate MCP client config files the same way
-// clients.Detect does everywhere else in this program.
+// clients.Detect does everywhere else in this program. NeedsPairing and
+// LoggedIn are *bridge.Bridge's own methods of those names — NeedsPairing
+// is the authoritative "has this device ever been paired" signal
+// checkSession uses; a nil NeedsPairing is treated the same as true (not
+// paired), the more cautious of the two findings.
 type Env struct {
-	DataDir    string
-	BinaryPath string
-	Home       string
-	Store      DBChecker
-	LoggedIn   func() bool
+	DataDir      string
+	BinaryPath   string
+	Home         string
+	Store        DBChecker
+	NeedsPairing func() bool
+	LoggedIn     func() bool
 }
 
 // Check is one named diagnostic.

@@ -100,25 +100,29 @@ func TestRunReturnsOneFindingPerRegisteredCheck(t *testing.T) {
 // --- session check ---
 
 func TestCheckSession(t *testing.T) {
+	trueFn := func() bool { return true }
+	falseFn := func() bool { return false }
+
 	tests := []struct {
-		name       string
-		seedFile   bool
-		loggedIn   func() bool
-		wantStatus string
+		name         string
+		needsPairing func() bool
+		loggedIn     func() bool
+		wantStatus   string
 	}{
-		{name: "no session file", seedFile: false, loggedIn: nil, wantStatus: StatusFail},
-		{name: "session file but not logged in", seedFile: true, loggedIn: func() bool { return false }, wantStatus: StatusWarn},
-		{name: "session file and logged in", seedFile: true, loggedIn: func() bool { return true }, wantStatus: StatusOK},
+		// bridge.Open creates session.db on disk unconditionally (its
+		// Upgrade path runs a PRAGMA immediately), whether or not pairing
+		// ever completed, so NeedsPairing — not file presence — is the
+		// signal that must drive this: a never-paired user still has a
+		// session.db on disk.
+		{name: "never paired", needsPairing: trueFn, loggedIn: falseFn, wantStatus: StatusFail},
+		{name: "never paired, NeedsPairing nil defaults to unpaired", needsPairing: nil, loggedIn: trueFn, wantStatus: StatusFail},
+		{name: "paired but not logged in", needsPairing: falseFn, loggedIn: falseFn, wantStatus: StatusWarn},
+		{name: "paired but LoggedIn nil defaults to not connected", needsPairing: falseFn, loggedIn: nil, wantStatus: StatusWarn},
+		{name: "paired and logged in", needsPairing: falseFn, loggedIn: trueFn, wantStatus: StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tt.seedFile {
-				if err := os.WriteFile(filepath.Join(dir, "session.db"), []byte("x"), 0o600); err != nil {
-					t.Fatalf("seed session.db: %v", err)
-				}
-			}
-			got := checkSession(context.Background(), Env{DataDir: dir, LoggedIn: tt.loggedIn})
+			got := checkSession(context.Background(), Env{NeedsPairing: tt.needsPairing, LoggedIn: tt.loggedIn})
 			if got.Status != tt.wantStatus {
 				t.Fatalf("Status = %q, want %q (finding: %+v)", got.Status, tt.wantStatus, got)
 			}
@@ -308,11 +312,12 @@ func TestFindingsAreSanitized(t *testing.T) {
 
 	binPath := filepath.Join(home, "whatsapp-connect-mcp")
 	env := Env{
-		DataDir:    dataDir,
-		BinaryPath: binPath,
-		Home:       home,
-		Store:      st,
-		LoggedIn:   func() bool { return false },
+		DataDir:      dataDir,
+		BinaryPath:   binPath,
+		Home:         home,
+		Store:        st,
+		NeedsPairing: func() bool { return false },
+		LoggedIn:     func() bool { return false },
 	}
 
 	for _, f := range runWith(context.Background(), offlineRegistry(t), env) {

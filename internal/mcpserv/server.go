@@ -14,9 +14,10 @@ import (
 // read tools already share (the store and the data directory): the local
 // values only a diagnostic check has any use for.
 type DoctorEnv struct {
-	Home       string
-	BinaryPath string
-	LoggedIn   func() bool
+	Home         string
+	BinaryPath   string
+	NeedsPairing func() bool
+	LoggedIn     func() bool
 }
 
 // Store is the read query API this package needs. It mirrors *store.Store's

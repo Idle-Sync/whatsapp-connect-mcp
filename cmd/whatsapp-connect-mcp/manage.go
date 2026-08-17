@@ -65,11 +65,12 @@ func runCheck(args []string) int {
 	}
 
 	env := doctor.Env{
-		DataDir:    dataDir,
-		BinaryPath: binaryPath,
-		Home:       home,
-		Store:      st,
-		LoggedIn:   br.LoggedIn,
+		DataDir:      dataDir,
+		BinaryPath:   binaryPath,
+		Home:         home,
+		Store:        st,
+		NeedsPairing: br.NeedsPairing,
+		LoggedIn:     br.LoggedIn,
 	}
 	findings := doctor.Run(context.Background(), env)
 

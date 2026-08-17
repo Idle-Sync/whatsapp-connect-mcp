@@ -90,7 +90,7 @@ func runServe(args []string) int {
 	}
 
 	g := gate.New(br, cfg.IsTrusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
-	doc := mcpserv.DoctorEnv{Home: home, BinaryPath: binaryPath, LoggedIn: br.LoggedIn}
+	doc := mcpserv.DoctorEnv{Home: home, BinaryPath: binaryPath, NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn}
 	server := mcpserv.New(st, br, g, dataDir, doc)
 
 	if *httpAddr != "" {
