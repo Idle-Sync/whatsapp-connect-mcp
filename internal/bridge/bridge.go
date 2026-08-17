@@ -99,11 +99,6 @@ func (b *Bridge) ensureHandlerRegistered() {
 	})
 }
 
-// DataDir returns the directory Open was called with.
-func (b *Bridge) DataDir() string {
-	return b.dataDir
-}
-
 // Close disconnects the client, if connected, and closes the underlying
 // session database.
 func (b *Bridge) Close() error {
