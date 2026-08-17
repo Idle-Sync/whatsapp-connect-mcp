@@ -1,0 +1,16 @@
+# Build artifacts
+/dist/
+/bin/
+*.exe
+
+# Local state (session keys, message store) — never commit
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
