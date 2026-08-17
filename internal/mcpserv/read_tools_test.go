@@ -300,6 +300,60 @@ func TestDownloadMediaRejectsPathTraversalInChatJID(t *testing.T) {
 	}
 }
 
+func TestDownloadMediaRejectsTraversalFilename(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "../../../../evil.txt", mediaKind: "document"}
+	live := &fakeLive{downloadPath: filepath.Join(dataDir, "media", "chat@s.whatsapp.net", "evil.txt")}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+
+	_, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", MessageID: "m1",
+	})
+
+	if err == nil {
+		t.Fatal("downloadMedia() error = nil, want an error for a traversal filename")
+	}
+	if live.downloadFilename != "" || live.downloadDestDir != "" {
+		t.Fatalf("downloadMedia() called Live.DownloadMedia (destDir=%q, filename=%q) despite a traversal filename — it must be rejected before reaching Live", live.downloadDestDir, live.downloadFilename)
+	}
+}
+
+func TestSanitizeMediaFilenameRejectsTraversalAndAcceptsPlainNames(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr bool
+		want    string
+	}{
+		{"plain", "photo.jpg", false, "photo.jpg"},
+		{"traversal", "../../../../evil.txt", true, ""},
+		{"bare dotdot", "..", true, ""},
+		{"bare dot", ".", true, ""},
+		{"empty", "", true, ""},
+		{"embedded slash", "sub/dir/evil.txt", true, ""},
+		{"embedded backslash", `sub\dir\evil.txt`, true, ""},
+		{"leading slash", "/etc/passwd", true, ""},
+		{"dots but no separator", "file..txt", false, "file..txt"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := sanitizeMediaFilename(c.in)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("sanitizeMediaFilename(%q) error = nil, want an error", c.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("sanitizeMediaFilename(%q) error = %v, want nil", c.in, err)
+			}
+			if got != c.want {
+				t.Fatalf("sanitizeMediaFilename(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRegisterReadToolsBuildsAllTenSchemasWithoutPanicking(t *testing.T) {
 	// mcp.AddTool panics if a tool's input type cannot produce a valid JSON
 	// schema. Exercising the full registration path (rather than only the

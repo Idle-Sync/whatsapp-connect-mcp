@@ -15,8 +15,8 @@ func TestClampLimit(t *testing.T) {
 		{50, 50},
 	}
 	for _, c := range cases {
-		if got := clampLimit(c.in); got != c.want {
-			t.Fatalf("clampLimit(%d) = %d, want %d", c.in, got, c.want)
+		if got := ClampLimit(c.in); got != c.want {
+			t.Fatalf("ClampLimit(%d) = %d, want %d", c.in, got, c.want)
 		}
 	}
 }

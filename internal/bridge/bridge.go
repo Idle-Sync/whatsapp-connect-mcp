@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"go.mau.fi/whatsmeow"
@@ -187,11 +188,22 @@ func (b *Bridge) GroupParticipants(ctx context.Context, groupJID string) ([]stri
 
 // DownloadMedia fetches the media referenced by ref (as produced by
 // decodeMessage's MediaRef, a marshaled waE2E.Message) and writes it to
-// destDir/filename, returning the written path.
+// destDir/filename, returning the written path. filename is untrusted: it
+// originates from the remote sender (the WhatsApp message's own file name
+// field), not this program, so it is validated to a single safe path
+// component — see sanitizeMediaFilename — before any network call and
+// before it is ever joined onto destDir. A caller that has already
+// sanitized filename (e.g. mcpserv's tool boundary) still passes through
+// this same check: DownloadMedia must never trust that a caller did.
 func (b *Bridge) DownloadMedia(ctx context.Context, ref []byte, destDir, filename string) (string, error) {
 	var msg waE2E.Message
 	if err := proto.Unmarshal(ref, &msg); err != nil {
 		return "", errors.New("invalid media reference")
+	}
+
+	safeName, err := sanitizeMediaFilename(filename)
+	if err != nil {
+		return "", err
 	}
 
 	data, err := b.downloadMessage(ctx, &msg)
@@ -203,11 +215,28 @@ func (b *Bridge) DownloadMedia(ctx context.Context, ref []byte, destDir, filenam
 		return "", fileErr("create media directory", err)
 	}
 
-	path := filepath.Join(destDir, filename)
-	if err := os.WriteFile(path, data, 0o600); err != nil { // #nosec G304 -- destDir/filename are caller-controlled within the app data dir, not network input
+	path := filepath.Join(destDir, safeName)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", fileErr("write media file", err)
 	}
 	return path, nil
+}
+
+// sanitizeMediaFilename validates filename before it becomes a path
+// component. filename must already be a single path component: if
+// filepath.Base(filename) differs from filename at all (any directory
+// prefix, "..", a trailing separator) or reduces to empty, ".", or "..",
+// it is rejected outright rather than silently normalized to its base
+// name — a crafted filename (e.g. "../../../../evil.txt") is a category
+// error here, not a filename quietly rewritten to "evil.txt". Only a bare
+// filename passes; nothing about it lets the caller address any path
+// outside the directory it is joined onto.
+func sanitizeMediaFilename(filename string) (string, error) {
+	base := filepath.Base(filename)
+	if base != filename || base == "" || base == "." || base == ".." || strings.ContainsAny(base, `/\`) {
+		return "", errors.New("invalid media filename")
+	}
+	return base, nil
 }
 
 // downloadMessage fetches the media attachment carried by msg. Client.Download

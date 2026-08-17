@@ -7,35 +7,41 @@ import (
 	"strings"
 )
 
+// DefaultLimit and MaxLimit are the documented bounds every list query
+// enforces on its limit parameter (ARCHITECTURE.md §6). They are exported
+// so other packages that need to pre-clamp a limit before it reaches Store
+// (mcpserv's tool boundary, so the default/max is verifiable against a
+// fake Store) use this single source of truth instead of a second copy of
+// the numbers.
 const (
-	defaultLimit = 20
-	maxLimit     = 100
+	DefaultLimit = 20
+	MaxLimit     = 100
 )
 
-// clampLimit is the one place every list query normalizes its caller-
-// supplied limit: 0 (or negative) becomes the default of 20, anything
-// above 100 is capped at 100.
-func clampLimit(limit int) int {
+// ClampLimit is the one place every list query normalizes its caller-
+// supplied limit: 0 (or negative) becomes DefaultLimit, anything above
+// MaxLimit is capped at MaxLimit.
+func ClampLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return defaultLimit
-	case limit > maxLimit:
-		return maxLimit
+		return DefaultLimit
+	case limit > MaxLimit:
+		return MaxLimit
 	default:
 		return limit
 	}
 }
 
-// clampContext bounds a MessageContext before/after count to [0, maxLimit].
-// Unlike clampLimit, 0 is a meaningful request (e.g. after=0 means "nothing
+// ClampContext bounds a MessageContext before/after count to [0, MaxLimit].
+// Unlike ClampLimit, 0 is a meaningful request (e.g. after=0 means "nothing
 // following the target"), so it is left alone rather than promoted to a
 // default.
-func clampContext(n int) int {
+func ClampContext(n int) int {
 	switch {
 	case n < 0:
 		return 0
-	case n > maxLimit:
-		return maxLimit
+	case n > MaxLimit:
+		return MaxLimit
 	default:
 		return n
 	}
@@ -135,7 +141,7 @@ func queryMessages(q querier, query string, args ...any) ([]MessageRow, error) {
 // Chats lists chats newest-first (by last_message_at), optionally filtered
 // by a case-insensitive substring match on name and by archived state.
 func (s *Store) Chats(query string, includeArchived bool, limit int) ([]ChatRow, error) {
-	limit = clampLimit(limit)
+	limit = ClampLimit(limit)
 
 	var b strings.Builder
 	b.WriteString(`SELECT jid, name, is_group, archived, last_message_at FROM chats WHERE 1 = 1`)
@@ -187,7 +193,7 @@ func (s *Store) Chat(jid string) (ChatRow, bool, error) {
 // when positive, bound the window to ts < beforeTS and ts > afterTS
 // respectively; either left at 0 leaves that side unbounded.
 func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]MessageRow, error) {
-	limit = clampLimit(limit)
+	limit = ClampLimit(limit)
 
 	var b strings.Builder
 	b.WriteString(messageSelect)
@@ -240,7 +246,7 @@ func (s *Store) SearchMessages(query, chatJID string, limit int) ([]MessageRow, 
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("search messages: query required")
 	}
-	limit = clampLimit(limit)
+	limit = ClampLimit(limit)
 
 	var b strings.Builder
 	b.WriteString(messageSelect)
@@ -280,10 +286,10 @@ func (s *Store) messageByID(chatJID, id string) (MessageRow, bool, error) {
 // MessageContext returns up to `before` messages preceding id, id's own
 // message, and up to `after` messages following it, all within chatJID,
 // ordered oldest to newest. before and after are clamped to [0, 100]; see
-// clampContext for why 0 is not promoted to a default here.
+// ClampContext for why 0 is not promoted to a default here.
 func (s *Store) MessageContext(chatJID, id string, before, after int) ([]MessageRow, error) {
-	before = clampContext(before)
-	after = clampContext(after)
+	before = ClampContext(before)
+	after = ClampContext(after)
 
 	target, ok, err := s.messageByID(chatJID, id)
 	if err != nil {
@@ -328,7 +334,7 @@ func reverseMessages(rows []MessageRow) {
 // Results are ordered by resolved display name — contacts carry no
 // timestamp to order newest-first by.
 func (s *Store) SearchContacts(query string, limit int) ([]ContactRow, error) {
-	limit = clampLimit(limit)
+	limit = ClampLimit(limit)
 
 	var b strings.Builder
 	b.WriteString(`
@@ -389,7 +395,7 @@ func (s *Store) LastInteraction(jid string) (MessageRow, bool, error) {
 
 // Calls lists calls newest-first, optionally filtered to one peer JID.
 func (s *Store) Calls(peerJID string, limit int) ([]CallRow, error) {
-	limit = clampLimit(limit)
+	limit = ClampLimit(limit)
 
 	var b strings.Builder
 	b.WriteString(`

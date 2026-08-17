@@ -14,43 +14,6 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
-// defaultLimit and maxLimit are the documented bounds every list tool
-// enforces on its limit parameter (ARCHITECTURE.md §6). Clamping happens
-// here, at the tool boundary, rather than relying solely on the store's own
-// clamp: it is what makes the documented default/max a contract of the
-// tool surface itself, independently testable against a fake Store.
-const (
-	defaultLimit = 20
-	maxLimit     = 100
-)
-
-// clampLimit normalizes a caller-supplied limit: non-positive becomes the
-// default of 20, anything above 100 is capped at 100.
-func clampLimit(limit int) int {
-	switch {
-	case limit <= 0:
-		return defaultLimit
-	case limit > maxLimit:
-		return maxLimit
-	default:
-		return limit
-	}
-}
-
-// clampContext bounds a message-context before/after count to [0, 100]. 0
-// is a meaningful request (no messages on that side), so unlike clampLimit
-// it is left alone rather than promoted to a default.
-func clampContext(n int) int {
-	switch {
-	case n < 0:
-		return 0
-	case n > maxLimit:
-		return maxLimit
-	default:
-		return n
-	}
-}
-
 // formatTS renders a Unix-seconds timestamp as RFC 3339 in UTC, the fixed
 // timestamp format for every rendered row.
 func formatTS(ts int64) string {
@@ -206,7 +169,7 @@ type listChatsInput struct {
 }
 
 func (d *toolDeps) listChats(_ context.Context, _ *mcp.CallToolRequest, in listChatsInput) (*mcp.CallToolResult, any, error) {
-	chats, err := d.st.Chats(in.Query, in.IncludeArchived, clampLimit(in.Limit))
+	chats, err := d.st.Chats(in.Query, in.IncludeArchived, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -240,7 +203,7 @@ type listMessagesInput struct {
 }
 
 func (d *toolDeps) listMessages(_ context.Context, _ *mcp.CallToolRequest, in listMessagesInput) (*mcp.CallToolResult, any, error) {
-	msgs, err := d.st.Messages(in.ChatJID, in.Before, in.After, clampLimit(in.Limit))
+	msgs, err := d.st.Messages(in.ChatJID, in.Before, in.After, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -258,7 +221,7 @@ type searchMessagesInput struct {
 }
 
 func (d *toolDeps) searchMessages(_ context.Context, _ *mcp.CallToolRequest, in searchMessagesInput) (*mcp.CallToolResult, any, error) {
-	msgs, err := d.st.SearchMessages(in.Query, in.ChatJID, clampLimit(in.Limit))
+	msgs, err := d.st.SearchMessages(in.Query, in.ChatJID, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -277,7 +240,7 @@ type getMessageContextInput struct {
 }
 
 func (d *toolDeps) getMessageContext(_ context.Context, _ *mcp.CallToolRequest, in getMessageContextInput) (*mcp.CallToolResult, any, error) {
-	msgs, err := d.st.MessageContext(in.ChatJID, in.MessageID, clampContext(in.Before), clampContext(in.After))
+	msgs, err := d.st.MessageContext(in.ChatJID, in.MessageID, store.ClampContext(in.Before), store.ClampContext(in.After))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -294,7 +257,7 @@ type searchContactsInput struct {
 }
 
 func (d *toolDeps) searchContacts(_ context.Context, _ *mcp.CallToolRequest, in searchContactsInput) (*mcp.CallToolResult, any, error) {
-	contacts, err := d.st.SearchContacts(in.Query, clampLimit(in.Limit))
+	contacts, err := d.st.SearchContacts(in.Query, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -338,7 +301,7 @@ type getCallHistoryInput struct {
 }
 
 func (d *toolDeps) getCallHistory(_ context.Context, _ *mcp.CallToolRequest, in getCallHistoryInput) (*mcp.CallToolResult, any, error) {
-	calls, err := d.st.Calls(in.JID, clampLimit(in.Limit))
+	calls, err := d.st.Calls(in.JID, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -373,8 +336,34 @@ func chatMediaDir(dataDir, chatJID string) (string, error) {
 	return filepath.Join(dataDir, "media", chatMediaDirReplacer.Replace(chatJID)), nil
 }
 
+// sanitizeMediaFilename validates filename — data the store returned
+// verbatim from a WhatsApp message, i.e. supplied by the remote sender,
+// not this program — before it is used as a path component. filename must
+// already be a single path component: if filepath.Base(filename) differs
+// from filename at all (any directory prefix, "..", a trailing separator)
+// or reduces to empty, ".", or "..", it is rejected outright rather than
+// silently normalized, so a crafted filename (e.g. "../../../../evil.txt")
+// is a category error, not a filename quietly rewritten to "evil.txt".
+// This mirrors bridge.sanitizeMediaFilename deliberately rather than
+// sharing it: the two live in different trust boundaries (this is the
+// tool-input boundary; bridge is the actual filesystem writer, reachable
+// by any future Live implementation, and must never trust that a caller
+// already validated the filename).
+func sanitizeMediaFilename(filename string) (string, error) {
+	base := filepath.Base(filename)
+	if base != filename || base == "" || base == "." || base == ".." || strings.ContainsAny(base, `/\`) {
+		return "", errors.New("invalid media filename")
+	}
+	return base, nil
+}
+
 func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in downloadMediaInput) (*mcp.CallToolResult, any, error) {
 	ref, filename, kind, err := d.st.MessageMediaRef(in.ChatJID, in.MessageID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	safeName, err := sanitizeMediaFilename(filename)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -384,11 +373,11 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, nil, err
 	}
 
-	path, err := d.live.DownloadMedia(ctx, ref, destDir, filename)
+	path, err := d.live.DownloadMedia(ctx, ref, destDir, safeName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	banner := Banner(fmt.Sprintf("%s\t%s", filename, kind))
+	banner := Banner(fmt.Sprintf("%s\t%s", safeName, kind))
 	return textResult(banner + "\nsaved_path: " + path), nil, nil
 }
