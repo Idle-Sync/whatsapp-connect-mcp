@@ -19,6 +19,15 @@ func run(args []string) int {
 		return 0
 	}
 
-	fmt.Fprintln(os.Stderr, "usage: whatsapp-connect-mcp [-v|--version]")
+	if len(args) >= 1 {
+		switch args[0] {
+		case "serve":
+			return runServe(args[1:])
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "usage: whatsapp-connect-mcp [-v|--version] <command>")
+	fmt.Fprintln(os.Stderr, "\ncommands:")
+	fmt.Fprintln(os.Stderr, "  serve [--http addr]   run the MCP server (stdio by default)")
 	return 2
 }
