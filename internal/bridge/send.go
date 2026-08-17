@@ -152,13 +152,15 @@ func (b *Bridge) deliverReaction(ctx context.Context, d gate.Delivery) (string, 
 	if d.QuotedID == "" {
 		return "", errors.New("reaction requires a target message id")
 	}
+	if d.Author == "" {
+		return "", errors.New("reaction requires the target message author")
+	}
+	author, err := parseRecipient(d.Author)
+	if err != nil {
+		return "", err
+	}
 
-	// gate.Delivery has no field for the target message's original sender,
-	// so BuildMessageKey is given the chat JID as a best-effort stand-in.
-	// That's correct for the common case (reacting to a message someone
-	// else sent us) and wrong only for reacting to our own sent message or
-	// to a specific participant's message in a group (see task report).
-	msg := b.client.BuildReaction(to, to, d.QuotedID, d.Text)
+	msg := b.client.BuildReaction(to, author, d.QuotedID, d.Text)
 	resp, err := b.client.SendMessage(ctx, to, msg)
 	if err != nil {
 		return "", waErr("send reaction", err)
@@ -174,13 +176,16 @@ func (b *Bridge) deliverRead(ctx context.Context, d gate.Delivery) (string, erro
 	if len(d.MessageIDs) == 0 {
 		return "", errors.New("mark_read requires at least one message id")
 	}
+	if d.Author == "" {
+		return "", errors.New("read receipt requires the sender")
+	}
+	sender, err := parseRecipient(d.Author)
+	if err != nil {
+		return "", err
+	}
 
 	now := time.Now()
-	// sender is left empty: gate.Delivery doesn't carry per-message
-	// authorship, so a group chat's read receipt won't include the
-	// "participant" attribute WhatsApp uses to identify whose messages
-	// were read (see task report). Direct chats are unaffected.
-	if err := b.client.MarkRead(ctx, d.MessageIDs, now, to, types.EmptyJID); err != nil {
+	if err := b.client.MarkRead(ctx, d.MessageIDs, now, to, sender); err != nil {
 		return "", waErr("mark read", err)
 	}
 	if err := b.store.MarkRead(d.To, d.MessageIDs, now.Unix()); err != nil {

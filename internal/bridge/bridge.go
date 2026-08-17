@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -40,6 +41,14 @@ type Bridge struct {
 	container *sqlstore.Container
 	store     Ingest
 	dataDir   string
+
+	handlerOnce sync.Once
+	// handlerRegistrations counts how many times ensureHandlerRegistered
+	// actually registered the event handler (as opposed to how many times
+	// it was called). It exists so tests can prove the registration is a
+	// true no-op on repeat calls, which is what guarantees a second
+	// Connect/PairQR can never double-dispatch events.
+	handlerRegistrations int
 }
 
 // errInvalidRecipient is returned whenever a caller-supplied JID string
@@ -69,7 +78,24 @@ func Open(ctx context.Context, dataDir string, st Ingest) (*Bridge, error) {
 	}
 
 	client := whatsmeow.NewClient(device, waLog.Noop)
-	return &Bridge{client: client, container: container, store: st, dataDir: dataDir}, nil
+	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir}
+	// Registered here, once, rather than in Connect: PairQR also needs
+	// inbound events flowing (history sync can start arriving mid-pairing),
+	// and registering in exactly one place removes any chance of a second
+	// Connect call adding a duplicate handler.
+	b.ensureHandlerRegistered()
+	return b, nil
+}
+
+// ensureHandlerRegistered registers handleEvent with the whatsmeow client.
+// It is safe to call more than once (from Open, Connect, and PairQR): only
+// the first call actually registers anything, so the client's event
+// dispatch can never end up with two copies of the same handler.
+func (b *Bridge) ensureHandlerRegistered() {
+	b.handlerOnce.Do(func() {
+		b.client.AddEventHandler(b.handleEvent)
+		b.handlerRegistrations++
+	})
 }
 
 // DataDir returns the directory Open was called with.
@@ -105,6 +131,8 @@ func (b *Bridge) LoggedIn() bool {
 // cancelled. Must be called before Connect, and only when NeedsPairing is
 // true.
 func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
+	b.ensureHandlerRegistered()
+
 	qrChan, err := b.client.GetQRChannel(ctx)
 	if err != nil {
 		return waErr("start pairing", err)
@@ -126,10 +154,11 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 	return errors.New("pairing channel closed unexpectedly")
 }
 
-// Connect registers the inbound event handler and brings an already-paired
-// client online.
+// Connect brings an already-paired client online. The inbound event handler
+// is already registered (Open does that once, up front), so calling
+// Connect more than once cannot cause events to be dispatched twice.
 func (b *Bridge) Connect(ctx context.Context) error {
-	b.client.AddEventHandler(b.handleEvent)
+	b.ensureHandlerRegistered()
 	if err := b.client.ConnectContext(ctx); err != nil {
 		return waErr("connect", err)
 	}

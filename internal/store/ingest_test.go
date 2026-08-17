@@ -48,6 +48,49 @@ func TestUpsertChatTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 }
 
+func TestUpsertChatEmptyNameDoesNotOverwriteExistingName(t *testing.T) {
+	s := newTestStore(t)
+	jid := "123@s.whatsapp.net"
+
+	if err := s.UpsertChat(jid, "Real Name", false, 100); err != nil {
+		t.Fatalf("first UpsertChat: %v", err)
+	}
+	if err := s.UpsertChat(jid, "", false, 200); err != nil {
+		t.Fatalf("second UpsertChat (empty name): %v", err)
+	}
+
+	var name string
+	var lastMessageAt int64
+	if err := s.db.QueryRow(
+		`SELECT name, last_message_at FROM chats WHERE jid = ?`, jid,
+	).Scan(&name, &lastMessageAt); err != nil {
+		t.Fatalf("query chat: %v", err)
+	}
+	if name != "Real Name" {
+		t.Fatalf("name = %q, want Real Name (an empty name must not blank a known one)", name)
+	}
+	if lastMessageAt != 200 {
+		t.Fatalf("last_message_at = %d, want 200 (other fields still update)", lastMessageAt)
+	}
+}
+
+func TestUpsertChatFirstInsertWithEmptyNameLeavesRowBlank(t *testing.T) {
+	s := newTestStore(t)
+	jid := "123@s.whatsapp.net"
+
+	if err := s.UpsertChat(jid, "", true, 100); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
+	}
+
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM chats WHERE jid = ?`, jid).Scan(&name); err != nil {
+		t.Fatalf("query chat: %v", err)
+	}
+	if name != "" {
+		t.Fatalf("name = %q, want empty (no prior name to preserve on first insert)", name)
+	}
+}
+
 func TestUpsertChatLastMessageAtNeverGoesBackward(t *testing.T) {
 	s := newTestStore(t)
 	jid := "123@s.whatsapp.net"

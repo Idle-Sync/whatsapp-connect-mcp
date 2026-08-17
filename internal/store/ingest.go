@@ -15,15 +15,18 @@ type Message struct {
 	MediaFilename          string
 }
 
-// UpsertChat inserts or updates the chat row for jid. name and isGroup are
-// always set to the given values; last_message_at only ever moves forward,
-// so a stale or missing timestamp never overwrites a newer one.
+// UpsertChat inserts or updates the chat row for jid. name passed empty
+// leaves the existing stored name untouched rather than blanking it (the
+// caller may not know the chat's name yet, e.g. a group before its first
+// GroupInfo/HistorySync event); isGroup is always set to the given value.
+// last_message_at only ever moves forward, so a stale or missing timestamp
+// never overwrites a newer one.
 func (s *Store) UpsertChat(jid, name string, isGroup bool, lastMessageAt int64) error {
 	_, err := s.db.Exec(`
 		INSERT INTO chats (jid, name, is_group, last_message_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT (jid) DO UPDATE SET
-			name = excluded.name,
+			name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE chats.name END,
 			is_group = excluded.is_group,
 			last_message_at = MAX(chats.last_message_at, excluded.last_message_at)`,
 		jid, name, isGroup, lastMessageAt,

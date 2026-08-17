@@ -50,6 +50,7 @@ type Delivery struct {
 	Path       string // media/voice source file
 	QuotedID   string
 	MessageIDs []string // read receipts
+	Author     string   // JID of the target message's author: the reacted-to message's sender for "reaction", the sender of MessageIDs for "read"; empty for text/media/voice
 }
 
 // Result is the outcome of Submit. Preview is always set; DraftToken is set
@@ -230,10 +231,10 @@ func (g *Gate) evictOldestLocked() {
 }
 
 // newDraftToken derives a draft token per ARCHITECTURE.md §5:
-// hex(sha256(to || sha256(kind|text|path|quoted|ids) || nonce)).
+// hex(sha256(to || sha256(kind|text|path|quoted|ids|author) || nonce)).
 func newDraftToken(d Delivery) (string, error) {
 	content := sha256.Sum256([]byte(strings.Join(
-		[]string{d.Kind, d.Text, d.Path, d.QuotedID, strings.Join(d.MessageIDs, ",")}, "|",
+		[]string{d.Kind, d.Text, d.Path, d.QuotedID, strings.Join(d.MessageIDs, ","), d.Author}, "|",
 	)))
 
 	nonce := make([]byte, 8)

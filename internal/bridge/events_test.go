@@ -7,6 +7,9 @@ import (
 
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
+	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -339,7 +342,7 @@ func TestHandleEventMessageUpsertsChatMessageAndContact(t *testing.T) {
 	}
 }
 
-func TestHandleEventGroupMessageSkipsChatUpsertWhenNameUnknown(t *testing.T) {
+func TestHandleEventGroupMessageUpsertsChatWithEmptyNameWhenUnknown(t *testing.T) {
 	b, fake := newTestBridge(t)
 	evt := messageEvent(groupSource(), "Bob", &waE2E.Message{
 		Conversation: proto.String("hi group"),
@@ -350,8 +353,17 @@ func TestHandleEventGroupMessageSkipsChatUpsertWhenNameUnknown(t *testing.T) {
 	if len(fake.messages) != 1 {
 		t.Fatalf("messages = %+v, want one message even though the chat name is unknown", fake.messages)
 	}
-	if len(fake.chats) != 0 {
-		t.Fatalf("chats = %+v, want no UpsertChat call: the live group-name lookup fails fast (client is unconnected) and an empty name must never overwrite a real one", fake.chats)
+	// The chat row (and its last_message_at bump) must exist even when the
+	// group's name isn't known yet, or the chat never shows up in listings.
+	// UpsertChat's empty-name guard (store package) means this can never
+	// blank a real name learned later from a GroupInfo/HistorySync event.
+	// No live GetGroupInfo lookup happens here — the message path does zero
+	// network I/O.
+	if len(fake.chats) != 1 {
+		t.Fatalf("chats = %+v, want one UpsertChat call", fake.chats)
+	}
+	if fake.chats[0].name != "" || !fake.chats[0].isGroup || fake.chats[0].jid != "222@g.us" {
+		t.Fatalf("chats[0] = %+v, want (jid=222@g.us, name=\"\", isGroup=true)", fake.chats[0])
 	}
 	// The sender's push name is still worth recording as contact info,
 	// independent of whether the group's own name is known.
@@ -360,7 +372,7 @@ func TestHandleEventGroupMessageSkipsChatUpsertWhenNameUnknown(t *testing.T) {
 	}
 }
 
-func TestHandleEventFromMeMessageSkipsContactUpsert(t *testing.T) {
+func TestHandleEventFromMeMessageSkipsContactUpsertButUpsertsChat(t *testing.T) {
 	b, fake := newTestBridge(t)
 	evt := messageEvent(dmSource(true), "MyOwnPushName", &waE2E.Message{
 		Conversation: proto.String("sent from another device"),
@@ -374,8 +386,11 @@ func TestHandleEventFromMeMessageSkipsContactUpsert(t *testing.T) {
 	if len(fake.contacts) != 0 {
 		t.Fatalf("contacts = %+v, want none: a from-me event's push name is our own, not the peer's", fake.contacts)
 	}
-	if len(fake.chats) != 0 {
-		t.Fatalf("chats = %+v, want none: from-me events don't tell us the peer's name", fake.chats)
+	// The chat row must still exist (with an empty name, since a from-me
+	// event doesn't tell us the peer's name) so last_message_at advances
+	// and the chat shows up in listings.
+	if len(fake.chats) != 1 || fake.chats[0].name != "" {
+		t.Fatalf("chats = %+v, want one UpsertChat call with an empty name", fake.chats)
 	}
 }
 
@@ -436,5 +451,199 @@ func TestHandleEventCallOfferAcceptTerminate(t *testing.T) {
 		if c.id != "CALL1" || c.peerJID != "111@s.whatsapp.net" || c.direction != "incoming" {
 			t.Fatalf("call = %+v, want id CALL1, peer 111@s.whatsapp.net, direction incoming", c)
 		}
+	}
+}
+
+func TestDecodeHistorySyncConversation(t *testing.T) {
+	conv := &waHistorySync.Conversation{
+		ID:                    proto.String("222@g.us"),
+		Name:                  proto.String("Group Name"),
+		ConversationTimestamp: proto.Uint64(1700000000),
+	}
+
+	jid, name, isGroup, ok := decodeHistorySyncConversation(conv)
+
+	if !ok {
+		t.Fatal("ok = false, want true for a valid conversation")
+	}
+	if jid != "222@g.us" || name != "Group Name" || !isGroup {
+		t.Fatalf("decoded = (%q, %q, %v), want (222@g.us, Group Name, true)", jid, name, isGroup)
+	}
+}
+
+func TestDecodeHistorySyncConversationDirectChatIsNotGroup(t *testing.T) {
+	conv := &waHistorySync.Conversation{ID: proto.String("111@s.whatsapp.net")}
+
+	jid, name, isGroup, ok := decodeHistorySyncConversation(conv)
+
+	if !ok || isGroup {
+		t.Fatalf("ok/isGroup = %v/%v, want true/false for a direct chat", ok, isGroup)
+	}
+	if jid != "111@s.whatsapp.net" || name != "" {
+		t.Fatalf("jid/name = %q/%q, want 111@s.whatsapp.net/\"\"", jid, name)
+	}
+}
+
+func TestDecodeHistorySyncConversationInvalidIDIsIgnored(t *testing.T) {
+	conv := &waHistorySync.Conversation{ID: proto.String("")}
+
+	_, _, _, ok := decodeHistorySyncConversation(conv)
+
+	if ok {
+		t.Fatal("ok = true, want false for an empty conversation ID")
+	}
+}
+
+func TestDecodeContact(t *testing.T) {
+	evt := &events.Contact{
+		JID:    types.NewJID("111", types.DefaultUserServer),
+		Action: &waSyncAction.ContactAction{FullName: proto.String("Alice Smith")},
+	}
+
+	jid, fullName, ok := decodeContact(evt)
+
+	if !ok || jid != "111@s.whatsapp.net" || fullName != "Alice Smith" {
+		t.Fatalf("decoded = (%q, %q, %v), want (111@s.whatsapp.net, Alice Smith, true)", jid, fullName, ok)
+	}
+}
+
+func TestDecodeContactNoFullNameIsIgnored(t *testing.T) {
+	evt := &events.Contact{JID: types.NewJID("111", types.DefaultUserServer), Action: nil}
+
+	_, _, ok := decodeContact(evt)
+
+	if ok {
+		t.Fatal("ok = true, want false when the contact action has no full name")
+	}
+}
+
+func TestDecodePushName(t *testing.T) {
+	evt := &events.PushName{JID: types.NewJID("111", types.DefaultUserServer), NewPushName: "Alice"}
+
+	jid, pushName := decodePushName(evt)
+
+	if jid != "111@s.whatsapp.net" || pushName != "Alice" {
+		t.Fatalf("decoded = (%q, %q), want (111@s.whatsapp.net, Alice)", jid, pushName)
+	}
+}
+
+func TestDecodeGroupInfoName(t *testing.T) {
+	evt := &events.GroupInfo{
+		JID:  types.NewJID("222", types.GroupServer),
+		Name: &types.GroupName{Name: "New Name"},
+	}
+
+	jid, name, ok := decodeGroupInfoName(evt)
+
+	if !ok || jid != "222@g.us" || name != "New Name" {
+		t.Fatalf("decoded = (%q, %q, %v), want (222@g.us, New Name, true)", jid, name, ok)
+	}
+}
+
+func TestDecodeGroupInfoNameIgnoresNonRenameChanges(t *testing.T) {
+	evt := &events.GroupInfo{
+		JID:   types.NewJID("222", types.GroupServer),
+		Topic: &types.GroupTopic{Topic: "new topic, not a rename"},
+	}
+
+	_, _, ok := decodeGroupInfoName(evt)
+
+	if ok {
+		t.Fatal("ok = true, want false for a GroupInfo event that isn't a rename")
+	}
+}
+
+func TestHandleEventContactUpsertsFullName(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(&events.Contact{
+		JID:    types.NewJID("111", types.DefaultUserServer),
+		Action: &waSyncAction.ContactAction{FullName: proto.String("Alice Smith")},
+	})
+
+	if len(fake.contacts) != 1 || fake.contacts[0].fullName != "Alice Smith" {
+		t.Fatalf("contacts = %+v, want one contact with fullName Alice Smith", fake.contacts)
+	}
+}
+
+func TestHandleEventPushNameUpsertsPushName(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(&events.PushName{JID: types.NewJID("111", types.DefaultUserServer), NewPushName: "Alice"})
+
+	if len(fake.contacts) != 1 || fake.contacts[0].pushName != "Alice" {
+		t.Fatalf("contacts = %+v, want one contact with pushName Alice", fake.contacts)
+	}
+}
+
+func TestHandleEventGroupInfoRenameUpsertsChat(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(&events.GroupInfo{
+		JID:  types.NewJID("222", types.GroupServer),
+		Name: &types.GroupName{Name: "Renamed Group"},
+	})
+
+	if len(fake.chats) != 1 || fake.chats[0].name != "Renamed Group" || !fake.chats[0].isGroup {
+		t.Fatalf("chats = %+v, want one chat named Renamed Group", fake.chats)
+	}
+}
+
+func TestHandleEventHistorySyncUpsertsConversationAndItsMessages(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	conv := &waHistorySync.Conversation{
+		ID:                    proto.String("111@s.whatsapp.net"),
+		Name:                  proto.String("Alice"),
+		ConversationTimestamp: proto.Uint64(1700000200),
+		Messages: []*waHistorySync.HistorySyncMsg{{
+			Message: &waWeb.WebMessageInfo{
+				Key: &waCommon.MessageKey{
+					RemoteJID:   proto.String("111@s.whatsapp.net"),
+					FromMe:      proto.Bool(false),
+					ID:          proto.String("HMSG1"),
+					Participant: proto.String("111@s.whatsapp.net"),
+				},
+				Message:          &waE2E.Message{Conversation: proto.String("history hello")},
+				MessageTimestamp: proto.Uint64(1700000199),
+				PushName:         proto.String("Alice"),
+			},
+		}},
+	}
+
+	b.handleEvent(&events.HistorySync{Data: &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{conv},
+	}})
+
+	if len(fake.messages) != 1 {
+		t.Fatalf("messages = %+v, want one message ingested from history sync", fake.messages)
+	}
+	msg := fake.messages[0]
+	if msg.ChatJID != "111@s.whatsapp.net" || msg.ID != "HMSG1" || msg.Text != "history hello" {
+		t.Fatalf("message = %+v, want chat 111@s.whatsapp.net, id HMSG1, text \"history hello\"", msg)
+	}
+
+	found := false
+	for _, c := range fake.chats {
+		if c.jid == "111@s.whatsapp.net" && c.name == "Alice" && !c.isGroup {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("chats = %+v, want an UpsertChat call for 111@s.whatsapp.net named Alice", fake.chats)
+	}
+}
+
+func TestHandleEventHistorySyncSkipsUnparsableConversationID(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	conv := &waHistorySync.Conversation{ID: proto.String("")}
+
+	b.handleEvent(&events.HistorySync{Data: &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{conv},
+	}})
+
+	if len(fake.chats) != 0 || len(fake.messages) != 0 {
+		t.Fatalf("chats/messages = %+v/%+v, want none for an unparsable conversation ID", fake.chats, fake.messages)
 	}
 }

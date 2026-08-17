@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -11,13 +12,14 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
-// handleEvent is the whatsmeow event handler registered by Connect: a thin
+// handleEvent is the whatsmeow event handler registered by Open: a thin
 // dispatcher that decodes each event it recognizes and hands the result to
 // the ingest store. Event types it doesn't recognize are ignored. Ingest
 // errors are dropped rather than surfaced: there is no caller to report
 // them to here, and a redelivery of the same WhatsApp event (which
 // whatsmeow does on reconnect for history) repairs a transient write
-// failure via the idempotent upserts.
+// failure via the idempotent upserts. It performs no network I/O itself:
+// every case below only decodes evt and writes to the store.
 func (b *Bridge) handleEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Message:
@@ -30,26 +32,31 @@ func (b *Bridge) handleEvent(raw any) {
 		b.ingestCall(decodeCallAccept(evt))
 	case *events.CallTerminate:
 		b.ingestCall(decodeCallTerminate(evt))
+	case *events.HistorySync:
+		b.ingestHistorySync(evt)
+	case *events.Contact:
+		b.ingestContact(evt)
+	case *events.PushName:
+		b.ingestPushName(evt)
+	case *events.GroupInfo:
+		b.ingestGroupInfoName(evt)
 	}
 }
 
-// ingestMessage decodes evt and writes it to the store. Group chats whose
-// name decodeMessage could not determine from the message alone are
-// resolved with a live (whatsmeow-cached) group info lookup; if that also
-// fails, the chat's name is left untouched rather than overwritten with an
-// empty string.
+// ingestMessage decodes evt and writes it to the store. The chat row is
+// always upserted, even when chatName comes back empty (an unknown group
+// name, or a from-me DM where the peer's name isn't in this event):
+// UpsertChat's name column only ever overwrites with a non-empty value, so
+// this can't blank a name learned elsewhere, and the row (plus its
+// last_message_at bump) has to exist regardless for the chat to show up in
+// listings. Group names are never looked up live here — doing a GetGroupInfo
+// IQ per message would serialize behind whatsmeow's single event-handling
+// goroutine and stall all ingestion; they arrive instead via
+// ingestGroupInfoName and ingestHistorySync below.
 func (b *Bridge) ingestMessage(evt *events.Message) {
 	m, chatName, isGroup := decodeMessage(evt)
 
-	if chatName == "" && isGroup {
-		if info, err := b.client.GetGroupInfo(b.client.BackgroundEventCtx, evt.Info.Chat); err == nil && info.Name != "" {
-			chatName = info.Name
-		}
-	}
-	if chatName != "" {
-		_ = b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS)
-	}
-
+	_ = b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS)
 	_ = b.store.UpsertMessage(m)
 
 	if !m.FromMe && evt.Info.PushName != "" {
@@ -69,13 +76,73 @@ func (b *Bridge) ingestCall(id, peerJID string, ts int64, direction, status stri
 	_ = b.store.InsertCall(id, peerJID, ts, direction, status, isVideo)
 }
 
+// ingestHistorySync writes the conversations and messages carried in a
+// history-sync payload (delivered after pairing, and periodically after).
+// Per-message decoding reuses ingestMessage/decodeMessage via
+// Client.ParseWebMessage, which turns a waWeb.WebMessageInfo into the same
+// *events.Message shape a live message arrives as; ParseWebMessage does
+// only local parsing (JID parsing and a local device-store read for our
+// own JID), never network I/O.
+func (b *Bridge) ingestHistorySync(evt *events.HistorySync) {
+	for _, conv := range evt.Data.GetConversations() {
+		jid, name, isGroup, ok := decodeHistorySyncConversation(conv)
+		if !ok {
+			continue
+		}
+		_ = b.store.UpsertChat(jid, name, isGroup, int64(conv.GetConversationTimestamp())) // #nosec G115 -- WhatsApp timestamps fit int64 for the foreseeable future
+
+		chatJID, err := types.ParseJID(jid)
+		if err != nil {
+			continue
+		}
+		for _, hsMsg := range conv.GetMessages() {
+			webMsg := hsMsg.GetMessage()
+			if webMsg == nil {
+				continue
+			}
+			msgEvt, err := b.client.ParseWebMessage(chatJID, webMsg)
+			if err != nil {
+				continue
+			}
+			b.ingestMessage(msgEvt)
+		}
+	}
+}
+
+func (b *Bridge) ingestContact(evt *events.Contact) {
+	jid, fullName, ok := decodeContact(evt)
+	if !ok {
+		return
+	}
+	_ = b.store.UpsertContact(jid, "", "", fullName, "")
+}
+
+func (b *Bridge) ingestPushName(evt *events.PushName) {
+	jid, pushName := decodePushName(evt)
+	if pushName == "" {
+		return
+	}
+	_ = b.store.UpsertContact(jid, "", pushName, "", "")
+}
+
+func (b *Bridge) ingestGroupInfoName(evt *events.GroupInfo) {
+	jid, name, ok := decodeGroupInfoName(evt)
+	if !ok {
+		return
+	}
+	_ = b.store.UpsertChat(jid, name, true, evt.Timestamp.Unix())
+}
+
 // decodeMessage is pure: it turns a whatsmeow message event into the
 // store.Message row to upsert, plus the chat's display name (empty if
-// unknown from this event alone) and whether the chat is a group.
+// unknown from this event alone) and whether the chat is a group. An empty
+// chatName is a normal result, not a failure: see ingestMessage for how the
+// store treats it.
 //
 // chatName is only ever derived for a direct chat from the sender's push
 // name (never from our own, since IsFromMe messages don't tell us the
-// peer's name); group names aren't carried on individual messages at all.
+// peer's name); group names aren't carried on individual messages at all —
+// see ingestGroupInfoName and ingestHistorySync for where those come from.
 func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGroup bool) {
 	info := evt.Info
 	m.ChatJID = info.Chat.String()
@@ -201,4 +268,45 @@ func callStatus(reason string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// decodeHistorySyncConversation is pure: it extracts the chat identity from
+// one HistorySync conversation record. ok is false when the conversation's
+// ID isn't a parseable, non-empty JID.
+func decodeHistorySyncConversation(conv *waHistorySync.Conversation) (jid, name string, isGroup, ok bool) {
+	parsed, err := types.ParseJID(conv.GetID())
+	if err != nil || parsed.User == "" {
+		return "", "", false, false
+	}
+	return parsed.String(), conv.GetName(), parsed.Server == types.GroupServer, true
+}
+
+// decodeContact is pure: it extracts a full-name contact update from an
+// app-state Contact sync event. ok is false when the event carries no full
+// name (whatsmeow's ContactAction has no field for phone or business name;
+// those come from the message-driven push-name path and from Business
+// vCards respectively, neither of which is this event).
+func decodeContact(evt *events.Contact) (jid, fullName string, ok bool) {
+	fullName = evt.Action.GetFullName()
+	if fullName == "" {
+		return "", "", false
+	}
+	return evt.JID.String(), fullName, true
+}
+
+// decodePushName is pure: it extracts the updated push name from a
+// PushName event. Callers should ignore a returned empty pushName.
+func decodePushName(evt *events.PushName) (jid, pushName string) {
+	return evt.JID.String(), evt.NewPushName
+}
+
+// decodeGroupInfoName is pure: it extracts a group rename from a GroupInfo
+// event. ok is false when this particular metadata change wasn't a rename
+// (GroupInfo also carries topic, membership, and other changes this bridge
+// doesn't track).
+func decodeGroupInfoName(evt *events.GroupInfo) (jid, name string, ok bool) {
+	if evt.Name == nil || evt.Name.Name == "" {
+		return "", "", false
+	}
+	return evt.JID.String(), evt.Name.Name, true
 }

@@ -141,6 +141,43 @@ func TestSubmitAlteredContentWithValidTokenErrors(t *testing.T) {
 	}
 }
 
+func TestSubmitAlteredAuthorWithValidTokenErrors(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	d := Delivery{Kind: "reaction", To: "111@s.whatsapp.net", Text: "👍", QuotedID: "msg1", Author: "111@s.whatsapp.net"}
+
+	draft, err := g.Submit(context.Background(), d, "", resolveNoName)
+	if err != nil {
+		t.Fatalf("draft Submit() error: %v", err)
+	}
+
+	altered := d
+	altered.Author = "222@s.whatsapp.net"
+
+	_, err = g.Submit(context.Background(), altered, draft.DraftToken, resolveNoName)
+	if err == nil {
+		t.Fatal("Submit() with altered author error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "draft expired or content differs") {
+		t.Fatalf("Submit() error = %q, want it to mention draft expired or content differs", err.Error())
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0 (nothing delivered): Author must be part of the compared draft content", deliverer.count())
+	}
+
+	// The original, unaltered delivery still commits: Author alone
+	// changing is what must be rejected, not any and all commits.
+	committed, err := g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err != nil {
+		t.Fatalf("Submit() with unaltered author error: %v", err)
+	}
+	if !committed.Sent {
+		t.Fatal("Submit() with unaltered author Sent = false, want true")
+	}
+}
+
 func TestSubmitExpiredDraftErrors(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	deliverer := &fakeDeliverer{}
