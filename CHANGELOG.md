@@ -15,3 +15,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store package: idempotent ingest upserts for chats, messages, contacts, and calls, plus mark-read, safe for redelivery of the same WhatsApp event.
 - Store package: bounded, newest-first queries for chats, messages, contacts, and calls; FTS5 message search (chat-scoped or global); message context windows; last-interaction lookup; media reference retrieval.
 - Gate package: the sole path to an outbound send — draft-first preview with a 5 minute TTL and a 32-draft cap, auto-commit for trusted JIDs, and a non-blocking rate limiter with a hard 5 second floor ahead of every delivery.
+- Bridge package: whatsmeow session wrapper — QR pairing, connect, decoding inbound messages/receipts/calls into the store, gated outbound delivery (text, media, voice notes, reactions, read receipts), group participant lookup, and on-demand media download.
