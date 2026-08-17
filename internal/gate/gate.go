@@ -114,7 +114,11 @@ func (g *Gate) Submit(ctx context.Context, d Delivery, draftToken string, resolv
 		return g.commit(ctx, d, draftToken, preview)
 	}
 
-	if g.trusted != nil && g.trusted(d.To) {
+	// Read receipts have no draft_token parameter on the MCP tool side
+	// (ARCHITECTURE.md §6), so they can never be re-submitted to commit a
+	// draft — they must always deliver on the first call, trusted or not.
+	// They still consume a limiter token like any other delivery.
+	if d.Kind == "read" || (g.trusted != nil && g.trusted(d.To)) {
 		return g.deliverNow(ctx, d, preview)
 	}
 
@@ -156,11 +160,20 @@ func (g *Gate) commit(ctx context.Context, d Delivery, token, preview string) (R
 	}
 
 	if !g.limiter.AllowN(now, 1) {
+		// The limiter is throughput control, not authorization: nothing was
+		// attempted, so restore the already-approved draft with its
+		// original expiry (no TTL extension) rather than forcing the user
+		// to re-confirm a send they already approved.
+		g.mu.Lock()
+		g.drafts[token] = entry
+		g.mu.Unlock()
 		return Result{}, g.rateLimitError()
 	}
 
 	id, err := g.deliver.Deliver(ctx, d)
 	if err != nil {
+		// Ambiguous: the send may have partially happened. Keep the draft
+		// consumed rather than risk a duplicate delivery on retry.
 		return Result{}, fmt.Errorf("deliver message: %w", err)
 	}
 	return Result{Sent: true, MessageID: id, Preview: preview}, nil

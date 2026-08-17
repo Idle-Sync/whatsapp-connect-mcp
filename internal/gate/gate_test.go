@@ -192,6 +192,165 @@ func TestSubmitTrustedSendsOnFirstCall(t *testing.T) {
 	}
 }
 
+func TestSubmitUntrustedReadDeliversImmediatelyAndConsumesLimiterToken(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 1, 12, clock.Now)
+
+	first := Delivery{Kind: "read", To: "111@s.whatsapp.net", MessageIDs: []string{"a"}}
+	result, err := g.Submit(context.Background(), first, "", resolveNoName)
+	if err != nil {
+		t.Fatalf("Submit() error: %v", err)
+	}
+	if !result.Sent {
+		t.Fatal("Submit() Sent = false, want true for a read receipt (no draft_token round trip exists)")
+	}
+	if result.DraftToken != "" {
+		t.Fatalf("Submit() DraftToken = %q, want empty for an immediate send", result.DraftToken)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+
+	// The single burst token was consumed by the read above, so a second
+	// read for the same untrusted JID must be rate limited, proving the
+	// read path takes a limiter token like any other delivery.
+	second := Delivery{Kind: "read", To: "111@s.whatsapp.net", MessageIDs: []string{"b"}}
+	_, err = g.Submit(context.Background(), second, "", resolveNoName)
+	if err == nil {
+		t.Fatal("Submit() second read error = nil, want rate limit error")
+	}
+	if !strings.Contains(err.Error(), "rate limit reached") {
+		t.Fatalf("Submit() error = %q, want it to mention rate limit reached", err.Error())
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want still 1", deliverer.count())
+	}
+}
+
+func TestSubmitCommittedTokenCannotBeReused(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "hello there"}
+
+	draft, err := g.Submit(context.Background(), d, "", resolveNoName)
+	if err != nil {
+		t.Fatalf("draft Submit() error: %v", err)
+	}
+
+	first, err := g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err != nil {
+		t.Fatalf("first commit Submit() error: %v", err)
+	}
+	if !first.Sent {
+		t.Fatal("first commit Submit() Sent = false, want true")
+	}
+
+	_, err = g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err == nil {
+		t.Fatal("second commit with the same token error = nil, want error (single use)")
+	}
+	if !strings.Contains(err.Error(), "draft expired or content differs") {
+		t.Fatalf("Submit() error = %q, want it to mention draft expired or content differs", err.Error())
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1 (token must not deliver twice)", deliverer.count())
+	}
+}
+
+func TestSubmitCommitRateLimitedRestoresDraftForRetry(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 1, 12, clock.Now)
+
+	// Burn the single burst token on an (immediate, untrusted) read so the
+	// limiter is exhausted before we ever attempt to commit the draft below.
+	consume := Delivery{Kind: "read", To: "999@s.whatsapp.net", MessageIDs: []string{"x"}}
+	if _, err := g.Submit(context.Background(), consume, "", resolveNoName); err != nil {
+		t.Fatalf("consume Submit() error: %v", err)
+	}
+
+	d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "please survive"}
+	draft, err := g.Submit(context.Background(), d, "", resolveNoName)
+	if err != nil {
+		t.Fatalf("draft Submit() error: %v", err)
+	}
+
+	_, err = g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err == nil {
+		t.Fatal("commit while rate limited error = nil, want rate limit error")
+	}
+	if !strings.Contains(err.Error(), "rate limit reached") {
+		t.Fatalf("Submit() error = %q, want it to mention rate limit reached", err.Error())
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want still 1 (draft commit must not have delivered)", deliverer.count())
+	}
+
+	// Let the limiter refill, then retry with the SAME token: the draft
+	// the user already approved must still be there.
+	clock.Advance(12 * time.Second)
+	result, err := g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err != nil {
+		t.Fatalf("retry commit Submit() error: %v, want the restored draft to commit", err)
+	}
+	if !result.Sent {
+		t.Fatal("retry commit Submit() Sent = false, want true")
+	}
+	if deliverer.count() != 2 {
+		t.Fatalf("deliverer called %d times, want 2", deliverer.count())
+	}
+}
+
+func TestSubmitCommitRateLimitedRestoresOriginalExpiryOnly(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	// perSeconds is set far beyond the test's time window so the limiter
+	// stays exhausted throughout — the second commit attempt below must
+	// fail on draft expiry, not on the limiter, which is what lets this
+	// test distinguish "restored with original expiry" from "restored
+	// with expiry extended from the restore time."
+	g := New(deliverer, trustNone, 1, 1000, clock.Now)
+
+	consume := Delivery{Kind: "read", To: "999@s.whatsapp.net", MessageIDs: []string{"x"}}
+	if _, err := g.Submit(context.Background(), consume, "", resolveNoName); err != nil {
+		t.Fatalf("consume Submit() error: %v", err)
+	}
+
+	d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "please expire on time"}
+	draft, err := g.Submit(context.Background(), d, "", resolveNoName)
+	if err != nil {
+		t.Fatalf("draft Submit() error: %v", err)
+	}
+
+	clock.Advance(100 * time.Second)
+	_, err = g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err == nil {
+		t.Fatal("commit at +100s error = nil, want rate limit error")
+	}
+	if !strings.Contains(err.Error(), "rate limit reached") {
+		t.Fatalf("Submit() error = %q, want it to mention rate limit reached (restore sanity check)", err.Error())
+	}
+
+	// Total elapsed since the draft was created: 305s, past its original
+	// 5 minute (300s) TTL. If the restore above had reset or extended the
+	// expiry from the retry time (100s + 300s = 400s), this would still
+	// succeed or fail with a rate-limit error instead of an expiry error.
+	clock.Advance(205 * time.Second)
+	_, err = g.Submit(context.Background(), d, draft.DraftToken, resolveNoName)
+	if err == nil {
+		t.Fatal("commit at +305s error = nil, want draft expired error")
+	}
+	if !strings.Contains(err.Error(), "draft expired or content differs") {
+		t.Fatalf("Submit() error = %q, want draft expired (original TTL preserved, not extended)", err.Error())
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want still 1 (draft never committed)", deliverer.count())
+	}
+}
+
 func TestSubmitRateLimiterBlocksWithoutBlocking(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	deliverer := &fakeDeliverer{}
