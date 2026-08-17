@@ -41,7 +41,11 @@ func Dir() (string, error) {
 }
 
 // Load reads config.json from dir. A missing file returns the defaults
-// (RateBurst 3, RatePerSeconds 12) rather than an error.
+// (RateBurst 3, RatePerSeconds 12); those same defaults are also applied
+// field-by-field to a file that exists but predates one or both rate keys
+// (or has them explicitly zeroed), so a hand-edited config.json missing
+// "rate_burst"/"rate_per_seconds" doesn't leave every send permanently
+// rate-limited to zero.
 func Load(dir string) (Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, fileName)) // #nosec G304 -- dir is caller-supplied (config.Dir() or a test dir), not network input
 	if err != nil {
@@ -56,6 +60,13 @@ func Load(dir string) (Config, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
 		return Config{}, errors.New("config file is not valid JSON")
+	}
+
+	if c.RateBurst <= 0 {
+		c.RateBurst = defaultRateBurst
+	}
+	if c.RatePerSeconds <= 0 {
+		c.RatePerSeconds = defaultRatePerSeconds
 	}
 	return c, nil
 }

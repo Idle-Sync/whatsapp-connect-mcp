@@ -81,12 +81,20 @@ type Gate struct {
 	order  []string // draft tokens in insertion order, oldest first
 }
 
-// New builds a Gate. perSeconds below the 5s floor is silently raised to it;
-// now supplies the clock the limiter and draft TTL are measured against, so
-// tests can drive it without sleeping.
+// New builds a Gate. perSeconds below the 5s floor is silently raised to
+// it; burst below 1 is silently raised to 1 — a burst of 0 would make
+// rate.Limiter.AllowN deny every delivery unconditionally, permanently
+// locking out sends, so this is a defense-in-depth floor behind
+// config.Load's own burst default (which New has no way to know was
+// bypassed, e.g. by a caller constructing Config directly rather than
+// through Load). now supplies the clock the limiter and draft TTL are
+// measured against, so tests can drive it without sleeping.
 func New(d Deliverer, trusted func(jid string) bool, burst, perSeconds int, now func() time.Time) *Gate {
 	if perSeconds < floorSeconds {
 		perSeconds = floorSeconds
+	}
+	if burst < 1 {
+		burst = 1
 	}
 	return &Gate{
 		deliver:    d,

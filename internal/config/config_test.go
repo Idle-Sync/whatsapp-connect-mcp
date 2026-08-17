@@ -53,6 +53,41 @@ func TestLoadMissingReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadPartialConfigFileGetsRateDefaults(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"trusted_jids": ["111@s.whatsapp.net"], "rate_burst": 0, "rate_per_seconds": 0}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed config.json: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.RateBurst != 3 || got.RatePerSeconds != 12 {
+		t.Fatalf("Load() rate = (%d, %d), want defaults (3, 12) for a hand-written config missing them", got.RateBurst, got.RatePerSeconds)
+	}
+	if len(got.TrustedJIDs) != 1 || got.TrustedJIDs[0] != "111@s.whatsapp.net" {
+		t.Fatalf("Load() TrustedJIDs = %v, want the file's own value preserved", got.TrustedJIDs)
+	}
+}
+
+func TestLoadExplicitRateValuesAreRespected(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"trusted_jids": [], "rate_burst": 7, "rate_per_seconds": 30}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed config.json: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.RateBurst != 7 || got.RatePerSeconds != 30 {
+		t.Fatalf("Load() rate = (%d, %d), want the file's own explicit values (7, 30) untouched", got.RateBurst, got.RatePerSeconds)
+	}
+}
+
 func TestSaveThenLoadRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	want := Config{

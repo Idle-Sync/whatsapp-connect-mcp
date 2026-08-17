@@ -449,6 +449,27 @@ func TestSubmitRateLimiterFloorRaisesSubSecondConfig(t *testing.T) {
 	}
 }
 
+// TestNewFloorsBurstBelowOneToOne proves the defense-in-depth floor: a
+// burst of 0 (or negative) must not construct a limiter that denies every
+// delivery forever — New raises it to 1 so at least one delivery can always
+// get through, the same way config.Load's own default protects a
+// hand-written config.json missing rate_burst.
+func TestNewFloorsBurstBelowOneToOne(t *testing.T) {
+	for _, burst := range []int{0, -5} {
+		clock := newFakeClock(time.Unix(0, 0))
+		deliverer := &fakeDeliverer{}
+		g := New(deliverer, trustOnly("222@s.whatsapp.net"), burst, floorSeconds, clock.Now)
+
+		d := Delivery{Kind: "text", To: "222@s.whatsapp.net", Text: "floored"}
+		if _, err := g.Submit(context.Background(), d, "", resolveNoName); err != nil {
+			t.Fatalf("burst=%d: first Submit() error = %v, want the floored burst of 1 to allow it", burst, err)
+		}
+		if deliverer.count() != 1 {
+			t.Fatalf("burst=%d: deliverer called %d times, want exactly 1", burst, deliverer.count())
+		}
+	}
+}
+
 func TestSubmitConcurrentCommitDeliversOnce(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	deliverer := &fakeDeliverer{}
@@ -490,11 +511,17 @@ func TestSubmitConcurrentCommitDeliversOnce(t *testing.T) {
 func TestSubmitConcurrentCreationAndRateLimitedCommitsNeverGhostOrExceedCap(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	deliverer := &fakeDeliverer{}
-	// burst 0 makes AllowN deny unconditionally (n=1 can never be <= a
-	// burst of 0), so every commit attempt below is rate limited
-	// deterministically no matter how goroutines are scheduled — nothing
-	// depends on consuming tokens or advancing the clock.
-	g := New(deliverer, trustNone, 0, floorSeconds, clock.Now)
+	// New floors burst to 1 (never 0, which would deny every delivery
+	// forever), so the single token has to be burned deliberately here to
+	// get the same guarantee the old burst-0 gate gave for free: every
+	// commit attempt below rate limited deterministically, no matter how
+	// goroutines are scheduled, without depending on consuming tokens or
+	// advancing the clock during the concurrent phase itself.
+	g := New(deliverer, trustNone, 1, floorSeconds, clock.Now)
+	consume := Delivery{Kind: "read", To: "999@s.whatsapp.net", MessageIDs: []string{"x"}}
+	if _, err := g.Submit(context.Background(), consume, "", resolveNoName); err != nil {
+		t.Fatalf("consume Submit() error: %v", err)
+	}
 
 	type pending struct {
 		token    string
@@ -552,8 +579,8 @@ func TestSubmitConcurrentCreationAndRateLimitedCommitsNeverGhostOrExceedCap(t *t
 
 	wg.Wait()
 
-	if deliverer.count() != 0 {
-		t.Fatalf("deliverer called %d times, want 0 (burst=0 must never allow a delivery through)", deliverer.count())
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want exactly 1 (only the token-burning read at the top; every commit below must be rate limited)", deliverer.count())
 	}
 
 	g.mu.Lock()
