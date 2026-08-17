@@ -114,13 +114,17 @@ main() {
       ;;
   esac
 
-  # Piped from curl, stdin is the script itself, not a terminal — reading
-  # the wizard's multi-select from it hits EOF immediately after pairing.
-  # Re-point stdin at the controlling terminal when one is available so the
-  # wizard's prompts still work; when there isn't one (e.g. driven from a
-  # CI step or another script with no tty at all), skip straight to telling
-  # the user to run setup themselves rather than aborting the wizard mid-flow.
-  if [ ! -t 0 ] && [ -e /dev/tty ]; then
+  # Run directly (./install.sh, not piped), stdin is already a terminal —
+  # setup's prompts work with no change. Piped from curl, stdin is the
+  # script itself, not a terminal — reading the wizard's multi-select from
+  # it hits EOF immediately after pairing, so re-point stdin at the
+  # controlling terminal when one is available. When there isn't one
+  # either (e.g. driven from a CI step or another script with no tty at
+  # all), skip straight to telling the user to run setup themselves rather
+  # than aborting the wizard mid-flow.
+  if [ -t 0 ]; then
+    "${INSTALL_DIR}/${BIN_NAME}" setup
+  elif [ -e /dev/tty ]; then
     "${INSTALL_DIR}/${BIN_NAME}" setup </dev/tty
   else
     log ""
