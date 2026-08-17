@@ -75,7 +75,6 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, deps Deps) error {
 	r := bufio.NewReader(in)
 
 	clients := append([]Client{}, deps.Detect()...)
-	numDetected := len(clients)
 	clients = append(clients, Client{Name: "Custom path"})
 
 	printClientList(out, clients)
@@ -86,7 +85,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, deps Deps) error {
 		return abortOr(err)
 	}
 
-	selected, err := parseSelection(selLine, numDetected, len(clients))
+	selected, err := parseSelection(selLine, clients)
 	if err != nil {
 		_, _ = fmt.Fprintln(out, err.Error())
 		return err
@@ -198,18 +197,28 @@ func injectAll(out io.Writer, deps Deps, targets []Client) error {
 	return nil
 }
 
-// parseSelection parses a "1,3" or "all" answer against a menu of
-// numDetected detected clients followed by one synthetic custom-path entry
-// (total entries). "all" selects every detected client (never the
-// custom-path entry); explicit numbers are 1-indexed and may include it.
-// Out-of-range or non-numeric tokens are a category error; duplicates are
-// collapsed.
-func parseSelection(input string, numDetected, total int) ([]int, error) {
+// parseSelection parses a "1,3" or "all" answer against clients: a menu of
+// detected clients followed by one synthetic custom-path entry, always
+// last (the same shape Run builds, with a nil-or-empty-named ConfigPath
+// telling it apart isn't needed here — only its position matters). "all"
+// selects every detected client Installed reports as actually present on
+// this machine — never the custom-path entry, and never a detected but
+// not-installed one, so it can't create a config for an app that isn't
+// there; an explicit number can still pick a not-installed client
+// deliberately. Explicit numbers are 1-indexed and may include the
+// custom-path entry. Out-of-range or non-numeric tokens are a category
+// error; duplicates are collapsed.
+func parseSelection(input string, clients []Client) ([]int, error) {
+	numDetected := len(clients) - 1 // the synthetic custom-path entry is always last
+	total := len(clients)
+
 	input = strings.TrimSpace(input)
 	if strings.EqualFold(input, "all") {
-		idx := make([]int, numDetected)
-		for i := range idx {
-			idx[i] = i
+		var idx []int
+		for i := 0; i < numDetected; i++ {
+			if clients[i].Installed {
+				idx = append(idx, i)
+			}
 		}
 		return idx, nil
 	}

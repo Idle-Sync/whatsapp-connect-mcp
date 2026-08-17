@@ -9,13 +9,14 @@ import (
 	"testing"
 )
 
-// fakeDetect returns three clients: none installed/injected, so every
-// selection path is exercised without extra state to track.
+// fakeDetect returns three clients, all installed (so "all" behaves the
+// same as picking every number) and none injected yet, so every selection
+// path is exercised without extra state to track.
 func fakeDetect() []Client {
 	return []Client{
-		{Name: "Alpha", ConfigPath: "/cfg/alpha.json"},
-		{Name: "Beta", ConfigPath: "/cfg/beta.json"},
-		{Name: "Gamma", ConfigPath: "/cfg/gamma.json"},
+		{Name: "Alpha", ConfigPath: "/cfg/alpha.json", Installed: true},
+		{Name: "Beta", ConfigPath: "/cfg/beta.json", Installed: true},
+		{Name: "Gamma", ConfigPath: "/cfg/gamma.json", Installed: true},
 	}
 }
 
@@ -132,6 +133,55 @@ func TestRunCommitAtEnd(t *testing.T) {
 	}
 }
 
+// TestRunAllSelectionExcludesNotInstalledClients proves "all" no longer
+// writes a config for a client whose app isn't actually on this machine:
+// Beta is detected (e.g. a config path convention matched) but not
+// installed, so "all" must skip it while still picking up Alpha and Gamma.
+func TestRunAllSelectionExcludesNotInstalledClients(t *testing.T) {
+	var injected []string
+	deps := baseDeps(t, &injected)
+	deps.Detect = func() []Client {
+		return []Client{
+			{Name: "Alpha", ConfigPath: "/cfg/alpha.json", Installed: true},
+			{Name: "Beta", ConfigPath: "/cfg/beta.json", Installed: false},
+			{Name: "Gamma", ConfigPath: "/cfg/gamma.json", Installed: true},
+		}
+	}
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("all\ny\n"), &out, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if !slices.Equal(injected, []string{"/cfg/alpha.json", "/cfg/gamma.json"}) {
+		t.Fatalf("injected = %v, want only the installed clients (Beta filtered out of 'all')", injected)
+	}
+}
+
+// TestRunExplicitSelectionCanStillPickANotInstalledClient proves the "all"
+// filter doesn't reach explicit numbered selection: a user who deliberately
+// types the number for a not-detected-as-installed client still gets it
+// configured.
+func TestRunExplicitSelectionCanStillPickANotInstalledClient(t *testing.T) {
+	var injected []string
+	deps := baseDeps(t, &injected)
+	deps.Detect = func() []Client {
+		return []Client{
+			{Name: "Alpha", ConfigPath: "/cfg/alpha.json", Installed: true},
+			{Name: "Beta", ConfigPath: "/cfg/beta.json", Installed: false},
+		}
+	}
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("2\ny\n"), &out, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if !slices.Equal(injected, []string{"/cfg/beta.json"}) {
+		t.Fatalf("injected = %v, want Beta injected despite not being installed (explicit numbered pick)", injected)
+	}
+}
+
 // TestRunPairingSuccessThenInjects proves the pairing step runs first, and
 // only on success does the flow continue to selection and injection.
 func TestRunPairingSuccessThenInjects(t *testing.T) {
@@ -224,29 +274,45 @@ func TestRunCtxCancelledBeforeStartAbortsImmediately(t *testing.T) {
 	}
 }
 
+// clientsFixture builds a menu of len(installed) detected clients (each
+// Installed per the given flag) plus the synthetic custom-path entry
+// parseSelection always expects last.
+func clientsFixture(installed ...bool) []Client {
+	cs := make([]Client, len(installed)+1)
+	for i, inst := range installed {
+		cs[i] = Client{Name: "c", Installed: inst}
+	}
+	cs[len(installed)] = Client{Name: "Custom path"}
+	return cs
+}
+
 func TestParseSelection(t *testing.T) {
+	allInstalled := clientsFixture(true, true, true)
+	oneNotInstalled := clientsFixture(true, false, true)
+
 	tests := []struct {
-		name        string
-		input       string
-		numDetected int
-		total       int
-		want        []int
-		wantErr     bool
+		name    string
+		input   string
+		clients []Client
+		want    []int
+		wantErr bool
 	}{
-		{"single", "2", 3, 4, []int{1}, false},
-		{"multiple sorted", "3,1", 3, 4, []int{0, 2}, false},
-		{"duplicates collapsed", "1,1,2", 3, 4, []int{0, 1}, false},
-		{"all excludes custom entry", "all", 3, 4, []int{0, 1, 2}, false},
-		{"ALL case-insensitive", "ALL", 3, 4, []int{0, 1, 2}, false},
-		{"empty input selects nothing", "", 3, 4, nil, false},
-		{"zero is out of range", "0", 3, 4, nil, true},
-		{"above total is out of range", "5", 3, 4, nil, true},
-		{"non-numeric token", "x", 3, 4, nil, true},
-		{"custom entry selectable by number", "4", 3, 4, []int{3}, false},
+		{"single", "2", allInstalled, []int{1}, false},
+		{"multiple sorted", "3,1", allInstalled, []int{0, 2}, false},
+		{"duplicates collapsed", "1,1,2", allInstalled, []int{0, 1}, false},
+		{"all excludes custom entry", "all", allInstalled, []int{0, 1, 2}, false},
+		{"ALL case-insensitive", "ALL", allInstalled, []int{0, 1, 2}, false},
+		{"all filters out a not-installed client", "all", oneNotInstalled, []int{0, 2}, false},
+		{"explicit number can still pick a not-installed client", "2", oneNotInstalled, []int{1}, false},
+		{"empty input selects nothing", "", allInstalled, nil, false},
+		{"zero is out of range", "0", allInstalled, nil, true},
+		{"above total is out of range", "5", allInstalled, nil, true},
+		{"non-numeric token", "x", allInstalled, nil, true},
+		{"custom entry selectable by number", "4", allInstalled, []int{3}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseSelection(tt.input, tt.numDetected, tt.total)
+			got, err := parseSelection(tt.input, tt.clients)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("parseSelection() error = nil, want error")
