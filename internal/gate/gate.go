@@ -142,33 +142,31 @@ func (g *Gate) createDraft(d Delivery, preview string) (Result, error) {
 func (g *Gate) commit(ctx context.Context, d Delivery, token, preview string) (Result, error) {
 	now := g.now()
 
-	// Validate and claim the draft as one atomic step: if two callers raced
-	// on the same token, only the one holding the lock when it is still live
-	// deletes it, so a draft can never be committed twice.
+	// Validate, rate-limit-check, and claim the draft as ONE critical
+	// section. AllowN is non-blocking, so holding the lock across it is
+	// cheap. Committing this way means a rate-limited attempt never
+	// touches g.drafts or g.order at all — the draft is simply never
+	// removed, so it keeps its original expiry and its place in the
+	// eviction order (no separate "restore" step, and no window where a
+	// concurrent createDraft could see it missing from g.drafts while it
+	// is still present in g.order). The draft is deleted only once, at
+	// the moment a commit is actually going to proceed to Deliver, so it
+	// can never be committed twice.
 	g.mu.Lock()
 	entry, ok := g.drafts[token]
 	if ok && (!entry.expires.After(now) || !reflect.DeepEqual(entry.delivery, d)) {
 		ok = false
 	}
-	if ok {
-		delete(g.drafts, token)
-	}
-	g.mu.Unlock()
-
 	if !ok {
+		g.mu.Unlock()
 		return Result{}, errDraftInvalid
 	}
-
 	if !g.limiter.AllowN(now, 1) {
-		// The limiter is throughput control, not authorization: nothing was
-		// attempted, so restore the already-approved draft with its
-		// original expiry (no TTL extension) rather than forcing the user
-		// to re-confirm a send they already approved.
-		g.mu.Lock()
-		g.drafts[token] = entry
 		g.mu.Unlock()
 		return Result{}, g.rateLimitError()
 	}
+	delete(g.drafts, token)
+	g.mu.Unlock()
 
 	id, err := g.deliver.Deliver(ctx, d)
 	if err != nil {

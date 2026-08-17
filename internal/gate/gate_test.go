@@ -450,6 +450,97 @@ func TestSubmitConcurrentCommitDeliversOnce(t *testing.T) {
 	}
 }
 
+func TestSubmitConcurrentCreationAndRateLimitedCommitsNeverGhostOrExceedCap(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	// burst 0 makes AllowN deny unconditionally (n=1 can never be <= a
+	// burst of 0), so every commit attempt below is rate limited
+	// deterministically no matter how goroutines are scheduled — nothing
+	// depends on consuming tokens or advancing the clock.
+	g := New(deliverer, trustNone, 0, floorSeconds, clock.Now)
+
+	type pending struct {
+		token    string
+		delivery Delivery
+	}
+	fill := make([]pending, draftCap)
+	for i := 0; i < draftCap; i++ {
+		d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "fill-" + itoa(i)}
+		r, err := g.Submit(context.Background(), d, "", resolveNoName)
+		if err != nil {
+			t.Fatalf("fill Submit() %d error: %v", i, err)
+		}
+		fill[i] = pending{token: r.DraftToken, delivery: d}
+	}
+
+	var wg sync.WaitGroup
+
+	// Attempt a rate-limited commit of every existing draft concurrently
+	// — including whichever one currently sits at the front of the
+	// eviction order at any given instant — while a burst of new draft
+	// creations keeps evicting the current oldest. This is the
+	// interleaving the ghost-entry bug needed: a commit deleting a token
+	// from g.drafts while it is still the front of g.order, racing a
+	// concurrent prune/evict that pops the same token from g.order too,
+	// followed by the commit's rate-limit path restoring it into
+	// g.drafts alone — a map entry with no order entry, invisible to cap
+	// enforcement from then on.
+	for _, p := range fill {
+		wg.Add(1)
+		go func(p pending) {
+			defer wg.Done()
+			_, err := g.Submit(context.Background(), p.delivery, p.token, resolveNoName)
+			if err == nil {
+				t.Error("concurrent commit error = nil, want a rate-limit or draft-invalid error")
+				return
+			}
+			if !strings.Contains(err.Error(), "rate limit reached") &&
+				!strings.Contains(err.Error(), "draft expired or content differs") {
+				t.Errorf("concurrent commit error = %q, want rate-limit or draft-invalid category", err.Error())
+			}
+		}(p)
+	}
+
+	const extraCreates = 200
+	for i := 0; i < extraCreates; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "extra-" + itoa(i)}
+			if _, err := g.Submit(context.Background(), d, "", resolveNoName); err != nil {
+				t.Errorf("concurrent create %d error: %v", i, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0 (burst=0 must never allow a delivery through)", deliverer.count())
+	}
+
+	g.mu.Lock()
+	draftsLen := len(g.drafts)
+	inOrder := make(map[string]bool, len(g.order))
+	for _, tok := range g.order {
+		inOrder[tok] = true
+	}
+	var ghosts []string
+	for tok := range g.drafts {
+		if !inOrder[tok] {
+			ghosts = append(ghosts, tok)
+		}
+	}
+	g.mu.Unlock()
+
+	if draftsLen > draftCap {
+		t.Fatalf("len(g.drafts) = %d, want it to never exceed draftCap %d", draftsLen, draftCap)
+	}
+	if len(ghosts) > 0 {
+		t.Fatalf("found %d draft(s) in g.drafts absent from g.order (ghost entries invisible to cap eviction): %v", len(ghosts), ghosts)
+	}
+}
+
 func TestSubmitDraftCapEvictsOldest(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	deliverer := &fakeDeliverer{}
