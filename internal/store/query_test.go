@@ -102,6 +102,29 @@ func seedFixture(t *testing.T, s *Store) fixture {
 	return f
 }
 
+func TestCounts(t *testing.T) {
+	s := newTestStore(t)
+
+	empty, err := s.Counts()
+	if err != nil {
+		t.Fatalf("Counts() on empty store error: %v", err)
+	}
+	if empty != (Counts{}) {
+		t.Fatalf("Counts() on empty store = %+v, want all zero", empty)
+	}
+
+	seedFixture(t, s)
+
+	got, err := s.Counts()
+	if err != nil {
+		t.Fatalf("Counts() error: %v", err)
+	}
+	want := Counts{Chats: 3, Messages: 10, Contacts: 2, Calls: 2}
+	if got != want {
+		t.Fatalf("Counts() = %+v, want %+v", got, want)
+	}
+}
+
 func TestChatsClampsLimitZeroToDefault(t *testing.T) {
 	s := newTestStore(t)
 	seedFixture(t, s)

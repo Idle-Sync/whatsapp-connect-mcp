@@ -437,6 +437,29 @@ LEFT JOIN contacts c ON c.jid = ca.peer_jid`)
 	return out, nil
 }
 
+// Counts holds the row count of each table, for the `status` CLI command.
+type Counts struct {
+	Chats, Messages, Contacts, Calls int
+}
+
+// Counts returns the row count of every table in one query. It exists so
+// `status` can report how much data is stored without a generic
+// table-name-parameterized count method (which would either need
+// reflection or string-built SQL); a single query naming all four tables
+// explicitly has neither problem.
+func (s *Store) Counts() (Counts, error) {
+	var c Counts
+	row := s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM chats),
+		(SELECT COUNT(*) FROM messages),
+		(SELECT COUNT(*) FROM contacts),
+		(SELECT COUNT(*) FROM calls)`)
+	if err := row.Scan(&c.Chats, &c.Messages, &c.Contacts, &c.Calls); err != nil {
+		return Counts{}, fmt.Errorf("count rows: %w", err)
+	}
+	return c, nil
+}
+
 // MessageMediaRef returns the stored media download reference for a
 // message. err is non-nil (and ref/filename/kind zero) when the message
 // does not exist or carries no media.
