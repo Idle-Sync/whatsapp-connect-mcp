@@ -57,7 +57,9 @@ func (b *Bridge) deliverText(ctx context.Context, d gate.Delivery) (string, erro
 		// ContextInfo has no Participant or QuotedMessage here: gate.Delivery
 		// only carries the quoted message's id, not its author or content, so
 		// the reply thread linkage (StanzaID) is best-effort and the quote
-		// preview card may not render (see task report).
+		// preview card may not render on the recipient's client, which
+		// expects Participant and QuotedMessage alongside StanzaID to show
+		// one. The message still sends and still threads by id either way.
 		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
 			Text:        proto.String(d.Text),
 			ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String(d.QuotedID)},

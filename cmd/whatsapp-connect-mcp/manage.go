@@ -257,10 +257,11 @@ func trustList(cfg config.Config) int {
 // runRemove implements the "remove" subcommand: after a typed "yes", it
 // deletes the local session store (session.db and its WAL/SHM sidecars).
 // This unpairs the device locally — the next `setup` requires pairing
-// again — but does not itself notify WhatsApp's servers, since doing that
-// requires an authenticated connection this command deliberately doesn't
-// open (see the report's design-gate note on scope). Messages already
-// stored, client configuration, and settings are left untouched.
+// again — but does not itself notify WhatsApp's servers: remove is scoped
+// to local state only, so it never opens an authenticated connection, and
+// the phone keeps showing this device as linked until unlinked there.
+// Messages already stored, client configuration, and settings are left
+// untouched.
 func runRemove(args []string) int {
 	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {

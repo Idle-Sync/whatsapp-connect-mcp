@@ -12,8 +12,8 @@ import (
 // These tests cover only the validation performed by Deliver before it
 // would touch the network (invalid input, missing required fields): the
 // happy paths call whatsmeow's SendMessage/MarkRead/Upload, which need a
-// live connection and are covered by the wizard's manual smoke run
-// instead, per the task brief.
+// live, paired connection this test suite has no way to provide and are
+// instead exercised manually against a real account before release.
 
 func TestDeliverUnknownKindErrors(t *testing.T) {
 	b, _ := newTestBridge(t)

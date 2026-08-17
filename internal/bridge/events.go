@@ -237,8 +237,9 @@ func decodeReceipt(evt *events.Receipt) (chatJID string, ids []string, readAt in
 // InsertCall record from the corresponding whatsmeow call event. whatsmeow
 // only reports calls placed to this account, so direction is always
 // "incoming". isVideo is always false: neither event exposes a typed field
-// for it, and the raw offer node's video indicator is undocumented, so
-// guessing at it was judged worse than a fixed false (see task report).
+// for it, and the raw offer node's video indicator is undocumented — a
+// fixed false is a known-wrong guess in the audio case, but a better one
+// isn't available without depending on undocumented protocol internals.
 
 func decodeCallOffer(evt *events.CallOffer) (id, peerJID string, ts int64, direction, status string, isVideo bool) {
 	return evt.CallID, evt.From.String(), evt.Timestamp.Unix(), "incoming", "ringing", false
@@ -257,8 +258,9 @@ func decodeCallTerminate(evt *events.CallTerminate) (id, peerJID string, ts int6
 // distinguish "ended" from "never answered" in this event), and its reason
 // string isn't one of the recognized ones below, so it falls through to
 // "unknown" and overwrites whatever InsertCall recorded from CallAccept.
-// That's an accepted limitation of a status column that only ever holds
-// the most recent report (see task report).
+// The status column holds only the most recent report, not a history, so a
+// normally-ended call reads as "unknown" rather than "answered" — a call
+// row is a last-known-state snapshot, not a call log entry.
 func callStatus(reason string) string {
 	switch strings.ToLower(reason) {
 	case "timeout":
