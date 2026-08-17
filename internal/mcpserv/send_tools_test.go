@@ -93,6 +93,8 @@ func (f *sendFakeStore) MessageMediaRef(string, string) ([]byte, string, string,
 	return nil, "", "", nil
 }
 
+func (f *sendFakeStore) QuickCheck() error { return nil }
+
 // fakeDeliverer records every Delivery handed to it and returns a
 // deterministic message ID, mirroring gate's own test fake since that one
 // is unexported to its package.
@@ -445,7 +447,7 @@ func TestSendReactionUnknownMessageIsCategoryError(t *testing.T) {
 }
 
 func TestRegisterSendToolsBuildsAllFiveSchemasWithoutPanicking(t *testing.T) {
-	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir())
+	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}

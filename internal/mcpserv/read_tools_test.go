@@ -2,6 +2,7 @@ package mcpserv
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +51,8 @@ type fakeStore struct {
 	mediaFilename string
 	mediaKind     string
 	mediaErr      error
+
+	quickCheckErr error
 }
 
 func (f *fakeStore) Chats(_ string, _ bool, limit int) ([]store.ChatRow, error) {
@@ -92,6 +95,10 @@ func (f *fakeStore) Calls(_ string, limit int) ([]store.CallRow, error) {
 
 func (f *fakeStore) MessageMediaRef(_, _ string) ([]byte, string, string, error) {
 	return f.mediaRef, f.mediaFilename, f.mediaKind, f.mediaErr
+}
+
+func (f *fakeStore) QuickCheck() error {
+	return f.quickCheckErr
 }
 
 // fakeLive records the destDir/filename it was asked to download into.
@@ -318,6 +325,45 @@ func TestDownloadMediaRejectsTraversalFilename(t *testing.T) {
 	}
 }
 
+func TestDoctorResultIsNotBannerWrapped(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{}
+	env := DoctorEnv{Home: dataDir, BinaryPath: filepath.Join(dataDir, "bin"), LoggedIn: func() bool { return false }}
+	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: dataDir, doctorEnv: env}
+
+	result, _, err := d.doctor(context.Background(), nil, struct{}{})
+	if err != nil {
+		t.Fatalf("doctor() error = %v", err)
+	}
+
+	text := resultText(t, result)
+	if strings.Contains(text, bannerOpen) || strings.Contains(text, bannerWarning) {
+		t.Fatalf("doctor() result is banner-wrapped, want plain diagnostic output: %q", text)
+	}
+	if !strings.Contains(text, "session") || !strings.Contains(text, "database") {
+		t.Fatalf("doctor() result missing expected check names: %q", text)
+	}
+}
+
+func TestDoctorPropagatesDatabaseIntegrityFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{quickCheckErr: errors.New("corrupt")}
+	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: dataDir, doctorEnv: DoctorEnv{Home: dataDir, BinaryPath: filepath.Join(dataDir, "bin")}}
+
+	result, _, err := d.doctor(context.Background(), nil, struct{}{})
+	if err != nil {
+		t.Fatalf("doctor() error = %v", err)
+	}
+
+	text := resultText(t, result)
+	if !strings.Contains(text, "fail") || !strings.Contains(text, "database") {
+		t.Fatalf("doctor() result does not report the database failure: %q", text)
+	}
+	if strings.Contains(text, "corrupt") {
+		t.Fatalf("doctor() result leaks the underlying error text instead of a category message: %q", text)
+	}
+}
+
 func TestSanitizeMediaFilenameRejectsTraversalAndAcceptsPlainNames(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -354,12 +400,12 @@ func TestSanitizeMediaFilenameRejectsTraversalAndAcceptsPlainNames(t *testing.T)
 	}
 }
 
-func TestRegisterReadToolsBuildsAllTenSchemasWithoutPanicking(t *testing.T) {
+func TestRegisterReadToolsBuildsAllElevenSchemasWithoutPanicking(t *testing.T) {
 	// mcp.AddTool panics if a tool's input type cannot produce a valid JSON
 	// schema. Exercising the full registration path (rather than only the
 	// handler methods, as the other tests in this file do) is what would
-	// catch a struct tag or type mistake in any of the ten tools.
-	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir())
+	// catch a struct tag or type mistake in any of the eleven tools.
+	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}

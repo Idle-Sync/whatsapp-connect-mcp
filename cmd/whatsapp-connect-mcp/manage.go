@@ -15,8 +15,73 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
+
+// runCheck implements the "check" subcommand: it runs doctor.Run and
+// prints each finding as an aligned status/check/detail/fix line, sharing
+// the exact rendering the doctor MCP tool uses. It exits 1 if any check
+// reports fail, 0 otherwise (a warn finding does not fail the command).
+func runCheck(args []string) int {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dataDir, err := config.Dir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "check: %v\n", err)
+		return 1
+	}
+
+	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "check: %v\n", err)
+		return 1
+	}
+	defer func() { _ = st.Close() }()
+
+	// check never connects: it reports what LoggedIn already knows (never
+	// true against a bridge that Open alone, without Connect, has left
+	// offline) rather than establishing a live connection just to answer a
+	// diagnostic question.
+	br, err := bridge.Open(context.Background(), dataDir, st)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "check: %v\n", err)
+		return 1
+	}
+	defer func() { _ = br.Close() }()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "check: resolve home directory: %v\n", err)
+		return 1
+	}
+	binaryPath, err := resolveBinaryPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "check: %v\n", err)
+		return 1
+	}
+
+	env := doctor.Env{
+		DataDir:    dataDir,
+		BinaryPath: binaryPath,
+		Home:       home,
+		Store:      st,
+		LoggedIn:   br.LoggedIn,
+	}
+	findings := doctor.Run(context.Background(), env)
+
+	fmt.Println(doctor.Render(findings))
+
+	for _, f := range findings {
+		if f.Status == doctor.StatusFail {
+			return 1
+		}
+	}
+	return 0
+}
 
 // runStatus implements the "status" subcommand: whether a session is
 // paired, how many rows each store table holds, and which MCP clients have

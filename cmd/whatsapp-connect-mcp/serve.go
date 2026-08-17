@@ -78,8 +78,20 @@ func runServe(args []string) int {
 		return 1
 	}
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: resolve home directory: %v\n", err)
+		return 1
+	}
+	binaryPath, err := resolveBinaryPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+
 	g := gate.New(br, cfg.IsTrusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
-	server := mcpserv.New(st, br, g, dataDir)
+	doc := mcpserv.DoctorEnv{Home: home, BinaryPath: binaryPath, LoggedIn: br.LoggedIn}
+	server := mcpserv.New(st, br, g, dataDir, doc)
 
 	if *httpAddr != "" {
 		return runHTTP(ctx, server, *httpAddr)

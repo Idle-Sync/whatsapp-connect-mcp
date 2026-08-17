@@ -5,6 +5,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
@@ -43,4 +44,21 @@ func Open(path string) (*Store, error) {
 // Close closes the underlying database handle.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// QuickCheck runs SQLite's file-integrity pragma and reports a non-nil
+// error if the database is damaged.
+//
+// sqlite-specific: quick_check is a SQLite file-integrity PRAGMA. Postgres
+// has no client-side equivalent; page/checksum integrity there is the
+// server's job (data checksums, WAL replay).
+func (s *Store) QuickCheck() error {
+	var result string
+	if err := s.db.QueryRow(`PRAGMA quick_check`).Scan(&result); err != nil {
+		return fmt.Errorf("run integrity check: %w", err)
+	}
+	if result != "ok" {
+		return errors.New("database integrity check failed")
+	}
+	return nil
 }

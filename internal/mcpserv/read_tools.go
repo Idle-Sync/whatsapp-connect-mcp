@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -67,17 +68,18 @@ func textResult(text string) *mcp.CallToolResult {
 // are exposed directly (rather than only as closures registered on a
 // *mcp.Server) so tests can call them without going through a transport.
 type toolDeps struct {
-	st      Store
-	live    Live
-	dataDir string
+	st        Store
+	live      Live
+	dataDir   string
+	doctorEnv DoctorEnv
 }
 
-// registerReadTools registers the ten read-only tools against server. The
-// eleventh tool in ARCHITECTURE.md §6's read list, doctor, is registered by
-// a later task; the send tools by another still. Both land on the same
+// registerReadTools registers the ten read-only tools plus doctor, the
+// eleventh tool in ARCHITECTURE.md §6's read list, against server. The
+// send tools are registered separately by registerSendTools onto the same
 // *mcp.Server this function is handed.
-func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string) {
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, doc DoctorEnv) {
+	d := &toolDeps{st: st, live: live, dataDir: dataDir, doctorEnv: doc}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_chats",
@@ -160,6 +162,17 @@ func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string) 
 			"media kind wrapped in an untrusted-data banner, followed by the local saved_path " +
 			"(outside the banner: a path this server created, not WhatsApp content).",
 	}, d.downloadMedia)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "doctor",
+		Description: "Runs local diagnostic checks — WhatsApp session state, message database " +
+			"integrity, injected MCP client configuration, data directory permissions, and whether " +
+			"a newer release is available — and reports one status line per check (ok/warn/fail). " +
+			"This never sends anything over the network to WhatsApp or any WhatsApp contact; the " +
+			"only outbound call it makes is an optional, best-effort check against GitHub's release " +
+			"API. Every finding is this program's own diagnostic data, not WhatsApp content — no " +
+			"untrusted-data banner applies.",
+	}, d.doctor)
 }
 
 type listChatsInput struct {
@@ -380,4 +393,19 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 
 	banner := Banner(fmt.Sprintf("%s\t%s", safeName, kind))
 	return textResult(banner + "\nsaved_path: " + path), nil, nil
+}
+
+func (d *toolDeps) doctor(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	env := doctor.Env{
+		DataDir:    d.dataDir,
+		BinaryPath: d.doctorEnv.BinaryPath,
+		Home:       d.doctorEnv.Home,
+		Store:      d.st,
+		LoggedIn:   d.doctorEnv.LoggedIn,
+	}
+	findings := doctor.Run(ctx, env)
+	// Findings are this program's own diagnostic data, not WhatsApp
+	// content, so unlike every other tool's result they are not
+	// banner-wrapped.
+	return textResult(doctor.Render(findings)), nil, nil
 }

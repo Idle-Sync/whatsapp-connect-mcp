@@ -10,8 +10,21 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 )
 
+// DoctorEnv holds the values the doctor tool needs beyond what the other
+// read tools already share (the store and the data directory): the local
+// values only a diagnostic check has any use for.
+type DoctorEnv struct {
+	Home       string
+	BinaryPath string
+	LoggedIn   func() bool
+}
+
 // Store is the read query API this package needs. It mirrors *store.Store's
 // method set exactly, so *store.Store satisfies it without adapters.
+// QuickCheck is here (rather than a separate doctor-only interface at this
+// package's boundary) because it is the same store value every other tool
+// already receives — the doctor tool's database check just needs one more
+// method exposed from it.
 type Store interface {
 	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
 	Chat(jid string) (store.ChatRow, bool, error)
@@ -22,6 +35,7 @@ type Store interface {
 	LastInteraction(jid string) (store.MessageRow, bool, error)
 	Calls(peerJID string, limit int) ([]store.CallRow, error)
 	MessageMediaRef(chatJID, id string) ([]byte, string, string, error)
+	QuickCheck() error
 }
 
 // Live is the on-demand WhatsApp network access this package needs.
@@ -35,16 +49,16 @@ type Live interface {
 const serverName = "whatsapp-connect-mcp"
 
 // New builds an MCP server with the full tool surface registered: the
-// read-only tools against st and live (media downloaded into dataDir), and
-// the gated send tools against st and g, the sole path any of them has to
-// an outbound WhatsApp send.
-func New(st Store, live Live, g *gate.Gate, dataDir string) *mcp.Server {
+// read-only tools against st and live (media downloaded into dataDir), the
+// doctor tool against st and doc, and the gated send tools against st and
+// g, the sole path any of them has to an outbound WhatsApp send.
+func New(st Store, live Live, g *gate.Gate, dataDir string, doc DoctorEnv) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
 		Version: version.Version,
 	}, nil)
 
-	registerReadTools(server, st, live, dataDir)
+	registerReadTools(server, st, live, dataDir, doc)
 	registerSendTools(server, st, g)
 
 	return server
