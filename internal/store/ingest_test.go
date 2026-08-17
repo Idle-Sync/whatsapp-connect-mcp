@@ -229,6 +229,32 @@ func TestMarkReadSetsReadAtForKnownIDs(t *testing.T) {
 	}
 }
 
+func TestMarkReadNeverGoesBackward(t *testing.T) {
+	s := newTestStore(t)
+	jid := "123@s.whatsapp.net"
+	if err := s.UpsertChat(jid, "Name", false, 0); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
+	}
+	if err := s.UpsertMessage(Message{ChatJID: jid, ID: "msg1", SenderJID: jid, TS: 100, Kind: "text", Text: "hi"}); err != nil {
+		t.Fatalf("UpsertMessage: %v", err)
+	}
+
+	if err := s.MarkRead(jid, []string{"msg1"}, 500); err != nil {
+		t.Fatalf("first MarkRead: %v", err)
+	}
+	if err := s.MarkRead(jid, []string{"msg1"}, 100); err != nil {
+		t.Fatalf("second MarkRead (older): %v", err)
+	}
+
+	var readAt int64
+	if err := s.db.QueryRow(`SELECT read_at FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1").Scan(&readAt); err != nil {
+		t.Fatalf("query message: %v", err)
+	}
+	if readAt != 500 {
+		t.Fatalf("read_at = %d, want 500 (must not move backward)", readAt)
+	}
+}
+
 func TestInsertCallTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	s := newTestStore(t)
 
