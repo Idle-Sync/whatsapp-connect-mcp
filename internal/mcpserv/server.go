@@ -34,20 +34,18 @@ type Live interface {
 // serverName and serverTitle identify this server to MCP clients.
 const serverName = "whatsapp-connect-mcp"
 
-// New builds an MCP server with the read tool surface registered against
-// st and live, with media downloaded into dataDir. g is the send gate;
-// it is threaded through unused here so the caller has one constructor for
-// the whole tool surface, but it is not touched until the send tools
-// (a later task) are registered on top of it.
+// New builds an MCP server with the full tool surface registered: the
+// read-only tools against st and live (media downloaded into dataDir), and
+// the gated send tools against st and g, the sole path any of them has to
+// an outbound WhatsApp send.
 func New(st Store, live Live, g *gate.Gate, dataDir string) *mcp.Server {
-	_ = g // send tools land on this seam in a later task
-
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
 		Version: version.Version,
 	}, nil)
 
 	registerReadTools(server, st, live, dataDir)
+	registerSendTools(server, st, g)
 
 	return server
 }
