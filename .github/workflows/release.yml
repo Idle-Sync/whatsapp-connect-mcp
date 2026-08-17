@@ -1,0 +1,220 @@
+name: Release
+
+# Fires on every version tag (v0.1.0, v0.1.0-rc.1, ...). Runs the same
+# lint/test gates as ci.yml, cross-compiles six binaries, cuts a GitHub
+# Release whose body is the matching CHANGELOG.md section, bundles each
+# binary as an MCPB package, and publishes server.json to the MCP Registry
+# over OIDC (no stored registry credential).
+#
+# Asset naming convention (binaries and MCPB bundles alike), shared with
+# scripts/install.sh, scripts/install.ps1, and packaging/npm/install.js —
+# change it in all four places together if it ever changes:
+#
+#   whatsapp-connect-mcp_<version>_<os>_<arch>[.exe|.mcpb]
+#
+# <version> is the tag with its leading "v" stripped (e.g. tag v0.1.0 ->
+# version 0.1.0), matching internal/version.Version and the comparison
+# doctor's "version" check makes against GitHub's latest-release tag.
+# <os> is linux|darwin|windows, <arch> is amd64|arm64 — GOOS/GOARCH values
+# verbatim, six combinations total.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Compute version and asset name
+        id: vars
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          asset="whatsapp-connect-mcp_${version}_${{ matrix.goos }}_${{ matrix.goarch }}${ext}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          VERSION_PKG: github.com/idle-sync/whatsapp-connect-mcp/internal/version
+        run: |
+          mkdir -p dist
+          commit="${GITHUB_SHA::7}"
+          ldflags="-s -w -X ${VERSION_PKG}.Version=${{ steps.vars.outputs.version }} -X ${VERSION_PKG}.Commit=${commit}"
+          go build -trimpath -ldflags "${ldflags}" \
+            -o "dist/${{ steps.vars.outputs.asset }}" \
+            ./cmd/whatsapp-connect-mcp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ steps.vars.outputs.asset }}
+          if-no-files-found: error
+
+  package-mcpb:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute version and asset names
+        id: vars
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          ext=""
+          entry="whatsapp-connect-mcp"
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; entry="whatsapp-connect-mcp.exe"; fi
+          bin_asset="whatsapp-connect-mcp_${version}_${{ matrix.goos }}_${{ matrix.goarch }}${ext}"
+          mcpb_asset="whatsapp-connect-mcp_${version}_${{ matrix.goos }}_${{ matrix.goarch }}.mcpb"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "bin_asset=${bin_asset}" >> "$GITHUB_OUTPUT"
+          echo "mcpb_asset=${mcpb_asset}" >> "$GITHUB_OUTPUT"
+          echo "entry=${entry}" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
+      - name: Assemble bundle
+        run: |
+          rm -rf bundle
+          mkdir -p bundle/server
+          cp "dist/${{ steps.vars.outputs.bin_asset }}" "bundle/server/${{ steps.vars.outputs.entry }}"
+          chmod +x "bundle/server/${{ steps.vars.outputs.entry }}"
+          cp packaging/mcpb/manifest.json bundle/manifest.json
+          sed -i 's/"version": "0.0.0-dev"/"version": "${{ steps.vars.outputs.version }}"/' bundle/manifest.json
+          mkdir -p dist-mcpb
+          ( cd bundle && zip -qr "../dist-mcpb/${{ steps.vars.outputs.mcpb_asset }}" . )
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcpb-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist-mcpb/${{ steps.vars.outputs.mcpb_asset }}
+          if-no-files-found: error
+
+  publish-release:
+    needs: [build, package-mcpb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      linux_amd64_mcpb_sha256: ${{ steps.checksum.outputs.linux_amd64_mcpb_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute version
+        id: vars
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mcpb-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        id: checksum
+        shell: bash
+        run: |
+          ( cd dist && sha256sum -- * > checksums.txt )
+          sha="$(cd dist && sha256sum "whatsapp-connect-mcp_${{ steps.vars.outputs.version }}_linux_amd64.mcpb" | cut -d' ' -f1)"
+          echo "linux_amd64_mcpb_sha256=${sha}" >> "$GITHUB_OUTPUT"
+      - name: Extract CHANGELOG section
+        shell: bash
+        run: |
+          awk -v ver="${{ steps.vars.outputs.version }}" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no CHANGELOG.md section found for [${{ steps.vars.outputs.version }}]" >&2
+            exit 1
+          fi
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.vars.outputs.tag }}" \
+            --title "${{ steps.vars.outputs.tag }}" \
+            --notes-file release-notes.md \
+            dist/*
+
+  publish-registry:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render server.json for this release
+        shell: bash
+        run: |
+          version="${{ needs.publish-release.outputs.version }}"
+          sha="${{ needs.publish-release.outputs.linux_amd64_mcpb_sha256 }}"
+          url="https://github.com/idle-sync/whatsapp-connect-mcp/releases/download/v${version}/whatsapp-connect-mcp_${version}_linux_amd64.mcpb"
+          jq --arg version "$version" --arg url "$url" --arg sha "$sha" \
+            '.version = $version | .packages[0].identifier = $url | .packages[0].fileSha256 = $sha' \
+            server.json > server.generated.json
+      - name: Install mcp-publisher
+        shell: bash
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz"
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.generated.json

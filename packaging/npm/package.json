@@ -1,0 +1,29 @@
+{
+  "name": "whatsapp-connect-mcp",
+  "version": "0.0.0-dev",
+  "description": "WhatsApp MCP server — downloads and runs the matching whatsapp-connect-mcp release binary for your platform.",
+  "license": "MIT",
+  "homepage": "https://github.com/idle-sync/whatsapp-connect-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/idle-sync/whatsapp-connect-mcp.git"
+  },
+  "bin": {
+    "whatsapp-connect-mcp": "install.js"
+  },
+  "files": [
+    "install.js"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

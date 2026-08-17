@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.idle-sync/whatsapp-connect-mcp",
+  "title": "WhatsApp Connect",
+  "description": "A WhatsApp MCP server shipped as a single static Go binary: read, search, and send WhatsApp messages from any MCP client, with every outbound send protected by a server-enforced draft-and-confirm gate.",
+  "version": "0.0.0-dev",
+  "websiteUrl": "https://github.com/idle-sync/whatsapp-connect-mcp",
+  "repository": {
+    "url": "https://github.com/idle-sync/whatsapp-connect-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/idle-sync/whatsapp-connect-mcp/releases/download/v0.0.0-dev/whatsapp-connect-mcp_0.0.0-dev_linux_amd64.mcpb",
+      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
