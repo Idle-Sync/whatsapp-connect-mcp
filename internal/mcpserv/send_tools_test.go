@@ -2,6 +2,7 @@ package mcpserv
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,15 +13,24 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
-// sendFakeStore is a minimal Store fake for the send tool tests: only
-// SearchContacts (name resolution) and MessageContext (author resolution)
-// carry real behavior; the remaining Store methods are unused by send tools
-// and stubbed to satisfy the interface.
+// sendFakeStore is a minimal Store fake for the send tool tests: only Chat
+// and SearchContacts (name resolution) and MessageContext (author
+// resolution) carry real behavior; the remaining Store methods are unused
+// by send tools and stubbed to satisfy the interface.
 type sendFakeStore struct {
+	// chat maps a chat JID to the row Chat(jid) should return; presence in
+	// the map is "ok", matching the real Store.Chat's (row, found, error).
+	chat    map[string]store.ChatRow
+	chatErr error
+
 	searchContactsQuery string
 	searchContactsLimit int
-	searchContactsRet   []store.ContactRow
-	searchContactsErr   error
+	// searchContactsRet is filtered by query the same way the real
+	// Store.SearchContacts filters: a case-insensitive substring match
+	// against Name or Phone, so a test can't accidentally get a match it
+	// didn't earn by supplying an unrelated query.
+	searchContactsRet []store.ContactRow
+	searchContactsErr error
 
 	// messageContext maps "chatJID|id" to the row MessageContext(chatJID,
 	// id, 0, 0) should return as the sole element of its result slice.
@@ -29,7 +39,15 @@ type sendFakeStore struct {
 }
 
 func (f *sendFakeStore) Chats(string, bool, int) ([]store.ChatRow, error) { return nil, nil }
-func (f *sendFakeStore) Chat(string) (store.ChatRow, bool, error)         { return store.ChatRow{}, false, nil }
+
+func (f *sendFakeStore) Chat(jid string) (store.ChatRow, bool, error) {
+	if f.chatErr != nil {
+		return store.ChatRow{}, false, f.chatErr
+	}
+	row, ok := f.chat[jid]
+	return row, ok, nil
+}
+
 func (f *sendFakeStore) Messages(string, int64, int64, int) ([]store.MessageRow, error) {
 	return nil, nil
 }
@@ -51,7 +69,20 @@ func (f *sendFakeStore) MessageContext(chatJID, id string, _, _ int) ([]store.Me
 func (f *sendFakeStore) SearchContacts(query string, limit int) ([]store.ContactRow, error) {
 	f.searchContactsQuery = query
 	f.searchContactsLimit = limit
-	return f.searchContactsRet, f.searchContactsErr
+	if f.searchContactsErr != nil {
+		return nil, f.searchContactsErr
+	}
+	if query == "" {
+		return f.searchContactsRet, nil
+	}
+	q := strings.ToLower(query)
+	var out []store.ContactRow
+	for _, c := range f.searchContactsRet {
+		if strings.Contains(strings.ToLower(c.Name), q) || strings.Contains(strings.ToLower(c.Phone), q) {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (f *sendFakeStore) LastInteraction(string) (store.MessageRow, bool, error) {
@@ -203,17 +234,51 @@ func TestSendVoiceNoteNonexistentPathIsCategoryError(t *testing.T) {
 	if err == nil {
 		t.Fatal("sendVoiceNote() error = nil, want a category error for a nonexistent path")
 	}
+	if !strings.Contains(err.Error(), "voice note file") {
+		t.Fatalf("sendVoiceNote() error = %q, want it to use the \"voice note file\" category, not \"media file\"", err.Error())
+	}
+	if strings.Contains(err.Error(), "media file") {
+		t.Fatalf("sendVoiceNote() error = %q, must not use the send_media category wording", err.Error())
+	}
 	if deliverer.count() != 0 {
 		t.Fatalf("deliverer called %d times, want 0", deliverer.count())
 	}
 }
 
-func TestSendMessageDraftPreviewShowsResolvedContactName(t *testing.T) {
+func TestSendVoiceNoteRejectsNonOggExtension(t *testing.T) {
 	deliverer := &fakeDeliverer{}
 	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
-	st := &sendFakeStore{searchContactsRet: []store.ContactRow{
-		{JID: "111@s.whatsapp.net", Phone: "111", Name: "Alice"},
-	}}
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	path := filepath.Join(t.TempDir(), "note.mp3")
+	if err := os.WriteFile(path, []byte("not ogg content"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, _, err := d.sendVoiceNote(context.Background(), nil, sendVoiceNoteInput{To: "111@s.whatsapp.net", Path: path})
+	if err == nil {
+		t.Fatal("sendVoiceNote() error = nil, want a category error for a non-.ogg extension")
+	}
+	if !strings.Contains(err.Error(), "Ogg Opus") {
+		t.Fatalf("sendVoiceNote() error = %q, want it to mention Ogg Opus", err.Error())
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0 (extension must be rejected before any send attempt)", deliverer.count())
+	}
+}
+
+func TestSendMessageDraftPreviewPrefersChatNameOverContactName(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
+	// A decoy contact under the same JID with a different name: if
+	// SearchContacts were consulted despite Chat already resolving a name,
+	// this wrong name would leak into the preview instead.
+	st := &sendFakeStore{
+		chat: map[string]store.ChatRow{"111@s.whatsapp.net": {JID: "111@s.whatsapp.net", Name: "Alice"}},
+		searchContactsRet: []store.ContactRow{
+			{JID: "111@s.whatsapp.net", Phone: "111", Name: "WrongName"},
+		},
+	}
 	d := &sendDeps{st: st, g: g}
 
 	result, _, err := d.sendMessage(context.Background(), nil, sendMessageInput{To: "111@s.whatsapp.net", Text: "hi"})
@@ -222,10 +287,60 @@ func TestSendMessageDraftPreviewShowsResolvedContactName(t *testing.T) {
 	}
 	text := resultText(t, result)
 	if !strings.Contains(text, "Alice") {
-		t.Fatalf("sendMessage() draft text = %q, want it to contain the resolved contact name %q", text, "Alice")
+		t.Fatalf("sendMessage() draft text = %q, want it to contain the chat's name %q", text, "Alice")
+	}
+	if strings.Contains(text, "WrongName") {
+		t.Fatalf("sendMessage() draft text = %q, want the Chat lookup to take priority over SearchContacts", text)
+	}
+	if st.searchContactsQuery != "" {
+		t.Fatalf("SearchContacts was queried (query = %q) even though Chat already resolved a name; it should not have been consulted", st.searchContactsQuery)
 	}
 	if !strings.Contains(text, "111@s.whatsapp.net") {
 		t.Fatalf("sendMessage() draft text = %q, want it to contain the recipient JID", text)
+	}
+}
+
+func TestSendMessageDraftPreviewFallsBackToContactNameWhenChatHasNoName(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
+	st := &sendFakeStore{
+		// The chat is known but carries no name yet, so resolution must
+		// fall through to SearchContacts.
+		chat: map[string]store.ChatRow{"111@s.whatsapp.net": {JID: "111@s.whatsapp.net", Name: ""}},
+		searchContactsRet: []store.ContactRow{
+			{JID: "111@s.whatsapp.net", Phone: "111", Name: "Bob"},
+		},
+	}
+	d := &sendDeps{st: st, g: g}
+
+	result, _, err := d.sendMessage(context.Background(), nil, sendMessageInput{To: "111@s.whatsapp.net", Text: "hi"})
+	if err != nil {
+		t.Fatalf("sendMessage() error = %v", err)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "Bob") {
+		t.Fatalf("sendMessage() draft text = %q, want the SearchContacts fallback name %q", text, "Bob")
+	}
+	if st.searchContactsQuery != "111" {
+		t.Fatalf("SearchContacts queried with %q, want the JID's local part %q", st.searchContactsQuery, "111")
+	}
+}
+
+func TestSendMessageDraftPreviewFallsBackToBareJIDWhenNothingResolves(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	result, _, err := d.sendMessage(context.Background(), nil, sendMessageInput{To: "111@s.whatsapp.net", Text: "hi"})
+	if err != nil {
+		t.Fatalf("sendMessage() error = %v", err)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "111@s.whatsapp.net") {
+		t.Fatalf("sendMessage() draft text = %q, want it to contain the bare recipient JID", text)
+	}
+	if strings.Contains(text, "(111@s.whatsapp.net)") {
+		t.Fatalf("sendMessage() draft text = %q, want no resolved-name-plus-JID form when nothing resolves", text)
 	}
 }
 
