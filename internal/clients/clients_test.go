@@ -300,6 +300,107 @@ func TestRemoveMalformedJSONLeavesFileUntouched(t *testing.T) {
 	}
 }
 
+func TestInjectNullConfigFileDoesNotPanic(t *testing.T) {
+	home := t.TempDir()
+	path := configPathFor(t, home, "Cursor")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if err := Inject(path, "/abs/bin"); err != nil {
+		t.Fatalf("Inject() error: %v", err)
+	}
+
+	cmd, ok := InjectedCommand(path)
+	if !ok || cmd != "/abs/bin" {
+		t.Fatalf("InjectedCommand() = (%q, %v), want (%q, true)", cmd, ok, "/abs/bin")
+	}
+}
+
+func TestInjectNullMcpServersDoesNotPanic(t *testing.T) {
+	home := t.TempDir()
+	path := configPathFor(t, home, "Cursor")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"mcpServers": null}`), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if err := Inject(path, "/abs/bin"); err != nil {
+		t.Fatalf("Inject() error: %v", err)
+	}
+
+	cmd, ok := InjectedCommand(path)
+	if !ok || cmd != "/abs/bin" {
+		t.Fatalf("InjectedCommand() = (%q, %v), want (%q, true)", cmd, ok, "/abs/bin")
+	}
+}
+
+func TestRemoveNullConfigShapesAreNoop(t *testing.T) {
+	tests := []struct {
+		name string
+		seed string
+	}{
+		{"null document", "null"},
+		{"null mcpServers", `{"mcpServers": null}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := configPathFor(t, home, "Cursor")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("seed dir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(tt.seed), 0o600); err != nil {
+				t.Fatalf("seed config: %v", err)
+			}
+
+			if err := Remove(path); err != nil {
+				t.Fatalf("Remove() error: %v", err)
+			}
+		})
+	}
+}
+
+func TestInjectMcpServersWrongTypeIsRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		seed string
+	}{
+		{"array", `{"mcpServers": ["x"]}`},
+		{"string", `{"mcpServers": "x"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := configPathFor(t, home, "Cursor")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("seed dir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(tt.seed), 0o600); err != nil {
+				t.Fatalf("seed config: %v", err)
+			}
+
+			err := Inject(path, "/abs/bin")
+			if err == nil {
+				t.Fatal("Inject() error = nil, want error for non-object mcpServers")
+			}
+
+			data, readErr := os.ReadFile(path) // #nosec G304 -- path comes from Detect() in a t.TempDir(), not network input
+			if readErr != nil {
+				t.Fatalf("read config: %v", readErr)
+			}
+			if string(data) != tt.seed {
+				t.Fatalf("file contents changed after failed Inject: %q", string(data))
+			}
+		})
+	}
+}
+
 func TestInjectEntryShape(t *testing.T) {
 	home := t.TempDir()
 	path := configPathFor(t, home, "Claude Desktop")

@@ -232,11 +232,19 @@ func loadRawObject(path string) (map[string]json.RawMessage, error) {
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, errInvalidJSON
 	}
+	// A file containing the literal JSON null unmarshals successfully into a
+	// nil map (encoding/json's documented behavior for null into a map), not
+	// an error. Treat it the same as an empty object rather than risk a nil
+	// map being written into by a caller.
+	if root == nil {
+		root = map[string]json.RawMessage{}
+	}
 	return root, nil
 }
 
-// extractObject unmarshals root[key] as a raw object. A missing key yields
-// an empty object; a key present but not a JSON object is a category error.
+// extractObject unmarshals root[key] as a raw object. A missing key, or a
+// key whose value is the literal JSON null, yields an empty object; a key
+// present with any other non-object value is a category error.
 func extractObject(root map[string]json.RawMessage, key string) (map[string]json.RawMessage, error) {
 	raw, ok := root[key]
 	if !ok {
@@ -245,6 +253,12 @@ func extractObject(root map[string]json.RawMessage, key string) (map[string]json
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, errInvalidShape
+	}
+	// Same null-into-map normalization as loadRawObject: {"mcpServers":
+	// null} unmarshals to a nil map with no error, and a null server list
+	// means no servers, not a shape error.
+	if obj == nil {
+		obj = map[string]json.RawMessage{}
 	}
 	return obj, nil
 }
