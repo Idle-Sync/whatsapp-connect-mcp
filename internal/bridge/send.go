@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
@@ -79,11 +80,29 @@ func (b *Bridge) Deliver(ctx context.Context, d gate.Delivery) (string, error) {
 		return b.deliverRevoke(ctx, d)
 	case "poll":
 		return b.deliverPoll(ctx, d)
+	case "block":
+		return b.deliverBlocklist(ctx, d, events.BlocklistChangeActionBlock)
+	case "unblock":
+		return b.deliverBlocklist(ctx, d, events.BlocklistChangeActionUnblock)
 	case "read":
 		return b.deliverRead(ctx, d)
 	default:
 		return "", fmt.Errorf("unknown delivery kind %q", d.Kind)
 	}
+}
+
+// deliverBlocklist blocks or unblocks a contact. There is no message id for
+// a block-list change, so the returned id is empty; the gate reports the
+// committed preview, which already names the action and the contact.
+func (b *Bridge) deliverBlocklist(ctx context.Context, d gate.Delivery, action events.BlocklistChangeAction) (string, error) {
+	jid, err := parseRecipient(d.To)
+	if err != nil {
+		return "", err
+	}
+	if _, err := b.client.UpdateBlocklist(ctx, jid, action); err != nil {
+		return "", waErr("update block list", err)
+	}
+	return "", nil
 }
 
 // deliverPoll creates a poll message in the chat. It re-validates rather

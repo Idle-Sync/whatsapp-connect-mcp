@@ -50,7 +50,7 @@ type Deliverer interface {
 // Delivery describes one outbound action, spanning every kind the gate
 // covers so a single rate limiter and draft flow guards all of them.
 type Delivery struct {
-	Kind       string // text|media|voice|reaction|edit|revoke|poll|read
+	Kind       string // text|media|voice|reaction|edit|revoke|poll|block|unblock|read
 	To         string // JID
 	Text       string // body, caption, emoji, or poll question
 	Path       string // media/voice source file
@@ -142,6 +142,15 @@ func (g *Gate) Submit(ctx context.Context, d Delivery, draftToken string, resolv
 		return g.commit(ctx, d, draftToken, preview)
 	}
 
+	// block and unblock always draft, trust or not: trust means "I am fine
+	// auto-sending messages to this person", which says nothing about
+	// changing their block status. There is no recipient one would mark
+	// trusted-to-auto-block, so these must never take the auto-commit path
+	// and are confirmed on every call.
+	if alwaysDrafts(d.Kind) {
+		return g.createDraft(d, preview)
+	}
+
 	// Read receipts have no draft_token parameter on the MCP tool side
 	// (ARCHITECTURE.md §6), so they can never be re-submitted to commit a
 	// draft — they must always deliver on the first call, trusted or not.
@@ -151,6 +160,12 @@ func (g *Gate) Submit(ctx context.Context, d Delivery, draftToken string, resolv
 	}
 
 	return g.createDraft(d, preview)
+}
+
+// alwaysDrafts reports whether a delivery kind must be confirmed on every
+// call, never auto-committing on the trust list.
+func alwaysDrafts(kind string) bool {
+	return kind == "block" || kind == "unblock"
 }
 
 func (g *Gate) createDraft(d Delivery, preview string) (Result, error) {

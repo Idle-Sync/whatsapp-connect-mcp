@@ -41,6 +41,20 @@ func TestDeliverInvalidRecipientErrors(t *testing.T) {
 	}
 }
 
+func TestDeliverBlockRejectsInvalidRecipient(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	for _, kind := range []string{"block", "unblock"} {
+		_, err := b.Deliver(context.Background(), gate.Delivery{Kind: kind, To: "not a jid"})
+		if err == nil {
+			t.Fatalf("Deliver(%s) error = nil, want an error for an invalid recipient", kind)
+		}
+		if strings.Contains(err.Error(), "not a jid") {
+			t.Fatalf("Deliver(%s) error = %q, must not echo the recipient value", kind, err.Error())
+		}
+	}
+}
+
 func TestDeliverPollValidation(t *testing.T) {
 	b, _ := newTestBridge(t)
 

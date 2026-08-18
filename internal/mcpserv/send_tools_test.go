@@ -438,6 +438,52 @@ func TestSendReactionResolvesAuthorFromMessageContext(t *testing.T) {
 	}
 }
 
+func TestBlockContactDraftsThenCommits(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	// Trusted recipient: proves block ignores trust and still drafts.
+	g := gate.New(deliverer, func(string) bool { return true }, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	first, _, err := d.blockContact(context.Background(), nil, blockContactInput{JID: "111@s.whatsapp.net"})
+	if err != nil {
+		t.Fatalf("blockContact() first call error = %v", err)
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times on the drafting call, want 0", deliverer.count())
+	}
+	token := extractField(t, resultText(t, first), "draft_token")
+	if token == "" {
+		t.Fatal("blockContact() first call returned no draft_token")
+	}
+
+	second, _, err := d.blockContact(context.Background(), nil, blockContactInput{
+		JID: "111@s.whatsapp.net", DraftToken: token,
+	})
+	if err != nil {
+		t.Fatalf("blockContact() commit error = %v", err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times after commit, want 1", deliverer.count())
+	}
+	if got := deliverer.delivered[0]; got.Kind != "block" || got.To != "111@s.whatsapp.net" {
+		t.Fatalf("delivered = %+v, want a block of the JID", got)
+	}
+	_ = second
+}
+
+// TestRenderSendResultNoMessageIDReportsDone covers the block-list case,
+// where the committed action produces no message id: the render must report
+// a plain confirmation, not an empty "message_id:" line.
+func TestRenderSendResultNoMessageIDReportsDone(t *testing.T) {
+	text := renderSendResult(gate.Result{Sent: true, MessageID: "", Preview: "Alice (111@s.whatsapp.net) block"})
+	if strings.Contains(text, "message_id:") {
+		t.Errorf("render = %q, want no message_id line for an id-less action", text)
+	}
+	if !strings.Contains(text, "done") {
+		t.Errorf("render = %q, want a done confirmation", text)
+	}
+}
+
 func TestCreatePollTrustedSendsPollKind(t *testing.T) {
 	deliverer := &fakeDeliverer{}
 	g := gate.New(deliverer, func(jid string) bool { return jid == "c@g.us" }, 3, 12, time.Now)

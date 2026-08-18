@@ -638,6 +638,45 @@ func TestSubmitDraftCapEvictsOldest(t *testing.T) {
 	}
 }
 
+// TestBlockAlwaysDraftsEvenForTrustedRecipient is the whole point of the
+// always-draft rule: trust means "auto-send messages to this person", which
+// must not silently authorise changing their block status. A block to a
+// trusted recipient must still draft, and only commit on re-submission.
+func TestBlockAlwaysDraftsEvenForTrustedRecipient(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	// Everyone is trusted: a normal send would auto-commit here.
+	g := New(deliverer, func(string) bool { return true }, 3, 12, clock.Now)
+
+	for _, kind := range []string{"block", "unblock"} {
+		before := deliverer.count()
+
+		res, err := g.Submit(context.Background(),
+			Delivery{Kind: kind, To: "111@s.whatsapp.net"}, "", nil)
+		if err != nil {
+			t.Fatalf("Submit(%s) error = %v", kind, err)
+		}
+		if res.Sent {
+			t.Errorf("Submit(%s) Sent = true for a trusted recipient, want a draft", kind)
+		}
+		if res.DraftToken == "" {
+			t.Errorf("Submit(%s) returned no draft token", kind)
+		}
+		if deliverer.count() != before {
+			t.Fatalf("deliverer called on the drafting %s call, want no delivery", kind)
+		}
+
+		// Re-submitting the identical call with the token commits it.
+		if _, err := g.Submit(context.Background(),
+			Delivery{Kind: kind, To: "111@s.whatsapp.net"}, res.DraftToken, nil); err != nil {
+			t.Fatalf("Submit(%s) commit error = %v", kind, err)
+		}
+		if deliverer.count() != before+1 {
+			t.Fatalf("commit of %s delivered %d times, want one", kind, deliverer.count()-before)
+		}
+	}
+}
+
 // TestSubmitRefusesBeforeDraftingAndBeforeRateLimiting proves a delivery the
 // deliverer rejects costs nothing: no draft token is minted, and no
 // rate-limit token is spent. Spending either would let a caller that keeps
