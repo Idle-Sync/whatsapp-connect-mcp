@@ -965,3 +965,104 @@ func TestOpenedAtIsSet(t *testing.T) {
 		t.Fatal("OpenedAt is zero; the event-flow check needs a baseline for a bridge with no events yet")
 	}
 }
+
+// WaitForCatchUp is the read-side gate for the post-reconnect window:
+// WhatsApp redelivers messages that arrived while the device was offline
+// during the first seconds after connecting, and a read served before that
+// queue drains would show a mirror that is knowably behind.
+
+func TestWaitForCatchUpReturnsImmediatelyWhenNeverConnected(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	done := make(chan struct{})
+	go func() { b.WaitForCatchUp(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForCatchUp blocked though the bridge never connected — there is nothing to wait for")
+	}
+}
+
+func TestWaitForCatchUpBlocksUntilOfflineSyncCompletes(t *testing.T) {
+	b, _ := newTestBridge(t)
+	b.catchUpGrace = 30 * time.Second // far above the test's own timeout
+
+	b.handleEvent(&events.Connected{})
+
+	released := make(chan struct{})
+	go func() { b.WaitForCatchUp(context.Background()); close(released) }()
+
+	select {
+	case <-released:
+		t.Fatal("WaitForCatchUp returned before OfflineSyncCompleted; a read here would see the stale mirror")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	b.handleEvent(&events.OfflineSyncCompleted{})
+
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForCatchUp still blocked after OfflineSyncCompleted")
+	}
+}
+
+// If whatsmeow never signals completion (nothing was queued, or the server
+// omitted the marker), the grace deadline bounds the wait.
+func TestWaitForCatchUpGraceBoundsTheWait(t *testing.T) {
+	b, _ := newTestBridge(t)
+	b.catchUpGrace = 200 * time.Millisecond
+
+	b.handleEvent(&events.Connected{})
+
+	done := make(chan struct{})
+	go func() { b.WaitForCatchUp(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForCatchUp did not release at the grace deadline")
+	}
+}
+
+func TestWaitForCatchUpRespectsContext(t *testing.T) {
+	b, _ := newTestBridge(t)
+	b.catchUpGrace = 30 * time.Second
+
+	b.handleEvent(&events.Connected{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { b.WaitForCatchUp(ctx); close(done) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForCatchUp ignored context cancellation")
+	}
+}
+
+// A reconnect re-opens the window: completion from the previous session
+// must not satisfy a wait that begins after a fresh Connected event.
+func TestWaitForCatchUpReArmsOnReconnect(t *testing.T) {
+	b, _ := newTestBridge(t)
+	b.catchUpGrace = 30 * time.Second
+
+	b.handleEvent(&events.Connected{})
+	b.handleEvent(&events.OfflineSyncCompleted{})
+	b.handleEvent(&events.Connected{}) // reconnect: new offline queue pending
+
+	released := make(chan struct{})
+	go func() { b.WaitForCatchUp(context.Background()); close(released) }()
+	select {
+	case <-released:
+		t.Fatal("WaitForCatchUp treated a previous session's completion as current")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	b.handleEvent(&events.OfflineSyncCompleted{})
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForCatchUp still blocked after the reconnect's own completion")
+	}
+}

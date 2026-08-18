@@ -60,6 +60,19 @@ type Bridge struct {
 	openedAt    time.Time
 	lastEventAt atomic.Int64
 
+	// Catch-up state for WaitForCatchUp. catchUpSeq orders Connected and
+	// OfflineSyncCompleted events (a shared counter, so ordering never
+	// depends on clock resolution): the session is caught up when the
+	// latest completion came after the latest connect. connectedAtMs
+	// anchors the grace deadline for a session whose completion marker
+	// never arrives. catchUpGrace is a field (defaulted in Open) so tests
+	// can shorten it.
+	catchUpSeq     atomic.Int64
+	connectedSeq   atomic.Int64
+	offlineSyncSeq atomic.Int64
+	connectedAtMs  atomic.Int64
+	catchUpGrace   time.Duration
+
 	handlerOnce sync.Once
 	// handlerRegistrations counts how many times ensureHandlerRegistered
 	// actually registered the event handler (as opposed to how many times
@@ -100,7 +113,10 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 	}
 
 	client := whatsmeow.NewClient(device, waLog.Noop)
-	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir, mediaRoots: roots, openedAt: time.Now()}
+	b := &Bridge{
+		client: client, container: container, store: st, dataDir: dataDir,
+		mediaRoots: roots, openedAt: time.Now(), catchUpGrace: defaultCatchUpGrace,
+	}
 	// Registered here, once, rather than in Connect: PairQR also needs
 	// inbound events flowing (history sync can start arriving mid-pairing),
 	// and registering in exactly one place removes any chance of a second
@@ -128,6 +144,39 @@ func (b *Bridge) Close() error {
 		return fmt.Errorf("close session store: %w", err)
 	}
 	return nil
+}
+
+// defaultCatchUpGrace bounds how long WaitForCatchUp will hold a read
+// after a connect whose offline-sync-completed marker never arrives. The
+// offline queue normally drains (and the marker arrives) within a few
+// seconds of connecting.
+const defaultCatchUpGrace = 15 * time.Second
+
+// WaitForCatchUp blocks until the offline queue WhatsApp redelivers after
+// a (re)connect has drained — signalled by OfflineSyncCompleted — so a
+// read served afterwards reflects messages that arrived while the server
+// was down, rather than a mirror that is knowably behind. It returns
+// immediately when the session is already caught up (the steady state:
+// two atomic loads), when the bridge has never connected, when ctx is
+// cancelled, or at the grace deadline for a session whose completion
+// marker never arrives.
+func (b *Bridge) WaitForCatchUp(ctx context.Context) {
+	const pollInterval = 50 * time.Millisecond
+	for {
+		cseq := b.connectedSeq.Load()
+		if cseq == 0 || b.offlineSyncSeq.Load() > cseq {
+			return
+		}
+		deadline := time.UnixMilli(b.connectedAtMs.Load()).Add(b.catchUpGrace)
+		if !time.Now().Before(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // LastEventAt reports when handleEvent last saw any WhatsApp event, zero

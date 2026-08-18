@@ -13,6 +13,15 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Reads wait out the reconnect catch-up window.** WhatsApp redelivers
+  messages that arrived while the server was down during the first
+  seconds after connecting. Store-backed reads (`list_messages`,
+  `search_messages`, and the rest) now wait for that offline queue to
+  finish draining — signalled by the protocol, bounded by a 15-second
+  grace deadline — before answering, so a read right after a restart
+  reflects what arrived during the downtime instead of a mirror that is
+  knowably behind. In the steady state the check is two atomic loads;
+  no read is ever delayed once the session is caught up.
 - **Transport choice in `setup`.** The wizard now asks how MCP clients
   should connect: **stdio** (default — each client starts its own server;
   one client/session at a time, since one `serve` holds the data

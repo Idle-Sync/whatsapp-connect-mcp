@@ -45,6 +45,13 @@ func (b *Bridge) handleEvent(raw any) {
 		b.ingestPushName(evt)
 	case *events.GroupInfo:
 		b.ingestGroupInfoName(evt)
+	case *events.Connected:
+		// A fresh (re)connect opens a catch-up window: WhatsApp is about
+		// to redeliver whatever queued while the device was offline.
+		b.connectedAtMs.Store(time.Now().UnixMilli())
+		b.connectedSeq.Store(b.catchUpSeq.Add(1))
+	case *events.OfflineSyncCompleted:
+		b.offlineSyncSeq.Store(b.catchUpSeq.Add(1))
 	}
 }
 

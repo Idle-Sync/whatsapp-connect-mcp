@@ -235,7 +235,9 @@ type listChatsInput struct {
 	Limit           int    `json:"limit,omitempty" jsonschema:"Maximum rows to return; default 20, max 100."`
 }
 
-func (d *toolDeps) listChats(_ context.Context, _ *mcp.CallToolRequest, in listChatsInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) listChats(ctx context.Context, _ *mcp.CallToolRequest, in listChatsInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	chats, err := d.st.Chats(in.Query, in.IncludeArchived, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
@@ -251,7 +253,9 @@ type getChatInput struct {
 	ChatJID string `json:"chat_jid" jsonschema:"JID of the chat to look up."`
 }
 
-func (d *toolDeps) getChat(_ context.Context, _ *mcp.CallToolRequest, in getChatInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) getChat(ctx context.Context, _ *mcp.CallToolRequest, in getChatInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	chat, ok, err := d.st.Chat(in.ChatJID)
 	if err != nil {
 		return nil, nil, err
@@ -272,7 +276,9 @@ type listMessagesInput struct {
 	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum rows to return; default 20, max 100."`
 }
 
-func (d *toolDeps) listMessages(_ context.Context, _ *mcp.CallToolRequest, in listMessagesInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) listMessages(ctx context.Context, _ *mcp.CallToolRequest, in listMessagesInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	afterTS, beforeTS, err := timewin.Resolve(timewin.Spec{
 		After: in.After, Before: in.Before, Date: in.Date, Window: in.Window, TZ: in.TZ,
 	}, d.clock())
@@ -296,7 +302,9 @@ type searchMessagesInput struct {
 	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum rows to return; default 20, max 100."`
 }
 
-func (d *toolDeps) searchMessages(_ context.Context, _ *mcp.CallToolRequest, in searchMessagesInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in searchMessagesInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	msgs, err := d.st.SearchMessages(in.Query, in.ChatJID, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
@@ -315,7 +323,9 @@ type getMessageContextInput struct {
 	After     int    `json:"after,omitempty" jsonschema:"Number of messages to include after the target; 0-100, default 0."`
 }
 
-func (d *toolDeps) getMessageContext(_ context.Context, _ *mcp.CallToolRequest, in getMessageContextInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) getMessageContext(ctx context.Context, _ *mcp.CallToolRequest, in getMessageContextInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	msgs, err := d.st.MessageContext(in.ChatJID, in.MessageID, store.ClampContext(in.Before), store.ClampContext(in.After))
 	if err != nil {
 		return nil, nil, err
@@ -332,7 +342,9 @@ type searchContactsInput struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum rows to return; default 20, max 100."`
 }
 
-func (d *toolDeps) searchContacts(_ context.Context, _ *mcp.CallToolRequest, in searchContactsInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) searchContacts(ctx context.Context, _ *mcp.CallToolRequest, in searchContactsInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	contacts, err := d.st.SearchContacts(in.Query, store.ClampLimit(in.Limit))
 	if err != nil {
 		return nil, nil, err
@@ -348,7 +360,9 @@ type getLastInteractionInput struct {
 	JID string `json:"jid" jsonschema:"JID to look up the most recent message for."`
 }
 
-func (d *toolDeps) getLastInteraction(_ context.Context, _ *mcp.CallToolRequest, in getLastInteractionInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) getLastInteraction(ctx context.Context, _ *mcp.CallToolRequest, in getLastInteractionInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	msg, ok, err := d.st.LastInteraction(in.JID)
 	if err != nil {
 		return nil, nil, err
@@ -460,7 +474,9 @@ type getCallHistoryInput struct {
 	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum rows to return; default 20, max 100."`
 }
 
-func (d *toolDeps) getCallHistory(_ context.Context, _ *mcp.CallToolRequest, in getCallHistoryInput) (*mcp.CallToolResult, any, error) {
+func (d *toolDeps) getCallHistory(ctx context.Context, _ *mcp.CallToolRequest, in getCallHistoryInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	afterTS, beforeTS, err := timewin.Resolve(timewin.Spec{
 		After: in.After, Before: in.Before, Date: in.Date, Window: in.Window, TZ: in.TZ,
 	}, d.clock())
@@ -616,6 +632,8 @@ func safeMessageIDForEcho(id string) string {
 }
 
 func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in downloadMediaInput) (*mcp.CallToolResult, any, error) {
+	d.live.WaitForCatchUp(ctx)
+
 	hasWindow := in.hasTimeWindow()
 	forms := 0
 	if in.MessageID != "" {

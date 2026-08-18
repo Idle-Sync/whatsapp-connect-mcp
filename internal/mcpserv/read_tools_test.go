@@ -157,6 +157,12 @@ type fakeLive struct {
 
 	blocklist    []string
 	blocklistErr error
+
+	catchUpWaits int
+}
+
+func (f *fakeLive) WaitForCatchUp(_ context.Context) {
+	f.catchUpWaits++
 }
 
 func (f *fakeLive) RequestOlderMessages(_ context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error {
@@ -983,4 +989,34 @@ func resultText(t *testing.T, result *mcp.CallToolResult) string {
 		t.Fatalf("result content is %T, want *mcp.TextContent", result.Content[0])
 	}
 	return tc.Text
+}
+
+// Every store-backed read must wait out the post-reconnect catch-up window
+// before querying: WhatsApp redelivers offline-queued messages in the
+// first seconds after connecting, and a read served before that finishes
+// would present a mirror that is knowably behind as if it were current.
+func TestStoreBackedReadsWaitForCatchUp(t *testing.T) {
+	st := &fakeStore{chatOK: true, lastInteractionOK: true, mediaRef: []byte("r"), mediaKind: "image"}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live, dataDir: t.TempDir()}
+	ctx := context.Background()
+
+	handlers := map[string]func(){
+		"list_chats":           func() { _, _, _ = d.listChats(ctx, nil, listChatsInput{}) },
+		"get_chat":             func() { _, _, _ = d.getChat(ctx, nil, getChatInput{ChatJID: "x@s.whatsapp.net"}) },
+		"list_messages":        func() { _, _, _ = d.listMessages(ctx, nil, listMessagesInput{ChatJID: "x@s.whatsapp.net"}) },
+		"search_messages":      func() { _, _, _ = d.searchMessages(ctx, nil, searchMessagesInput{Query: "q"}) },
+		"get_message_context":  func() { _, _, _ = d.getMessageContext(ctx, nil, getMessageContextInput{ChatJID: "x", MessageID: "m"}) },
+		"search_contacts":      func() { _, _, _ = d.searchContacts(ctx, nil, searchContactsInput{}) },
+		"get_last_interaction": func() { _, _, _ = d.getLastInteraction(ctx, nil, getLastInteractionInput{JID: "x"}) },
+		"get_call_history":     func() { _, _, _ = d.getCallHistory(ctx, nil, getCallHistoryInput{}) },
+		"download_media":       func() { _, _, _ = d.downloadMedia(ctx, nil, downloadMediaInput{ChatJID: "x@s.whatsapp.net", MessageID: "m1"}) },
+	}
+	for name, call := range handlers {
+		before := live.catchUpWaits
+		call()
+		if live.catchUpWaits != before+1 {
+			t.Errorf("%s did not wait for catch-up before reading the store", name)
+		}
+	}
 }

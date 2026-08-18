@@ -49,6 +49,11 @@ type Store interface {
 // Live is the on-demand WhatsApp network access this package needs.
 // Satisfied by *bridge.Bridge.
 type Live interface {
+	// WaitForCatchUp blocks until the offline queue WhatsApp redelivers
+	// after a (re)connect has drained (bounded by a grace deadline), so a
+	// store read that follows reflects messages that arrived while the
+	// server was down. A no-op in the steady state.
+	WaitForCatchUp(ctx context.Context)
 	GroupParticipants(ctx context.Context, groupJID string) ([]string, error)
 	GroupInfo(ctx context.Context, groupJID string) (subject, description, ownerJID string, admins []string, err error)
 	Blocklist(ctx context.Context) ([]string, error)
