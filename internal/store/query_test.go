@@ -1087,3 +1087,58 @@ func TestErrorMessagesDoNotLeakJIDsOrContent(t *testing.T) {
 		t.Fatalf("error %q leaks chat JID", err.Error())
 	}
 }
+
+// CountMessagesOlderThan backs fetch_older_messages' status report: how
+// many stored rows in the chat predate the previous request's anchor.
+func TestCountMessagesOlderThan(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s) // chat1 messages at ts 100..500
+
+	n, err := s.CountMessagesOlderThan(f.chat1, 300)
+	if err != nil {
+		t.Fatalf("CountMessagesOlderThan: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("count = %d, want 2 (ts 100 and 200)", n)
+	}
+
+	n, err = s.CountMessagesOlderThan(f.chat1, 100)
+	if err != nil {
+		t.Fatalf("CountMessagesOlderThan: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("count = %d, want 0", n)
+	}
+}
+
+// TailRowID backs poll_new_messages' tail mode: a cursor positioned so the
+// newest n messages lie after it.
+func TestTailRowID(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s) // chat1: m1..m5
+
+	cursor, err := s.TailRowID(f.chat1, true, 2)
+	if err != nil {
+		t.Fatalf("TailRowID: %v", err)
+	}
+	rows, _, err := s.MessagesAfterRowID(f.chat1, cursor, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != "m4" || rows[1].ID != "m5" {
+		t.Fatalf("tail rows = %+v, want the newest two (m4, m5) oldest-first", rows)
+	}
+
+	// Asking for more than exist starts from the beginning.
+	cursor, err = s.TailRowID(f.chat1, true, 50)
+	if err != nil {
+		t.Fatalf("TailRowID(50): %v", err)
+	}
+	rows, _, err = s.MessagesAfterRowID(f.chat1, cursor, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("tail(50) rows = %d, want all 5", len(rows))
+	}
+}

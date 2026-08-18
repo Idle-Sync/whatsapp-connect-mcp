@@ -73,6 +73,15 @@ type fakeStore struct {
 	afterRowsNext        int64
 	afterRowsErr         error
 
+	tailRowIDChat string
+	tailRowIDN    int
+	tailRowIDRet  int64
+	tailRowIDErr  error
+
+	countOlderTS  int64
+	countOlderRet int
+	countOlderErr error
+
 	oldestRet store.MessageRow
 	oldestOK  bool
 	oldestErr error
@@ -150,6 +159,16 @@ func (f *fakeStore) MessagesAfterRowID(chatJID string, afterRowID int64, include
 		return nil, afterRowID, nil
 	}
 	return f.afterRowsRet, f.afterRowsNext, nil
+}
+
+func (f *fakeStore) TailRowID(chatJID string, _ bool, n int) (int64, error) {
+	f.tailRowIDChat, f.tailRowIDN = chatJID, n
+	return f.tailRowIDRet, f.tailRowIDErr
+}
+
+func (f *fakeStore) CountMessagesOlderThan(_ string, ts int64) (int, error) {
+	f.countOlderTS = ts
+	return f.countOlderRet, f.countOlderErr
 }
 
 func (f *fakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
@@ -1179,5 +1198,114 @@ func TestClampPollTimeout(t *testing.T) {
 		if got := clampPollTimeout(in); got != want {
 			t.Errorf("clampPollTimeout(%d) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// A history request's fate was unknowable (issue #12): the phone answers
+// asynchronously or not at all. The tool now reports, on the next call for
+// the same chat, what actually arrived since the previous request.
+func TestFetchOlderMessagesReportsPreviousRequestOutcome(t *testing.T) {
+	st := &fakeStore{oldestOK: true, oldestRet: store.MessageRow{ChatJID: "c@g.us", ID: "m1", TS: 500}}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live}
+	ctx := context.Background()
+
+	first, _, err := d.fetchOlderMessages(ctx, nil, fetchOlderMessagesInput{ChatJID: "c@g.us"})
+	if err != nil {
+		t.Fatalf("first call error = %v", err)
+	}
+	if strings.Contains(resultText(t, first), "previous request") {
+		t.Fatalf("first call = %q, must not report a previous request", resultText(t, first))
+	}
+
+	// The phone answered: 40 rows older than the first anchor now exist,
+	// and the oldest stored moved back.
+	st.countOlderRet = 40
+	st.oldestRet = store.MessageRow{ChatJID: "c@g.us", ID: "m0", TS: 100}
+
+	second, _, err := d.fetchOlderMessages(ctx, nil, fetchOlderMessagesInput{ChatJID: "c@g.us"})
+	if err != nil {
+		t.Fatalf("second call error = %v", err)
+	}
+	text := resultText(t, second)
+	if !strings.Contains(text, "previous request") || !strings.Contains(text, "40") {
+		t.Fatalf("second call = %q, want it to report the 40 messages the previous request produced", text)
+	}
+	if st.countOlderTS != 500 {
+		t.Fatalf("counted older than ts %d, want the previous anchor 500", st.countOlderTS)
+	}
+}
+
+func TestFetchOlderMessagesReportsNothingArrived(t *testing.T) {
+	st := &fakeStore{oldestOK: true, oldestRet: store.MessageRow{ChatJID: "c@g.us", ID: "m1", TS: 500}}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+	ctx := context.Background()
+
+	if _, _, err := d.fetchOlderMessages(ctx, nil, fetchOlderMessagesInput{ChatJID: "c@g.us"}); err != nil {
+		t.Fatalf("first call error = %v", err)
+	}
+	second, _, err := d.fetchOlderMessages(ctx, nil, fetchOlderMessagesInput{ChatJID: "c@g.us"})
+	if err != nil {
+		t.Fatalf("second call error = %v", err)
+	}
+	text := resultText(t, second)
+	if !strings.Contains(text, "nothing arrived") {
+		t.Fatalf("second call = %q, want it to say nothing arrived from the previous request", text)
+	}
+}
+
+// Tail mode: the most common ask is "the latest N messages" — the first
+// call should be able to return them instead of anchoring at now and
+// returning nothing (issue #12).
+func TestPollNewMessagesTailMode(t *testing.T) {
+	st := &fakeStore{
+		tailRowIDRet: 30,
+		afterRowsRet: []store.MessageRow{
+			{ChatJID: "c@g.us", ID: "T1", SenderName: "Alice", TS: 900, Kind: "text", Text: "recent"},
+		},
+		afterRowsNext: 33,
+	}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	result, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Tail: 5, ChatJID: "c@g.us"})
+	if err != nil {
+		t.Fatalf("pollNewMessages(tail) error = %v", err)
+	}
+	if st.tailRowIDN != 5 || st.tailRowIDChat != "c@g.us" {
+		t.Fatalf("TailRowID called with (chat=%q, n=%d), want (c@g.us, 5)", st.tailRowIDChat, st.tailRowIDN)
+	}
+	if st.afterRowIDArg != 30 {
+		t.Fatalf("MessagesAfterRowID cursor = %d, want the tail watermark 30", st.afterRowIDArg)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "recent") || !strings.Contains(text, "next_cursor: 33") {
+		t.Fatalf("tail result = %q, want the rows and the advanced cursor", text)
+	}
+}
+
+func TestPollNewMessagesTailConflictsWithCursor(t *testing.T) {
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}}
+	_, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Tail: 5, Cursor: "41"})
+	if err == nil {
+		t.Fatal("tail combined with cursor should be rejected")
+	}
+}
+
+// Output timezone: rows render their timestamps in the requested tz
+// instead of forcing the caller to convert from UTC (issue #12).
+func TestListMessagesRendersTimestampsInRequestedTZ(t *testing.T) {
+	st := &fakeStore{messagesRet: []store.MessageRow{
+		{ChatJID: "c@g.us", ID: "Z1", SenderName: "Alice", TS: 1787056496, Kind: "text", Text: "hello"}, // 2026-08-18T12:34:56Z
+	}}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	result, _, err := d.listMessages(context.Background(), nil, listMessagesInput{
+		ChatJID: "c@g.us", TZ: "Asia/Kolkata",
+	})
+	if err != nil {
+		t.Fatalf("listMessages(tz) error = %v", err)
+	}
+	if !strings.Contains(resultText(t, result), "2026-08-18T18:04:56+05:30") {
+		t.Fatalf("rows = %q, want the timestamp rendered in IST", resultText(t, result))
 	}
 }

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Field-report round (#12).** From an evening of real agent-driven
+  use:
+  - `serve` no longer exits when unpaired: it waits idle (re-checking
+    every 15s) so a service manager with `Restart=always` cannot
+    crash-loop it, and pairing via `setup` is picked up without a
+    restart. A sample systemd user unit ships in `packaging/systemd/`.
+  - A server-side logout is now loud: whatsmeow deletes the device
+    store the moment it happens (that is how a pairing silently
+    vanishes), so the bridge reports the logout, its reason, and the
+    re-pair instruction to stderr, along with stream-replaced
+    conflicts (another process using the same session).
+  - `fetch_older_messages` reports the previous request's fate on the
+    next call: how many older messages actually arrived, or that
+    nothing did.
+  - `poll_new_messages` gained `tail: N` — the newest N messages
+    immediately, plus a cursor to continue from.
+  - `list_messages` renders row timestamps in the requested `tz`
+    (still RFC 3339), not just UTC.
+  - Voice notes, audio, and video notes carry `duration=Ns` in the row
+    text; albums decode as kind `album`; the view-once re-encryption
+    marker decodes as `view_once` with a readable-only-on-phone hint.
+
 ### Fixed
 
 - **`trust --add`/`--remove` apply to a running serve** (#11). The

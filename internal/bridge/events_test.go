@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
@@ -1064,5 +1065,65 @@ func TestWaitForCatchUpReArmsOnReconnect(t *testing.T) {
 	case <-released:
 	case <-time.After(2 * time.Second):
 		t.Fatal("WaitForCatchUp still blocked after the reconnect's own completion")
+	}
+}
+
+// A server-side logout makes whatsmeow DELETE the device store — the
+// session is unpaired on the spot. That must never be silent again
+// (issue #12): the operator's journal needs to say why pairing vanished.
+func TestHandleEventLoggedOutIsReportedLoudly(t *testing.T) {
+	b, _ := newTestBridge(t)
+	var diag bytes.Buffer
+	b.diag = &diag
+
+	b.handleEvent(&events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureLoggedOut})
+
+	out := diag.String()
+	if !strings.Contains(out, "logged out") || !strings.Contains(out, "setup") {
+		t.Fatalf("diag = %q, want a loud logged-out report telling the operator to re-pair", out)
+	}
+}
+
+func TestHandleEventStreamReplacedIsReported(t *testing.T) {
+	b, _ := newTestBridge(t)
+	var diag bytes.Buffer
+	b.diag = &diag
+
+	b.handleEvent(&events.StreamReplaced{})
+
+	if !strings.Contains(diag.String(), "another") {
+		t.Fatalf("diag = %q, want a stream-replaced report naming the other-connection cause", diag.String())
+	}
+}
+
+// Voice and video notes carry their duration so an agent can decide
+// whether a download is worth it (issue #12).
+func TestDecodeMessageVoiceCarriesDuration(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{AudioMessage: &waE2E.AudioMessage{PTT: proto.Bool(true), Seconds: proto.Uint32(42)}})
+	if m.Kind != "voice" || m.Text != "duration=42s" {
+		t.Fatalf("voice note = kind %q text %q, want voice with duration=42s", m.Kind, m.Text)
+	}
+}
+
+func TestDecodeMessageVideoNoteCarriesDuration(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{PtvMessage: &waE2E.VideoMessage{Seconds: proto.Uint32(7)}})
+	if m.Kind != "video_note" || m.Text != "duration=7s" {
+		t.Fatalf("video note = kind %q text %q, want video_note with duration=7s", m.Kind, m.Text)
+	}
+}
+
+// Kind polish (issue #12): albums get their own kind instead of
+// other:album, and the view-once re-encryption marker says what it is.
+func TestDecodeMessageAlbumKind(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{AlbumMessage: &waE2E.AlbumMessage{}})
+	if m.Kind != "album" {
+		t.Fatalf("album = kind %q, want album", m.Kind)
+	}
+}
+
+func TestDecodeMessageViewOnceMarker(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{SecretEncryptedMessage: &waE2E.SecretEncryptedMessage{}})
+	if m.Kind != "view_once" || !strings.Contains(m.Text, "paired phone") {
+		t.Fatalf("secret-encrypted = kind %q text %q, want view_once with a readable-only-on-phone hint", m.Kind, m.Text)
 	}
 }

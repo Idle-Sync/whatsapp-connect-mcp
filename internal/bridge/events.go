@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -52,6 +53,16 @@ func (b *Bridge) handleEvent(raw any) {
 		b.connectedSeq.Store(b.catchUpSeq.Add(1))
 	case *events.OfflineSyncCompleted:
 		b.offlineSyncSeq.Store(b.catchUpSeq.Add(1))
+	case *events.LoggedOut:
+		// whatsmeow deletes the device store when this arrives: the session
+		// is unpaired from this moment. Say so loudly — a silently vanished
+		// pairing is undebuggable from the outside (issue #12).
+		_, _ = fmt.Fprintf(b.diag,
+			"whatsapp: logged out by the server (reason %v, on_connect=%v) — the device store has been cleared and this install is no longer paired; run `whatsapp-connect-mcp setup` to pair again\n",
+			evt.Reason, evt.OnConnect)
+	case *events.StreamReplaced:
+		_, _ = fmt.Fprintln(b.diag,
+			"whatsapp: stream replaced — another process connected with this same session, and this connection is now dead; if this repeats, find and stop the other process")
 	}
 }
 
@@ -234,6 +245,9 @@ func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGro
 		} else {
 			m.Kind = "audio"
 		}
+		if am.GetSeconds() > 0 {
+			m.Text = fmt.Sprintf("duration=%ds", am.GetSeconds())
+		}
 		m.QuotedID = am.GetContextInfo().GetStanzaID()
 		m.MediaRef = marshalMediaRef(msg)
 	case msg.GetDocumentMessage() != nil:
@@ -278,6 +292,9 @@ func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGro
 		m.Text = msg.GetGroupInviteMessage().GetGroupName()
 	case msg.GetPtvMessage() != nil:
 		m.Kind = "video_note"
+		if s := msg.GetPtvMessage().GetSeconds(); s > 0 {
+			m.Text = fmt.Sprintf("duration=%ds", s)
+		}
 		m.MediaRef = marshalMediaRef(msg)
 	case msg.GetEventMessage() != nil:
 		m.Kind = "event"
@@ -286,6 +303,12 @@ func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGro
 		// Revokes, edits, app-state key shares, and other bookkeeping the
 		// protocol sends as messages.
 		m.Kind = "system"
+	case msg.GetAlbumMessage() != nil:
+		// The album marker that precedes its individual image/video rows.
+		m.Kind = "album"
+	case msg.GetSecretEncryptedMessage() != nil:
+		m.Kind = "view_once"
+		m.Text = "(view-once media — viewable only on the paired phone)"
 	default:
 		m.Kind = otherKind(msg)
 	}

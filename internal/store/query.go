@@ -438,6 +438,54 @@ func (s *Store) OldestMessage(chatJID string) (MessageRow, bool, error) {
 	return m, true, nil
 }
 
+// TailRowID returns the rowid cursor positioned so that exactly the newest
+// n matching messages lie after it — poll_new_messages' tail mode. Fewer
+// than n stored rows yields 0, i.e. everything. The chat and own-send
+// filters must match the MessagesAfterRowID call the cursor will feed.
+func (s *Store) TailRowID(chatJID string, includeOwn bool, n int) (int64, error) {
+	if n <= 0 {
+		return 0, nil
+	}
+
+	var b strings.Builder
+	b.WriteString(`SELECT rowid FROM messages WHERE 1 = 1`)
+	var args []any
+	if chatJID != "" {
+		b.WriteString(` AND chat_jid = ?`)
+		args = append(args, chatJID)
+	}
+	if !includeOwn {
+		b.WriteString(` AND from_me = 0`)
+	}
+	b.WriteString(` ORDER BY rowid DESC LIMIT 1 OFFSET ?`)
+	args = append(args, n-1)
+
+	var nth int64
+	err := s.db.QueryRow(b.String(), args...).Scan(&nth)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("tail cursor: %w", err)
+	}
+	return nth - 1, nil
+}
+
+// CountMessagesOlderThan reports how many stored messages in chatJID
+// predate ts. It backs fetch_older_messages' status report: comparing the
+// count against a previous request's anchor says whether the phone
+// actually answered.
+func (s *Store) CountMessagesOlderThan(chatJID string, ts int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE chat_jid = ? AND ts < ?`, chatJID, ts,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count older messages: %w", err)
+	}
+	return n, nil
+}
+
 // Calls lists calls newest-first, optionally filtered to one peer JID.
 // beforeTS and afterTS bound the window with the same semantics as
 // Messages: strict comparisons, either left at 0 unbounded.

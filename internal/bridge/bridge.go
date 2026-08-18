@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,12 @@ type Bridge struct {
 	connectedAtMs  atomic.Int64
 	catchUpGrace   time.Duration
 
+	// diag receives operator-facing connection diagnostics (logouts,
+	// stream conflicts) — the events that explain why a pairing vanished
+	// or ingestion stopped. Local console/journal output only, never tool
+	// results.
+	diag io.Writer
+
 	handlerOnce sync.Once
 	// handlerRegistrations counts how many times ensureHandlerRegistered
 	// actually registered the event handler (as opposed to how many times
@@ -116,6 +123,7 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 	b := &Bridge{
 		client: client, container: container, store: st, dataDir: dataDir,
 		mediaRoots: roots, openedAt: time.Now(), catchUpGrace: defaultCatchUpGrace,
+		diag: os.Stderr,
 	}
 	// Registered here, once, rather than in Connect: PairQR also needs
 	// inbound events flowing (history sync can start arriving mid-pairing),
