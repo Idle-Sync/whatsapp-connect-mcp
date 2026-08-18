@@ -915,3 +915,28 @@ func TestDecodeMessageTrulyUnknownStaysPlainOther(t *testing.T) {
 		t.Fatalf("empty message decoded as kind=%q, want plain other", m.Kind)
 	}
 }
+
+// Regression for the exact shape reported in issue #10: a document sent
+// WITH a caption arrives wrapped in DocumentWithCaptionMessage and must
+// decode with kind, caption, filename, and a media reference pointing at
+// the inner DocumentMessage — not as a media-less "other" row.
+func TestDecodeMessageCaptionedDocumentUnwraps(t *testing.T) {
+	inner := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		Caption:  proto.String("Q3 report attached"),
+		FileName: proto.String("report.pdf"),
+	}}
+	m := decodeKind(t, &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{Message: inner}})
+
+	if m.Kind != "document" || m.Text != "Q3 report attached" || m.MediaFilename != "report.pdf" {
+		t.Fatalf("captioned document decoded as kind=%q text=%q filename=%q, want document/Q3 report attached/report.pdf",
+			m.Kind, m.Text, m.MediaFilename)
+	}
+
+	var ref waE2E.Message
+	if err := proto.Unmarshal(m.MediaRef, &ref); err != nil {
+		t.Fatalf("unmarshal media ref: %v", err)
+	}
+	if ref.GetDocumentMessage() == nil {
+		t.Fatal("media ref does not carry the unwrapped DocumentMessage; download_media would report no media")
+	}
+}
