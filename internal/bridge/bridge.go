@@ -13,9 +13,7 @@ import (
 	"sync"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -58,32 +56,6 @@ type Bridge struct {
 // cannot be parsed. It is deliberately generic per the invariant that
 // errors never carry the JID that failed.
 var errInvalidRecipient = errors.New("invalid recipient")
-
-// deviceOS and devicePlatform are the client identity announced to WhatsApp
-// when a device pairs. They are also what the paired phone shows under
-// Linked Devices.
-const deviceOS = "Chrome"
-
-var devicePlatform = waCompanionReg.DeviceProps_CHROME
-
-// init sets the announced client identity process-wide.
-//
-// whatsmeow's defaults announce an OS string of "whatsmeow" with an UNKNOWN
-// platform type, which distinguishes this client from an official one on
-// inspection of the pairing payload alone.
-//
-// Two things this does not do. It does not rename an already-paired session:
-// DeviceProps is read only when building the pairing registration payload,
-// so an existing session keeps the identity it registered with until it is
-// paired again. And it does not make the client indistinguishable — the
-// registration payload still carries a BuildHash derived from whatsmeow's
-// own version constant, the user agent keeps whatsmeow's placeholder
-// carrier and manufacturer fields, and the on-wire behaviour of the session
-// is unchanged. See the README's "Ban risk" section.
-func init() {
-	waStore.SetOSInfo(deviceOS, waStore.GetWAVersion())
-	waStore.DeviceProps.PlatformType = devicePlatform.Enum()
-}
 
 // Open opens (creating if necessary) the whatsmeow session store at
 // <dataDir>/session.db and constructs a Bridge that decodes inbound events

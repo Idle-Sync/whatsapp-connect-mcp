@@ -55,6 +55,12 @@ manual JSON editing.
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
 
+Pass `--full-history` to ask the phone for as much history as the protocol
+allows rather than the default few months. It only has any effect while
+actually pairing, so an install that is already paired must `remove` first;
+`setup` says so rather than silently ignoring the flag. The phone still
+decides what it really sends.
+
 ## What this is for
 
 The eleven read tools are the product; the five send tools are a convenience.
@@ -183,10 +189,12 @@ a Chrome browser identity instead (`internal/bridge/bridge.go`), which is
 also what your phone shows for this device under Linked Devices.
 
 Do not mistake that override for a fix. It defeats the most trivial version
-of the check and not the underlying problem: the registration payload still
-carries a build hash derived from whatsmeow's own version constant, the user
-agent keeps whatsmeow's placeholder carrier and manufacturer fields, and the
-session behaves on the wire like whatsmeow, not like Chrome. Users of
+of the check and not the underlying problem. `serve` and `setup` do refresh
+the reported WhatsApp Web version before connecting, so the version and the
+build hash derived from it track a real release rather than whichever one
+was vendored at build time — but the user agent still carries whatsmeow's
+placeholder carrier and manufacturer fields, and the session behaves on the
+wire like whatsmeow, not like Chrome. Users of
 whatsapp-web.js — which drives a real Chrome browser with a genuine
 fingerprint — received the same warnings described below, which suggests the
 announced identity was never the deciding signal. Changing it also does
@@ -234,6 +242,10 @@ number appears in this document for that reason.
 - **History depth is phone-decided.** Like every WhatsApp Web client, the
   paired phone controls how much chat history syncs to this server. There
   is no setting here that fetches more than the phone hands over.
+  `setup --full-history` asks for as much as the protocol allows instead of
+  the default few months, but it is a request, not a setting — and it only
+  applies when pairing, so an existing install has to re-pair to widen its
+  window.
 - **Voice notes need Ogg Opus input.** `send_voice_note` does no
   transcoding. If your source audio isn't already `.ogg`/Opus, convert it
   first (e.g. `ffmpeg -i in.mp3 -c:a libopus out.ogg`).
@@ -250,12 +262,17 @@ Everything — session keys, messages, media, contacts, call log — lives in a
 local SQLite database under this program's data directory. Nothing about
 your messages, contacts, or media is sent anywhere by this server.
 
-The **only** outbound network call this program ever makes that isn't part
-of the WhatsApp connection itself is an optional, best-effort version
-check: `doctor`/`check` asks GitHub's public release API whether a newer
-version exists (2-second timeout, never blocks or fails the check if
-GitHub is unreachable). No message content, JID, or phone number is ever
-part of that request.
+Exactly two outbound network calls exist beyond the WhatsApp connection
+itself. Both are best-effort, both time out after 2 seconds, and neither
+carries message content, a JID, a phone number, or any session credential:
+
+- `doctor`/`check` asks GitHub's public release API whether a newer version
+  of this program exists. It never blocks or fails the check when GitHub is
+  unreachable.
+- `serve` and `setup` fetch the current WhatsApp Web client version from
+  `web.whatsapp.com` before connecting, so the version this client reports
+  tracks a real release instead of whichever one was vendored at build time.
+  A failure is reported and ignored; a stale version still connects.
 
 The data directory:
 
@@ -281,6 +298,7 @@ client's name, never its path on disk.
 ## Other commands
 
 ```sh
+whatsapp-connect-mcp setup [--full-history]  # pair (again) and configure MCP clients
 whatsapp-connect-mcp status                  # pairing state, row counts, injected clients
 whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entries
 whatsapp-connect-mcp trust [--add jid|--remove jid|--list]

@@ -71,6 +71,13 @@ func runServe(args []string) int {
 		return 1
 	}
 
+	// Best-effort, and deliberately before Connect so the login payload
+	// carries it: a stale version still connects, so a failed lookup is
+	// reported and ignored rather than held against startup.
+	if err := bridge.RefreshWAVersion(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v (continuing with the built-in version)\n", err)
+	}
+
 	// ctx is long-lived (cancelled only by the shutdown signal), not
 	// request-scoped: it governs the WhatsApp connection for the life of
 	// the process.

@@ -17,6 +17,15 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/wizard"
 )
 
+// fullHistoryDays is what --full-history asks the phone for, and
+// fullHistoryYears is the same span spelled for the flag's help text. Ten
+// years is deliberately more than any phone will honour: the request costs
+// nothing, and the phone caps the real window regardless.
+const (
+	fullHistoryDays  = 3650
+	fullHistoryYears = "10"
+)
+
 // runSetup implements the "setup" subcommand: it opens the data dir, store,
 // and bridge, then hands NeedsPairing/PairQR and the client detect/inject
 // functions to wizard.Run, which drives the interactive flow. Ctrl+C
@@ -24,6 +33,9 @@ import (
 // aborts before anything is written.
 func runSetup(args []string) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fullHistory := fs.Bool("full-history", false,
+		"ask the phone for up to "+fullHistoryYears+" years of history instead of the default "+
+			"few months (takes effect only when pairing; the phone decides the real limit)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -53,6 +65,26 @@ func runSetup(args []string) int {
 	// disconnects unconditionally, so setup never leaves a live
 	// connection running after it exits.
 	defer func() { _ = br.Close() }()
+
+	// Both of these are read when the pairing payload is built, so they have
+	// to be applied before the wizard can reach PairQR. The version lookup
+	// is best-effort; pairing works with a stale version.
+	if err := bridge.RefreshWAVersion(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "setup: %v (continuing with the built-in version)\n", err)
+	}
+	if *fullHistory {
+		if br.NeedsPairing() {
+			bridge.RequestFullHistory(fullHistoryDays)
+		} else {
+			// Saying nothing here would let someone believe they had just
+			// widened the history window of an install that ignored the flag
+			// entirely.
+			fmt.Fprintf(os.Stderr,
+				"setup: --full-history ignored: this install is already paired, and the "+
+					"history window is fixed at pairing. Run 'remove', then 'setup --full-history', "+
+					"to re-pair with a wider window.\n")
+		}
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {

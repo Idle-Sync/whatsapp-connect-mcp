@@ -46,8 +46,18 @@ WhatsApp messages through it.
   unknown platform type, which is also what the phone shows under Linked
   Devices. This only changes what is announced at pairing time: an
   already-paired session keeps its original identity until re-paired, and
-  the build hash, user agent placeholders, and on-wire behaviour are
-  unchanged.
+  the user agent placeholders and on-wire behaviour are unchanged.
+- **A WhatsApp Web version refresh.** `serve` and `setup` look up the
+  current WhatsApp Web client version before connecting and apply it across
+  every field that carries one, so the reported version and the build hash
+  derived from it track a real release rather than whichever was vendored at
+  build time. Best-effort on a 2-second timeout: a failure is reported and
+  ignored, and a stale version still connects.
+- **`setup --full-history`.** Asks the phone for up to ten years of history
+  at pair time instead of whatsmeow's default of "recent" only, which the
+  phone typically answers with about three months. The phone still decides
+  what it actually sends. Only meaningful while pairing, and `setup` says so
+  explicitly rather than ignoring the flag on an already-paired install.
 - **Distribution:** GitHub Releases for six OS/architecture combinations, a
   one-line install script for macOS/Linux (`curl | sh`) and Windows (`irm |
   iex`), an `npx whatsapp-connect-mcp` wrapper, a per-platform MCPB bundle,
