@@ -608,7 +608,7 @@ func TestInjectedEntryDistinguishesTransports(t *testing.T) {
 // readJSON parses path's whole content into generic maps for assertions.
 func readJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- test helper reading a file the test itself created
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}

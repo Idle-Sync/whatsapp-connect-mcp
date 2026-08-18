@@ -90,7 +90,7 @@ func (f *sendFakeStore) LastInteraction(string) (store.MessageRow, bool, error) 
 	return store.MessageRow{}, false, nil
 }
 func (f *sendFakeStore) Calls(string, int64, int64, int) ([]store.CallRow, error) { return nil, nil }
-func (f *sendFakeStore) LatestRowID() (int64, error) { return 0, nil }
+func (f *sendFakeStore) LatestRowID() (int64, error)                              { return 0, nil }
 func (f *sendFakeStore) MessagesAfterRowID(string, int64, bool, int) ([]store.MessageRow, int64, error) {
 	return nil, 0, nil
 }

@@ -1044,7 +1044,9 @@ func TestStoreBackedReadsWaitForCatchUp(t *testing.T) {
 		"search_contacts":      func() { _, _, _ = d.searchContacts(ctx, nil, searchContactsInput{}) },
 		"get_last_interaction": func() { _, _, _ = d.getLastInteraction(ctx, nil, getLastInteractionInput{JID: "x"}) },
 		"get_call_history":     func() { _, _, _ = d.getCallHistory(ctx, nil, getCallHistoryInput{}) },
-		"download_media":       func() { _, _, _ = d.downloadMedia(ctx, nil, downloadMediaInput{ChatJID: "x@s.whatsapp.net", MessageID: "m1"}) },
+		"download_media": func() {
+			_, _, _ = d.downloadMedia(ctx, nil, downloadMediaInput{ChatJID: "x@s.whatsapp.net", MessageID: "m1"})
+		},
 	}
 	for name, call := range handlers {
 		before := live.catchUpWaits

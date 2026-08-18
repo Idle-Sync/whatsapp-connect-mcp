@@ -128,9 +128,9 @@ func TestRejectsSymlinkEscapingRoot(t *testing.T) {
 // reject a link that leads somewhere legitimate.
 func TestAllowsSymlinkStayingInsideRoot(t *testing.T) {
 	root := t.TempDir()
-	real := writeFile(t, root, "real.jpg")
+	target := writeFile(t, root, "real.jpg")
 	link := filepath.Join(root, "alias.jpg")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("cannot create symlink on this system: %v", err)
 	}
 
