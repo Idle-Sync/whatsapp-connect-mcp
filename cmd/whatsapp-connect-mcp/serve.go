@@ -20,6 +20,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/watchdog"
 )
@@ -115,7 +116,20 @@ func runServe(args []string) int {
 		return 1
 	}
 
-	g := gate.New(br, cfg.IsTrusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
+	// Session trust (trust --session): grants are wiped here, before the
+	// gate exists, so nothing granted for a previous process — or while
+	// serve was down — carries into this one. The composed predicate keeps
+	// the persistent list's startup-snapshot semantics while session grants
+	// are read live, which is what lets the CLI elevate a recipient in a
+	// running session without a restart.
+	sess := sessiontrust.Open(dataDir)
+	if err := sess.ClearAtStartup(); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+	trusted := func(jid string) bool { return cfg.IsTrusted(jid) || sess.Trusted(jid) }
+
+	g := gate.New(br, trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
 	doc := mcpserv.DoctorEnv{Home: home, BinaryPath: binaryPath, NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn}
 	server := mcpserv.New(st, br, g, dataDir, doc)
 

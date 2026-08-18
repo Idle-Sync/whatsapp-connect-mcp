@@ -13,6 +13,15 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Session-scoped trust (`trust --session`).** A recipient the human
+  elevates mid-session auto-commits for the life of the current `serve`
+  process, then evaporates: `trust --session --add <jid>` takes effect
+  immediately in the running server, is never written to `config.json`,
+  and is wiped automatically on the next `serve` start. It cuts the
+  draft-then-confirm round-trip for a thread the human is actively,
+  repeatedly approving, while keeping every gate invariant: the grant is
+  CLI-only (no MCP tool can make one), every send stays rate-limited, and
+  block/unblock still draft on every call regardless of any trust.
 - **Message kinds beyond the basics.** Contact cards, locations (with name
   and address as the row text), polls (question as text), poll votes,
   group invites, round video notes (downloadable like any video), calendar

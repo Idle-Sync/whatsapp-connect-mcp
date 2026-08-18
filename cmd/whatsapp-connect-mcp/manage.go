@@ -17,6 +17,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -181,11 +182,16 @@ func runClients(args []string) int {
 }
 
 // runTrust implements the "trust" subcommand: add/remove a JID from
-// config.json's trust list, or list it. With no flags it lists.
+// config.json's trust list, or list it. With no flags it lists. With
+// --session, the same verbs operate on the session-scoped grant file
+// instead: a grant a running serve honors immediately and wipes on its
+// next start. Session grants are CLI-only on purpose — no MCP tool can
+// make one, the same property the persistent list has.
 func runTrust(args []string) int {
 	fs := flag.NewFlagSet("trust", flag.ContinueOnError)
 	add := fs.String("add", "", "add a JID to the trusted list")
 	remove := fs.String("remove", "", "remove a JID from the trusted list")
+	session := fs.Bool("session", false, "operate on session-scoped grants: honored by the running serve immediately, cleared when serve restarts")
 	fs.Bool("list", false, "list trusted JIDs (default with no flags)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -196,6 +202,18 @@ func runTrust(args []string) int {
 		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
 		return 1
 	}
+
+	if *session {
+		switch {
+		case *add != "":
+			return sessionTrustAdd(dataDir, *add)
+		case *remove != "":
+			return sessionTrustRemove(dataDir, *remove)
+		default:
+			return sessionTrustList(dataDir)
+		}
+	}
+
 	cfg, err := config.Load(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
@@ -210,6 +228,42 @@ func runTrust(args []string) int {
 	default:
 		return trustList(cfg)
 	}
+}
+
+func sessionTrustAdd(dataDir, jid string) int {
+	if err := sessiontrust.Add(dataDir, jid); err != nil {
+		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
+		return 1
+	}
+	fmt.Printf("session-trusted: %s\n", jid)
+	fmt.Println("Auto-commits (still rate-limited) for the serve process currently running;")
+	fmt.Println("cleared automatically the next time serve starts. Not written to config.json.")
+	return 0
+}
+
+func sessionTrustRemove(dataDir, jid string) int {
+	if err := sessiontrust.Remove(dataDir, jid); err != nil {
+		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
+		return 1
+	}
+	fmt.Printf("session grant revoked: %s\n", jid)
+	return 0
+}
+
+func sessionTrustList(dataDir string) int {
+	jids, err := sessiontrust.JIDs(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
+		return 1
+	}
+	if len(jids) == 0 {
+		fmt.Println("no session grants")
+		return 0
+	}
+	for _, jid := range jids {
+		fmt.Println(jid)
+	}
+	return 0
 }
 
 func trustAdd(dataDir string, cfg config.Config, jid string) int {

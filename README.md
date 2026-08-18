@@ -158,7 +158,16 @@ the model to "be careful":
    instead of drafting. This is a CLI-only switch — no MCP tool can grant
    trust, so a model can't trust its way around the draft step. A running
    `serve` process reads the trust list once at startup, so a change takes
-   effect the next time `serve` starts, not immediately.
+   effect the next time `serve` starts, not immediately. For the running
+   session there is a lighter-weight grant: `whatsapp-connect-mcp trust
+   --session --add <jid>` elevates a recipient for the life of the current
+   `serve` process only — it takes effect immediately, is never written to
+   `config.json`, and is wiped automatically the next time `serve` starts.
+   Use it when you are actively drafting a thread with one person or group
+   and have already confirmed the first sends by hand; it cuts the
+   draft-and-confirm round-trip for that recipient without granting
+   anything permanent. Like persistent trust it is CLI-only (no MCP tool
+   can grant it), and block/unblock still draft on every call regardless.
 4. **Rate limit, always.** Every send — drafted, trusted, whatever —
    consumes a token from one rate limiter shared across all five send
    tools. The interval has a hard 5-second floor that no configuration can
@@ -340,7 +349,7 @@ client's name, never its path on disk.
 whatsapp-connect-mcp setup [--full-history]  # pair (again) and configure MCP clients
 whatsapp-connect-mcp status                  # pairing state, row counts, injected clients
 whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entries
-whatsapp-connect-mcp trust [--add jid|--remove jid|--list]
+whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 ```
 
