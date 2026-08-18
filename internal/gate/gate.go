@@ -39,6 +39,11 @@ var errDraftInvalid = errors.New("draft expired or content differs — re-issue 
 // the actual WhatsApp send and must not be reachable except through Gate.
 type Deliverer interface {
 	Deliver(ctx context.Context, d Delivery) (messageID string, err error)
+	// Validate reports whether d could be delivered, without delivering
+	// anything or touching the network. It exists so a send that can never
+	// succeed is refused before a draft is minted, rather than after
+	// someone has read a preview and approved it.
+	Validate(d Delivery) error
 }
 
 // Delivery describes one outbound action, spanning every kind the gate
@@ -118,6 +123,15 @@ func (g *Gate) Submit(ctx context.Context, d Delivery, draftToken string, resolv
 		name = resolveName(d.To)
 	}
 	preview := buildPreview(name, d)
+
+	// Ahead of every branch below, including the draft one: a send that
+	// cannot succeed must not mint a draft token, consume a rate-limit
+	// token, or produce a preview someone might approve. Checking it here
+	// rather than only at delivery is what makes the refusal visible on the
+	// first call instead of after an approval.
+	if err := g.deliver.Validate(d); err != nil {
+		return Result{}, err
+	}
 
 	if draftToken != "" {
 		return g.commit(ctx, d, draftToken, preview)

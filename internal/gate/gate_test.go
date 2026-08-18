@@ -2,6 +2,7 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +37,12 @@ type fakeDeliverer struct {
 	mu        sync.Mutex
 	delivered []Delivery
 	nextID    int
+	// validateErr, when set, is returned by Validate for every delivery, so
+	// tests can prove the gate refuses ahead of drafting and rate limiting.
+	validateErr error
 }
+
+func (f *fakeDeliverer) Validate(_ Delivery) error { return f.validateErr }
 
 func (f *fakeDeliverer) Deliver(_ context.Context, d Delivery) (string, error) {
 	f.mu.Lock()
@@ -629,5 +635,36 @@ func TestSubmitDraftCapEvictsOldest(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "draft expired or content differs") {
 		t.Fatalf("Submit() error = %q, want it to mention draft expired or content differs", err.Error())
+	}
+}
+
+// TestSubmitRefusesBeforeDraftingAndBeforeRateLimiting proves a delivery the
+// deliverer rejects costs nothing: no draft token is minted, and no
+// rate-limit token is spent. Spending either would let a caller that keeps
+// naming an unusable file exhaust the limiter for the sends that would have
+// worked, and would hand back a preview for something that can never send.
+func TestSubmitRefusesBeforeDraftingAndBeforeRateLimiting(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{validateErr: errors.New("file is outside the allowed directories")}
+	// burst 1: if the refused call consumed the token, the good send below
+	// would be rate-limited rather than delivered.
+	g := New(deliverer, trustNone, 1, 12, clock.Now)
+
+	res, err := g.Submit(context.Background(),
+		Delivery{Kind: "media", To: "111@s.whatsapp.net", Path: "/etc/shadow"}, "", nil)
+	if err == nil {
+		t.Fatal("Submit() error = nil, want the deliverer's validation error")
+	}
+	if res.DraftToken != "" {
+		t.Errorf("Submit() minted draft token %q for a delivery that cannot send", res.DraftToken)
+	}
+	if deliverer.count() != 0 {
+		t.Errorf("deliverer delivered %d times, want 0", deliverer.count())
+	}
+
+	deliverer.validateErr = nil
+	if _, err := g.Submit(context.Background(),
+		Delivery{Kind: "read", To: "111@s.whatsapp.net", MessageIDs: []string{"m1"}}, "", nil); err != nil {
+		t.Fatalf("a valid send after a refused one failed: %v — the refused call spent a rate token", err)
 	}
 }

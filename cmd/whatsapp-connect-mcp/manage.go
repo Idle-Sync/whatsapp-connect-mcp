@@ -16,6 +16,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -46,7 +47,7 @@ func runCheck(args []string) int {
 	// true against a bridge that Open alone, without Connect, has left
 	// offline) rather than establishing a live connection just to answer a
 	// diagnostic question.
-	br, err := bridge.Open(context.Background(), dataDir, st)
+	br, err := bridge.Open(context.Background(), dataDir, st, mediapath.Roots{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "check: %v\n", err)
 		return 1
@@ -106,7 +107,7 @@ func runStatus(args []string) int {
 	}
 	defer func() { _ = st.Close() }()
 
-	br, err := bridge.Open(context.Background(), dataDir, st)
+	br, err := bridge.Open(context.Background(), dataDir, st, mediapath.Roots{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "status: %v\n", err)
 		return 1

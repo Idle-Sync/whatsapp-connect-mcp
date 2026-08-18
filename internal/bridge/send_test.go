@@ -2,11 +2,14 @@ package bridge
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 )
 
 // These tests cover only the validation performed by Deliver before it
@@ -119,5 +122,65 @@ func TestDeliverVoiceRejectsNonOggExtension(t *testing.T) {
 
 	if err == nil || err != errVoiceFormat {
 		t.Fatalf("Deliver() error = %v, want errVoiceFormat", err)
+	}
+}
+
+// TestValidateConfinesMediaToRoots covers the check gate.Gate relies on to
+// refuse a send before drafting it.
+func TestValidateConfinesMediaToRoots(t *testing.T) {
+	allowed := t.TempDir()
+	forbidden := t.TempDir()
+
+	inside := filepath.Join(allowed, "photo.jpg")
+	outside := filepath.Join(forbidden, "id_rsa")
+	for _, p := range []string{inside, outside} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	roots, err := mediapath.New([]string{allowed})
+	if err != nil {
+		t.Fatalf("mediapath.New: %v", err)
+	}
+	b, _ := newTestBridgeWithRoots(t, roots)
+
+	for _, kind := range []string{"media", "voice"} {
+		if err := b.Validate(gate.Delivery{Kind: kind, Path: inside}); err != nil {
+			t.Errorf("Validate(%s, inside roots) = %v, want nil", kind, err)
+		}
+		if err := b.Validate(gate.Delivery{Kind: kind, Path: outside}); !errors.Is(err, mediapath.ErrOutsideRoots) {
+			t.Errorf("Validate(%s, outside roots) = %v, want ErrOutsideRoots", kind, err)
+		}
+	}
+
+	// Kinds that name no file must not be judged by the media roots, or a
+	// plain text send would be refused for having an empty path.
+	for _, kind := range []string{"text", "reaction", "read"} {
+		if err := b.Validate(gate.Delivery{Kind: kind, To: "111@s.whatsapp.net"}); err != nil {
+			t.Errorf("Validate(%s) = %v, want nil (no file involved)", kind, err)
+		}
+	}
+}
+
+// TestDeliverRechecksRootsIndependently proves the read path does not rely
+// on Validate having been called. A Bridge whose roots allow nothing must
+// refuse to read, which is what makes the confinement a property of the
+// bridge rather than of its callers remembering to ask.
+func TestDeliverRechecksRootsIndependently(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "photo.jpg")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Zero roots: allows nothing.
+	b, _ := newTestBridge(t)
+
+	_, err := b.Deliver(context.Background(), gate.Delivery{
+		Kind: "media", To: "111@s.whatsapp.net", Path: f,
+	})
+	if !errors.Is(err, mediapath.ErrOutsideRoots) {
+		t.Errorf("Deliver(media) = %v, want ErrOutsideRoots before any read or network call", err)
 	}
 }

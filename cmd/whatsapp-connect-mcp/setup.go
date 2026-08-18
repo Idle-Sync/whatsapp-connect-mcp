@@ -13,6 +13,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/wizard"
 )
@@ -56,7 +57,7 @@ func runSetup(args []string) int {
 	}
 	defer func() { _ = st.Close() }()
 
-	br, err := bridge.Open(ctx, dataDir, st)
+	br, err := bridge.Open(ctx, dataDir, st, mediapath.Roots{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "setup: %v\n", err)
 		return 1

@@ -54,6 +54,15 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **An outbound file allowlist.** `send_media` and `send_voice_note` may
+  only read files inside configured directories, defaulting to a dedicated
+  `outbox` under the data directory and widened with `media_roots` in
+  `config.json`. The send gate authorises a recipient and says nothing about
+  the file a send names, so without this a manipulated model could attach
+  any readable file to a recipient the user had already trusted. Paths are
+  resolved before being checked, so a symlink is judged by its target; a
+  refusal happens before a draft is minted or a rate-limit token spent, and
+  names no path.
 - **`fetch_older_messages`.** Asks the phone for messages from before the
   oldest one already stored in a chat, widening how far back that chat can
   be read and searched without re-pairing. Anchored on the oldest stored

@@ -189,3 +189,52 @@ func TestIsTrusted(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadDefaultsMediaRootsToOutbox covers all three ways the key can be
+// absent. Each must land on the dedicated directory rather than an empty
+// list, because an empty list denies every media send — a config predating
+// this key would otherwise silently break sending on upgrade.
+func TestLoadDefaultsMediaRootsToOutbox(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string // empty means: write no file at all
+	}{
+		{"no config file", ""},
+		{"file without the key", `{"trusted_jids": [], "rate_burst": 3, "rate_per_seconds": 12}`},
+		{"key present but empty", `{"trusted_jids": [], "rate_burst": 3, "rate_per_seconds": 12, "media_roots": []}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.body != "" {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tc.body), 0o600); err != nil {
+					t.Fatalf("seed config.json: %v", err)
+				}
+			}
+
+			got, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			want := DefaultMediaDir(dir)
+			if len(got.MediaRoots) != 1 || got.MediaRoots[0] != want {
+				t.Fatalf("Load() MediaRoots = %v, want [%s]", got.MediaRoots, want)
+			}
+		})
+	}
+}
+
+func TestLoadExplicitMediaRootsAreRespected(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"trusted_jids": [], "rate_burst": 3, "rate_per_seconds": 12, "media_roots": ["/srv/pics", "/srv/docs"]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed config.json: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(got.MediaRoots) != 2 || got.MediaRoots[0] != "/srv/pics" || got.MediaRoots[1] != "/srv/docs" {
+		t.Fatalf("Load() MediaRoots = %v, want the file's own values preserved", got.MediaRoots)
+	}
+}

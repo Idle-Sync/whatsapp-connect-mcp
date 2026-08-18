@@ -63,7 +63,7 @@ decides what it really sends.
 
 ## What this is for
 
-The eleven read tools are the product; the five send tools are a convenience.
+The twelve read tools are the product; the five send tools are a convenience.
 In practice that means:
 
 - **Searching your own history.** WhatsApp's own search has no date filters
@@ -123,8 +123,8 @@ Seventeen tools: twelve read-only, five gated sends, described below.
 | Tool | What it does |
 |---|---|
 | `send_message` | Sends text, optionally quoting an existing message. |
-| `send_media` | Sends an image, video, or document from local disk, with an optional caption. |
-| `send_voice_note` | Sends a voice note from a local Ogg Opus (`.ogg`) file. No transcoding — other formats are rejected. |
+| `send_media` | Sends an image, video, or document from an allowed directory, with an optional caption. |
+| `send_voice_note` | Sends a voice note from an Ogg Opus (`.ogg`) file in an allowed directory. No transcoding — other formats are rejected. |
 | `send_reaction` | Reacts to a message with an emoji (empty emoji removes a prior reaction). |
 | `mark_read` | Marks one or more messages as read. |
 
@@ -161,6 +161,35 @@ through one path, enforced by the server, not by prompting the model to
 `mark_read` is the one exception to drafting: a read receipt isn't authored
 content, so it always sends on the first call (still rate-limited, still
 gated).
+
+### Which files a send may attach
+
+The gate above authorises a *recipient*. It says nothing about the *file* a
+send names, so on its own it would let a manipulated model attach anything
+this program can read — an SSH key, a password store — to a recipient you
+had already trusted.
+
+So outbound files are confined to an allowlist of directories. The default
+is a single dedicated one, created on first run:
+
+| OS | Default outbox |
+|---|---|
+| Linux | `~/.config/whatsapp-connect-mcp/outbox` |
+| macOS | `~/Library/Application Support/whatsapp-connect-mcp/outbox` |
+| Windows | `%AppData%\whatsapp-connect-mcp\outbox` |
+
+Move a file there before sending it, or widen the list by setting
+`media_roots` in `config.json` to absolute directory paths:
+
+```json
+{ "media_roots": ["/home/you/Pictures", "/home/you/Documents"] }
+```
+
+Paths are resolved before they are checked, so a symlink inside an allowed
+directory is judged by where it actually leads, not where it sits. A send
+naming a file outside the list is refused on the first call — before a draft
+is minted and before it costs a rate-limit token — and the refusal names no
+path, like every other error this server returns.
 
 ## Comparison with verygoodplugins/whatsapp-mcp
 

@@ -108,6 +108,8 @@ type fakeDeliverer struct {
 	nextID    int
 }
 
+func (f *fakeDeliverer) Validate(_ gate.Delivery) error { return nil }
+
 func (f *fakeDeliverer) Deliver(_ context.Context, d gate.Delivery) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

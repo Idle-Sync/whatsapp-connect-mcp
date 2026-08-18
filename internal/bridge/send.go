@@ -24,6 +24,23 @@ import (
 // transcoding, so the input must already be in that format.
 var errVoiceFormat = errors.New("voice notes must be Ogg Opus (.ogg)")
 
+// Validate reports whether d could be delivered, without delivering it or
+// touching the network. gate.Gate calls it before minting a draft, so a
+// send naming an unreadable file is refused on the first call rather than
+// after a preview has been approved.
+//
+// Deliver re-checks the same thing at the point of reading. That is not
+// redundant: this method's guarantee must not depend on a caller having
+// remembered to ask.
+func (b *Bridge) Validate(d gate.Delivery) error {
+	switch d.Kind {
+	case "media", "voice":
+		return b.mediaRoots.Allows(d.Path)
+	default:
+		return nil
+	}
+}
+
 // Deliver performs the outbound WhatsApp action described by d. It is the
 // only method that reaches the wire; gate.Gate is the sole caller, so every
 // send in the process passes through the gate's draft and rate-limit
@@ -81,6 +98,10 @@ func (b *Bridge) deliverMedia(ctx context.Context, d gate.Delivery) (string, err
 		return "", err
 	}
 
+	if err := b.mediaRoots.Allows(d.Path); err != nil {
+		return "", err
+	}
+
 	data, mimetype, err := readFile(d.Path)
 	if err != nil {
 		return "", err
@@ -128,7 +149,11 @@ func (b *Bridge) deliverVoice(ctx context.Context, d gate.Delivery) (string, err
 		return "", err
 	}
 
-	data, err := os.ReadFile(d.Path) // #nosec G304 -- d.Path is an operator-supplied MCP tool argument, not network input
+	if err := b.mediaRoots.Allows(d.Path); err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(d.Path) // #nosec G304 -- confined to mediaRoots immediately above
 	if err != nil {
 		return "", fileErr("read voice file", err)
 	}
@@ -217,7 +242,7 @@ func (b *Bridge) uploadAndSend(
 // readFile reads path and determines its MIME type, preferring the
 // extension (deterministic) and falling back to content sniffing.
 func readFile(path string) (data []byte, mimetype string, err error) {
-	data, err = os.ReadFile(path) // #nosec G304 -- path is an operator-supplied MCP tool argument, not network input
+	data, err = os.ReadFile(path) // #nosec G304 -- callers confine path to the bridge's mediaRoots first
 	if err != nil {
 		return nil, "", fileErr("read media file", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -59,7 +60,22 @@ func runServe(args []string) int {
 	}
 	defer func() { _ = st.Close() }()
 
-	br, err := bridge.Open(ctx, dataDir, st)
+	// The default outbox has to exist before the roots resolve, since
+	// resolution canonicalises through the filesystem. Creating it here
+	// rather than in mediapath keeps that package free of side effects, and
+	// only ever creates this program's own directory — a root the user
+	// configured themselves is theirs to create.
+	if err := os.MkdirAll(config.DefaultMediaDir(dataDir), 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: create outbox directory: %v\n", err)
+		return 1
+	}
+	mediaRoots, err := mediapath.New(cfg.MediaRoots)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+
+	br, err := bridge.Open(ctx, dataDir, st, mediaRoots)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1

@@ -15,6 +15,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -315,8 +316,15 @@ func (f *fakeIngest) InsertCall(id, peerJID string, ts int64, direction, status 
 // group info) fails fast with "not connected" instead of dialing out.
 func newTestBridge(t *testing.T) (*Bridge, *fakeIngest) {
 	t.Helper()
+	return newTestBridgeWithRoots(t, mediapath.Roots{})
+}
+
+// newTestBridgeWithRoots is newTestBridge for the tests that need outbound
+// media reads to be permitted from somewhere.
+func newTestBridgeWithRoots(t *testing.T, roots mediapath.Roots) (*Bridge, *fakeIngest) {
+	t.Helper()
 	fake := &fakeIngest{}
-	b, err := Open(context.Background(), t.TempDir(), fake)
+	b, err := Open(context.Background(), t.TempDir(), fake, roots)
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
@@ -610,7 +618,7 @@ func TestHandleEventContactIngestMakesItFindableByPhoneSearch(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	b, err := Open(context.Background(), t.TempDir(), st)
+	b, err := Open(context.Background(), t.TempDir(), st, mediapath.Roots{})
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}

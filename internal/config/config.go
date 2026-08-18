@@ -15,6 +15,10 @@ const (
 	dirName  = "whatsapp-connect-mcp"
 	fileName = "config.json"
 
+	// mediaDirName is the directory outbound media may be read from unless
+	// config.json widens it.
+	mediaDirName = "outbox"
+
 	defaultRateBurst      = 3
 	defaultRatePerSeconds = 12
 )
@@ -24,6 +28,17 @@ type Config struct {
 	TrustedJIDs    []string `json:"trusted_jids"`
 	RateBurst      int      `json:"rate_burst"`
 	RatePerSeconds int      `json:"rate_per_seconds"`
+	// MediaRoots lists the directories an outbound send may read files
+	// from. Defaulting it to a single dedicated directory, rather than to
+	// the whole filesystem, is what keeps a send tool from being able to
+	// attach an arbitrary readable file.
+	MediaRoots []string `json:"media_roots"`
+}
+
+// DefaultMediaDir returns the directory outbound media is read from when
+// config.json does not say otherwise.
+func DefaultMediaDir(dir string) string {
+	return filepath.Join(dir, mediaDirName)
 }
 
 // Dir returns the application's data directory under the OS user config
@@ -50,7 +65,11 @@ func Load(dir string) (Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, fileName)) // #nosec G304 -- dir is caller-supplied (config.Dir() or a test dir), not network input
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Config{RateBurst: defaultRateBurst, RatePerSeconds: defaultRatePerSeconds}, nil
+			return Config{
+				RateBurst:      defaultRateBurst,
+				RatePerSeconds: defaultRatePerSeconds,
+				MediaRoots:     []string{DefaultMediaDir(dir)},
+			}, nil
 		}
 		return Config{}, fmt.Errorf("read config file: %w", err)
 	}
@@ -67,6 +86,12 @@ func Load(dir string) (Config, error) {
 	}
 	if c.RatePerSeconds <= 0 {
 		c.RatePerSeconds = defaultRatePerSeconds
+	}
+	// Applied the same way as the rate defaults above, so a config.json
+	// written before this key existed gets the dedicated directory rather
+	// than an empty list — which would refuse every media send.
+	if len(c.MediaRoots) == 0 {
+		c.MediaRoots = []string{DefaultMediaDir(dir)}
 	}
 	return c, nil
 }

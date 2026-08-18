@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -44,6 +45,12 @@ type Bridge struct {
 	store     Ingest
 	dataDir   string
 
+	// mediaRoots confines which local files an outbound send may read. Its
+	// zero value allows nothing, so a Bridge opened without roots (setup,
+	// status, and the other non-sending commands) cannot send media at all
+	// — the safe direction for a caller that never needed to.
+	mediaRoots mediapath.Roots
+
 	handlerOnce sync.Once
 	// handlerRegistrations counts how many times ensureHandlerRegistered
 	// actually registered the event handler (as opposed to how many times
@@ -62,7 +69,11 @@ var errInvalidRecipient = errors.New("invalid recipient")
 // <dataDir>/session.db and constructs a Bridge that decodes inbound events
 // into st. It does not connect to WhatsApp; call Connect or PairQR for
 // that.
-func Open(ctx context.Context, dataDir string, st Ingest) (*Bridge, error) {
+//
+// roots confines which local files outbound media sends may read. Callers
+// that never send (setup, status, doctor) should pass the zero value, which
+// denies everything.
+func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots) (*Bridge, error) {
 	dbPath := filepath.ToSlash(filepath.Join(dataDir, "session.db"))
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)",
@@ -80,7 +91,7 @@ func Open(ctx context.Context, dataDir string, st Ingest) (*Bridge, error) {
 	}
 
 	client := whatsmeow.NewClient(device, waLog.Noop)
-	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir}
+	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir, mediaRoots: roots}
 	// Registered here, once, rather than in Connect: PairQR also needs
 	// inbound events flowing (history sync can start arriving mid-pairing),
 	// and registering in exactly one place removes any chance of a second
