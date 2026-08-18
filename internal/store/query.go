@@ -418,7 +418,9 @@ func (s *Store) OldestMessage(chatJID string) (MessageRow, bool, error) {
 }
 
 // Calls lists calls newest-first, optionally filtered to one peer JID.
-func (s *Store) Calls(peerJID string, limit int) ([]CallRow, error) {
+// beforeTS and afterTS bound the window with the same semantics as
+// Messages: strict comparisons, either left at 0 unbounded.
+func (s *Store) Calls(peerJID string, beforeTS, afterTS int64, limit int) ([]CallRow, error) {
 	limit = ClampLimit(limit)
 
 	var b strings.Builder
@@ -432,11 +434,19 @@ SELECT ca.id, ca.peer_jid,
        END,
        ca.direction, ca.status, ca.ts, ca.is_video
 FROM calls ca
-LEFT JOIN contacts c ON c.jid = ca.peer_jid`)
+LEFT JOIN contacts c ON c.jid = ca.peer_jid WHERE 1 = 1`)
 	var args []any
 	if peerJID != "" {
-		b.WriteString(` WHERE ca.peer_jid = ?`)
+		b.WriteString(` AND ca.peer_jid = ?`)
 		args = append(args, peerJID)
+	}
+	if beforeTS > 0 {
+		b.WriteString(` AND ca.ts < ?`)
+		args = append(args, beforeTS)
+	}
+	if afterTS > 0 {
+		b.WriteString(` AND ca.ts > ?`)
+		args = append(args, afterTS)
 	}
 	b.WriteString(` ORDER BY ca.ts DESC, ca.id DESC LIMIT ?`)
 	args = append(args, limit)

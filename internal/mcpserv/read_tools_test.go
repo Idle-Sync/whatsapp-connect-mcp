@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -23,9 +24,10 @@ type fakeStore struct {
 	chatOK  bool
 	chatErr error
 
-	messagesLimit int
-	messagesRet   []store.MessageRow
-	messagesErr   error
+	messagesLimit                 int
+	messagesBefore, messagesAfter int64
+	messagesRet                   []store.MessageRow
+	messagesErr                   error
 
 	searchMessagesLimit int
 	searchMessagesRet   []store.MessageRow
@@ -43,9 +45,10 @@ type fakeStore struct {
 	lastInteractionOK  bool
 	lastInteractionErr error
 
-	callsLimit int
-	callsRet   []store.CallRow
-	callsErr   error
+	callsLimit              int
+	callsBefore, callsAfter int64
+	callsRet                []store.CallRow
+	callsErr                error
 
 	mediaRef      []byte
 	mediaFilename string
@@ -68,7 +71,8 @@ func (f *fakeStore) Chat(_ string) (store.ChatRow, bool, error) {
 	return f.chatRet, f.chatOK, f.chatErr
 }
 
-func (f *fakeStore) Messages(_ string, _, _ int64, limit int) ([]store.MessageRow, error) {
+func (f *fakeStore) Messages(_ string, before, after int64, limit int) ([]store.MessageRow, error) {
+	f.messagesBefore, f.messagesAfter = before, after
 	f.messagesLimit = limit
 	return f.messagesRet, f.messagesErr
 }
@@ -92,7 +96,8 @@ func (f *fakeStore) LastInteraction(_ string) (store.MessageRow, bool, error) {
 	return f.lastInteractionRet, f.lastInteractionOK, f.lastInteractionErr
 }
 
-func (f *fakeStore) Calls(_ string, limit int) ([]store.CallRow, error) {
+func (f *fakeStore) Calls(_ string, before, after int64, limit int) ([]store.CallRow, error) {
+	f.callsBefore, f.callsAfter = before, after
 	f.callsLimit = limit
 	return f.callsRet, f.callsErr
 }
@@ -222,6 +227,76 @@ func TestListMessagesZeroLimitDefaultsTo20(t *testing.T) {
 
 	if st.messagesLimit != 20 {
 		t.Fatalf("Store.Messages called with limit = %d, want 20 (default)", st.messagesLimit)
+	}
+}
+
+// Fixed clock for the time-window tests: 2026-08-18T12:34:56Z. The IST
+// epoch expectations match internal/timewin's own externally-computed
+// fixtures; what these tests pin is the wiring — that the tool resolves the
+// window itself and hands the store the resolved bounds.
+func fixedNow() time.Time {
+	return time.Unix(1787056496, 0).UTC()
+}
+
+func TestListMessagesResolvesNamedWindowServerSide(t *testing.T) {
+	st := &fakeStore{}
+	d := &toolDeps{st: st, live: &fakeLive{}, now: fixedNow}
+
+	_, _, err := d.listMessages(context.Background(), nil, listMessagesInput{
+		ChatJID: "x@s.whatsapp.net", Window: "yesterday", TZ: "Asia/Kolkata",
+	})
+	if err != nil {
+		t.Fatalf("listMessages(window) error = %v", err)
+	}
+
+	const istAug17, istAug18 = 1786905000, 1786991400
+	if st.messagesAfter != istAug17-1 || st.messagesBefore != istAug18 {
+		t.Fatalf("Store.Messages bounds = (after=%d, before=%d), want (%d, %d) — yesterday in IST resolved server-side",
+			st.messagesAfter, st.messagesBefore, istAug17-1, istAug18)
+	}
+}
+
+func TestListMessagesUnixSecondsStillAccepted(t *testing.T) {
+	st := &fakeStore{}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	_, _, err := d.listMessages(context.Background(), nil, listMessagesInput{
+		ChatJID: "x@s.whatsapp.net", After: "100", Before: "200",
+	})
+	if err != nil {
+		t.Fatalf("listMessages(unix bounds) error = %v", err)
+	}
+	if st.messagesAfter != 100 || st.messagesBefore != 200 {
+		t.Fatalf("Store.Messages bounds = (after=%d, before=%d), want (100, 200)", st.messagesAfter, st.messagesBefore)
+	}
+}
+
+func TestListMessagesBadTimeBoundErrors(t *testing.T) {
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}}
+
+	_, _, err := d.listMessages(context.Background(), nil, listMessagesInput{
+		ChatJID: "x@s.whatsapp.net", After: "banana",
+	})
+	if err == nil {
+		t.Fatal("listMessages(after=banana): want error, got nil")
+	}
+}
+
+func TestGetCallHistoryAcceptsTimeWindow(t *testing.T) {
+	st := &fakeStore{}
+	d := &toolDeps{st: st, live: &fakeLive{}, now: fixedNow}
+
+	_, _, err := d.getCallHistory(context.Background(), nil, getCallHistoryInput{
+		Window: "yesterday", TZ: "Asia/Kolkata",
+	})
+	if err != nil {
+		t.Fatalf("getCallHistory(window) error = %v", err)
+	}
+
+	const istAug17, istAug18 = 1786905000, 1786991400
+	if st.callsAfter != istAug17-1 || st.callsBefore != istAug18 {
+		t.Fatalf("Store.Calls bounds = (after=%d, before=%d), want (%d, %d)",
+			st.callsAfter, st.callsBefore, istAug17-1, istAug18)
 	}
 }
 

@@ -588,7 +588,7 @@ func TestCallsOrderedNewestFirstAndFilterByPeer(t *testing.T) {
 	s := newTestStore(t)
 	f := seedFixture(t, s)
 
-	rows, err := s.Calls("", 0)
+	rows, err := s.Calls("", 0, 0, 0)
 	if err != nil {
 		t.Fatalf("Calls: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestCallsOrderedNewestFirstAndFilterByPeer(t *testing.T) {
 		t.Fatalf("Calls() = %+v, want [c2 c1] (newest first)", rows)
 	}
 
-	rows, err = s.Calls(f.contactA, 0)
+	rows, err = s.Calls(f.contactA, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("Calls(peer): %v", err)
 	}
@@ -605,11 +605,32 @@ func TestCallsOrderedNewestFirstAndFilterByPeer(t *testing.T) {
 	}
 }
 
+func TestCallsTimeWindow(t *testing.T) {
+	s := newTestStore(t)
+	seedFixture(t, s)
+
+	rows, err := s.Calls("", 150, 0, 0)
+	if err != nil {
+		t.Fatalf("Calls(before): %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "c1" {
+		t.Fatalf("Calls(before=150) = %+v, want only c1 (ts 100)", rows)
+	}
+
+	rows, err = s.Calls("", 0, 150, 0)
+	if err != nil {
+		t.Fatalf("Calls(after): %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "c2" {
+		t.Fatalf("Calls(after=150) = %+v, want only c2 (ts 200)", rows)
+	}
+}
+
 func TestCallsPeerNameResolvesViaContactsWithJIDFallback(t *testing.T) {
 	s := newTestStore(t)
 	f := seedFixture(t, s)
 
-	rows, err := s.Calls("", 0)
+	rows, err := s.Calls("", 0, 0, 0)
 	if err != nil {
 		t.Fatalf("Calls: %v", err)
 	}

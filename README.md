@@ -103,7 +103,7 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 |---|---|
 | `list_chats` | Chats (1:1 and group), newest activity first; filterable by name and archived state. |
 | `get_chat` | One chat by JID. |
-| `list_messages` | Messages in a chat, newest first, optionally time-bounded. |
+| `list_messages` | Messages in a chat, newest first, optionally time-bounded — pass a named window (`today`, `yesterday`, `last_24h`, `last_7d`) or a `date` with an IANA `tz`, or explicit bounds (Unix seconds, RFC 3339, or a bare date); the server does the timezone arithmetic. |
 | `search_messages` | Full-text search over message bodies, chat-scoped or global. |
 | `get_message_context` | The messages immediately before/after one target message. |
 | `search_contacts` | Contacts by name or phone number substring. |
@@ -111,7 +111,7 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 | `list_group_participants` | A group's member JIDs, fetched live. |
 | `get_group_info` | A group's subject, description, owner, and admins, fetched live. |
 | `get_blocklist` | The JIDs the account has blocked, fetched live. |
-| `get_call_history` | Calls, newest first, optionally filtered to one peer. |
+| `get_call_history` | Calls, newest first, optionally filtered to one peer and time-bounded with the same window/date/tz forms as `list_messages`. |
 | `download_media` | Downloads a message's attached media to the local data directory. |
 | `fetch_older_messages` | Asks the phone for messages from before the oldest one stored in a chat, widening how far back it can be read. Call repeatedly to page further back. |
 | `doctor` | Runs the diagnostics described in [Diagnostics](#diagnostics) as an MCP tool. |

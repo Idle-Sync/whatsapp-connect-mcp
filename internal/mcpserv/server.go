@@ -35,7 +35,7 @@ type Store interface {
 	SearchContacts(query string, limit int) ([]store.ContactRow, error)
 	LastInteraction(jid string) (store.MessageRow, bool, error)
 	OldestMessage(chatJID string) (store.MessageRow, bool, error)
-	Calls(peerJID string, limit int) ([]store.CallRow, error)
+	Calls(peerJID string, beforeTS, afterTS int64, limit int) ([]store.CallRow, error)
 	MessageMediaRef(chatJID, id string) ([]byte, string, string, error)
 	QuickCheck() error
 }

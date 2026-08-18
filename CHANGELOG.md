@@ -13,6 +13,14 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Server-side time windows.** `list_messages` and `get_call_history`
+  resolve human-shaped time bounds themselves: a named `window` (`today`,
+  `yesterday`, `last_24h`, `last_7d`) or a whole `date` (YYYY-MM-DD),
+  interpreted in an IANA `tz`, against the server's own clock — no client
+  ever has to compute epoch seconds or do timezone arithmetic. Explicit
+  `before`/`after` bounds accept Unix seconds, RFC 3339 timestamps, or bare
+  dates. The IANA timezone database is embedded, so `tz` works on every OS
+  including Windows.
 - **Twenty-four MCP tools.** Fourteen read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
