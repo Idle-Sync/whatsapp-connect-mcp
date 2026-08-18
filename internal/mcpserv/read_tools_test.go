@@ -126,6 +126,12 @@ type fakeLive struct {
 	historyTS     int64
 	historyCount  int
 	historyErr    error
+
+	groupSubject     string
+	groupDescription string
+	groupOwner       string
+	groupAdmins      []string
+	groupInfoErr     error
 }
 
 func (f *fakeLive) RequestOlderMessages(_ context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error {
@@ -137,6 +143,10 @@ func (f *fakeLive) RequestOlderMessages(_ context.Context, chatJID, msgID string
 
 func (f *fakeLive) GroupParticipants(_ context.Context, _ string) ([]string, error) {
 	return f.participants, f.participantsErr
+}
+
+func (f *fakeLive) GroupInfo(_ context.Context, _ string) (string, string, string, []string, error) {
+	return f.groupSubject, f.groupDescription, f.groupOwner, f.groupAdmins, f.groupInfoErr
 }
 
 func (f *fakeLive) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
@@ -338,6 +348,54 @@ func TestFetchOlderMessagesIsNotBannerWrapped(t *testing.T) {
 	text := resultText(t, result)
 	if strings.HasPrefix(text, bannerWarning) || strings.Contains(text, bannerOpen) {
 		t.Errorf("result is banner-wrapped, want a plain status line: %q", text)
+	}
+}
+
+func TestGetGroupInfoRendersFieldsAndAdmins(t *testing.T) {
+	live := &fakeLive{
+		groupSubject:     "Project Team",
+		groupDescription: "Planning channel",
+		groupOwner:       "owner@s.whatsapp.net",
+		groupAdmins:      []string{"a1@s.whatsapp.net", "a2@s.whatsapp.net"},
+	}
+	d := &toolDeps{st: &fakeStore{}, live: live}
+
+	result, _, err := d.getGroupInfo(context.Background(), nil, getGroupInfoInput{GroupJID: "g@g.us"})
+	if err != nil {
+		t.Fatalf("getGroupInfo() error = %v", err)
+	}
+
+	text := resultText(t, result)
+	for _, want := range []string{
+		"subject\tProject Team",
+		"description\tPlanning channel",
+		"owner\towner@s.whatsapp.net",
+		"admin\ta1@s.whatsapp.net",
+		"admin\ta2@s.whatsapp.net",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("getGroupInfo() text = %q, missing %q", text, want)
+		}
+	}
+	if !strings.HasPrefix(text, bannerWarning) {
+		t.Errorf("getGroupInfo() result is not banner-wrapped: %q", text)
+	}
+}
+
+func TestGetGroupInfoWithNoAdminsStillRendersFields(t *testing.T) {
+	live := &fakeLive{groupSubject: "Solo", groupOwner: "o@s.whatsapp.net"}
+	d := &toolDeps{st: &fakeStore{}, live: live}
+
+	result, _, err := d.getGroupInfo(context.Background(), nil, getGroupInfoInput{GroupJID: "g@g.us"})
+	if err != nil {
+		t.Fatalf("getGroupInfo() error = %v", err)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "subject\tSolo") {
+		t.Errorf("getGroupInfo() text = %q, want the subject line even with no admins", text)
+	}
+	if strings.Contains(text, "admin\t") {
+		t.Errorf("getGroupInfo() text = %q, want no admin lines when there are none", text)
 	}
 }
 

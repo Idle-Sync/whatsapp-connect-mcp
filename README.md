@@ -63,7 +63,7 @@ decides what it really sends.
 
 ## What this is for
 
-The twelve read tools are the product; the five send tools are a convenience.
+The thirteen read tools are the product; the seven send tools are a convenience.
 In practice that means:
 
 - **Searching your own history.** WhatsApp's own search has no date filters
@@ -95,7 +95,7 @@ Point it at customers and you will lose the number.
 
 ## What it gives your MCP client
 
-Nineteen tools: twelve read-only, seven gated sends, described below.
+Twenty tools: thirteen read-only, seven gated sends, described below.
 
 ### Read / search (no gate)
 
@@ -109,6 +109,7 @@ Nineteen tools: twelve read-only, seven gated sends, described below.
 | `search_contacts` | Contacts by name or phone number substring. |
 | `get_last_interaction` | The most recent message involving a JID. |
 | `list_group_participants` | A group's member JIDs, fetched live. |
+| `get_group_info` | A group's subject, description, owner, and admins, fetched live. |
 | `get_call_history` | Calls, newest first, optionally filtered to one peer. |
 | `download_media` | Downloads a message's attached media to the local data directory. |
 | `fetch_older_messages` | Asks the phone for messages from before the oldest one stored in a chat, widening how far back it can be read. Call repeatedly to page further back. |

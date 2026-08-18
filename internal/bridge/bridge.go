@@ -173,6 +173,33 @@ func (b *Bridge) Connect(ctx context.Context) error {
 	return nil
 }
 
+// GroupInfo returns a group's subject, description (topic), owner JID, and
+// the JIDs of its admins (regular and super), all fetched live.
+//
+// The values are returned as scalars and a slice rather than a struct so
+// this package stays out of mcpserv's imports: mcpserv's Live interface is
+// satisfied structurally, which a named return type would break. Member
+// JIDs are deliberately not returned here — list_group_participants already
+// covers those.
+func (b *Bridge) GroupInfo(ctx context.Context, groupJID string) (subject, description, ownerJID string, admins []string, err error) {
+	jid, err := parseRecipient(groupJID)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+
+	info, err := b.client.GetGroupInfo(ctx, jid)
+	if err != nil {
+		return "", "", "", nil, waErr("fetch group info", err)
+	}
+
+	for _, p := range info.Participants {
+		if p.IsAdmin || p.IsSuperAdmin {
+			admins = append(admins, p.JID.String())
+		}
+	}
+	return info.Name, info.Topic, info.OwnerJID.String(), admins, nil
+}
+
 // GroupParticipants returns the member JIDs of the given group, fetched
 // live from WhatsApp.
 func (b *Bridge) GroupParticipants(ctx context.Context, groupJID string) ([]string, error) {

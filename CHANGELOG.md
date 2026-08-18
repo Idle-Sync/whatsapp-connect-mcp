@@ -13,10 +13,11 @@ WhatsApp messages through it.
 
 ### Added
 
-- **Nineteen MCP tools.** Twelve read-only — `list_chats`, `get_chat`,
+- **Twenty MCP tools.** Thirteen read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
-  `get_call_history`, `download_media`, `fetch_older_messages`, `doctor` —
+  `get_group_info`, `get_call_history`, `download_media`,
+  `fetch_older_messages`, `doctor` —
   plus seven gated sends:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
   `edit_message`, `delete_message`, `mark_read`. Every WhatsApp-originated result (messages, names, captions,
