@@ -21,6 +21,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/instancelock"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/schedule"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/watchdog"
@@ -144,12 +145,38 @@ func runServe(args []string) int {
 	trusted := func(jid string) bool { return cfg.IsTrusted(jid) || sess.Trusted(jid) }
 
 	g := gate.New(br, trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
+
+	// Scheduled sends. The schedule-time gate shares the trust predicate
+	// with the live gate but delivers into the schedule store (that is
+	// where the human's confirmation lands); the runner then fires due
+	// entries through the LIVE gate's DeliverScheduled, which consumes the
+	// same shared rate limiter as every other send. Schedules that came
+	// due more than 15 minutes ago while serve was down are dropped, and
+	// said so.
+	schedStore, droppedSchedules, err := schedule.Load(dataDir, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+	for _, e := range droppedSchedules {
+		fmt.Fprintf(os.Stderr, "serve: dropped schedule %s — its fire time passed while serve was not running\n", e.ID)
+	}
+	schedGate := gate.New(
+		schedule.NewStoreDeliverer(schedStore, br.Validate, time.Now),
+		trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now,
+	)
+	runner := schedule.NewRunner(schedStore, func(ctx context.Context, d gate.Delivery) error {
+		_, err := g.DeliverScheduled(ctx, d)
+		return err
+	}, os.Stderr)
+	go runner.Run(ctx)
+
 	doc := mcpserv.DoctorEnv{
 		Home: home, BinaryPath: binaryPath,
 		NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
 		LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
 	}
-	server := mcpserv.New(st, br, g, dataDir, doc)
+	server := mcpserv.New(st, br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, dataDir, doc)
 
 	if *httpAddr != "" {
 		token, created, err := httpauth.LoadOrCreateToken(dataDir)

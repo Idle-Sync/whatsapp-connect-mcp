@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/schedule"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -614,7 +615,11 @@ func TestSendReactionUnknownMessageIsCategoryError(t *testing.T) {
 }
 
 func TestRegisterSendToolsBuildsAllFiveSchemasWithoutPanicking(t *testing.T) {
-	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir(), DoctorEnv{})
+	sched, _, err := schedule.Load(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatalf("schedule.Load: %v", err)
+	}
+	server := New(&fakeStore{}, &fakeLive{}, nil, &Scheduler{Gate: nil, Store: sched}, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}

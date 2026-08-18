@@ -707,3 +707,93 @@ func TestSubmitRefusesBeforeDraftingAndBeforeRateLimiting(t *testing.T) {
 		t.Fatalf("a valid send after a refused one failed: %v — the refused call spent a rate token", err)
 	}
 }
+
+// FireAt is part of what the human confirms: a commit whose fire time
+// differs from the drafted one must be rejected like any other content
+// change.
+func TestSubmitAlteredFireAtWithValidTokenErrors(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 5, clock.Now)
+
+	d := Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "morning!", FireAt: 5000}
+	res, err := g.Submit(context.Background(), d, "", nil)
+	if err != nil {
+		t.Fatalf("Submit(draft) error = %v", err)
+	}
+
+	altered := d
+	altered.FireAt = 9000
+	if _, err := g.Submit(context.Background(), altered, res.DraftToken, nil); err == nil {
+		t.Fatal("Submit(commit) accepted a changed FireAt under the drafted token")
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0", deliverer.count())
+	}
+}
+
+func TestPreviewNamesTheFireTime(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	g := New(&fakeDeliverer{}, trustNone, 3, 5, clock.Now)
+
+	res, err := g.Submit(context.Background(), Delivery{
+		Kind: "text", To: "111@s.whatsapp.net", Text: "morning!", FireAt: 1787056496,
+	}, "", nil)
+	if err != nil {
+		t.Fatalf("Submit error = %v", err)
+	}
+	if !strings.Contains(res.Preview, "2026-08-18T12:34:56Z") {
+		t.Fatalf("Preview = %q, want it to show the scheduled fire time", res.Preview)
+	}
+}
+
+// DeliverScheduled is the fire-time path for a schedule the human already
+// confirmed when it was created: it delivers without the draft flow but
+// still consumes a token from the same shared rate limiter as every other
+// send.
+func TestDeliverScheduledDeliversWithoutDrafting(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 5, clock.Now)
+
+	res, err := g.DeliverScheduled(context.Background(), Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "hi"})
+	if err != nil {
+		t.Fatalf("DeliverScheduled error = %v", err)
+	}
+	if !res.Sent || res.MessageID == "" {
+		t.Fatalf("result = %+v, want a completed send", res)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+}
+
+func TestDeliverScheduledSharesTheRateLimiter(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 1, 5, clock.Now) // burst 1
+
+	if _, err := g.DeliverScheduled(context.Background(), Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "a"}); err != nil {
+		t.Fatalf("first DeliverScheduled error = %v", err)
+	}
+	_, err := g.DeliverScheduled(context.Background(), Delivery{Kind: "text", To: "111@s.whatsapp.net", Text: "b"})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("second DeliverScheduled error = %v, want ErrRateLimited (shared limiter, burst 1)", err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+}
+
+func TestDeliverScheduledStillValidates(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{validateErr: errors.New("outside media roots")}
+	g := New(deliverer, trustNone, 3, 5, clock.Now)
+
+	if _, err := g.DeliverScheduled(context.Background(), Delivery{Kind: "media", To: "111@s.whatsapp.net", Path: "/x"}); err == nil {
+		t.Fatal("DeliverScheduled skipped Validate")
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0", deliverer.count())
+	}
+}

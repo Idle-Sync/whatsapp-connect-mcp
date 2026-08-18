@@ -70,7 +70,7 @@ const serverName = "whatsapp-connect-mcp"
 // read-only tools against st and live (media downloaded into dataDir), the
 // doctor tool against st and doc, and the gated send tools against st and
 // g, the sole path any of them has to an outbound WhatsApp send.
-func New(st Store, live Live, g *gate.Gate, dataDir string, doc DoctorEnv) *mcp.Server {
+func New(st Store, live Live, g *gate.Gate, sched *Scheduler, dataDir string, doc DoctorEnv) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
 		Version: version.Version,
@@ -78,6 +78,9 @@ func New(st Store, live Live, g *gate.Gate, dataDir string, doc DoctorEnv) *mcp.
 
 	registerReadTools(server, st, live, dataDir, doc)
 	registerSendTools(server, st, g)
+	if sched != nil {
+		registerScheduleTools(server, st, sched)
+	}
 
 	return server
 }

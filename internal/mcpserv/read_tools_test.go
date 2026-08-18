@@ -1006,7 +1006,7 @@ func TestRegisterReadToolsBuildsAllElevenSchemasWithoutPanicking(t *testing.T) {
 	// schema. Exercising the full registration path (rather than only the
 	// handler methods, as the other tests in this file do) is what would
 	// catch a struct tag or type mistake in any of the eleven tools.
-	server := New(&fakeStore{}, &fakeLive{}, nil, t.TempDir(), DoctorEnv{})
+	server := New(&fakeStore{}, &fakeLive{}, nil, nil, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}

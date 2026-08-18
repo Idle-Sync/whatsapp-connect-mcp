@@ -143,6 +143,9 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 | `delete_message` | Deletes a message for everyone (your own always; others' only as a group admin). |
 | `create_poll` | Creates a poll (a question and two or more options); reading votes is not supported. |
 | `mark_read` | Marks one or more messages as read. |
+| `schedule_send` | Schedules a text or media send for a future time (up to 30 days; `send_at` or `delay_minutes`). The gate applies at scheduling time — untrusted recipients draft-and-confirm the schedule, fire time included — and the fire consumes the shared rate limiter. Persists across restarts; fires only while `serve` runs (≤15 min late fires on next start, older is dropped). |
+| `list_scheduled` | Pending scheduled sends, soonest first. |
+| `cancel_scheduled` | Cancels one pending scheduled send — always allowed, it only ever prevents a send. |
 | `block_contact` | Blocks a contact; always drafts first, never auto-commits on trust. |
 | `unblock_contact` | Unblocks a contact; always drafts first, never auto-commits on trust. |
 

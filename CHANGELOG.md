@@ -13,6 +13,18 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Scheduled sends.** `schedule_send` queues a text or media message
+  for a future time (up to 30 days ahead, via `send_at` or
+  `delay_minutes`), with `list_scheduled` and `cancel_scheduled`
+  alongside. The send gate applies **at scheduling time**: an untrusted
+  recipient gets the usual draft-then-confirm, with the fire time part
+  of both the preview and the draft token, and the human's commit
+  stores the schedule; a trusted recipient schedules on the first call.
+  At fire time the delivery consumes the same shared rate limiter as
+  every live send. Schedules persist across restarts in the data
+  directory, but fire only while `serve` runs: one that came due while
+  the server was down fires on the next start only if it is under 15
+  minutes late, and is dropped (and reported) otherwise.
 - **`poll_new_messages`: agents can wait for new messages.** A
   cursor-based long poll in the shape Telegram's `getUpdates` and
   Matrix's `/sync` converged on: the first call (no cursor) anchors a
@@ -116,15 +128,16 @@ WhatsApp messages through it.
   `before`/`after` bounds accept Unix seconds, RFC 3339 timestamps, or bare
   dates. The IANA timezone database is embedded, so `tz` works on every OS
   including Windows.
-- **Twenty-four MCP tools.** Fourteen read-only — `list_chats`, `get_chat`,
+- **Twenty-eight MCP tools.** Fifteen read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
   `get_group_info`, `get_blocklist`, `get_call_history`, `download_media`,
-  `fetch_older_messages`, `doctor` —
-  plus ten gated writes:
+  `fetch_older_messages`, `poll_new_messages`, `doctor` —
+  plus eleven gated writes:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
   `edit_message`, `delete_message`, `create_poll`, `block_contact`,
-  `unblock_contact`, `mark_read`. Every WhatsApp-originated result (messages, names, captions,
+  `unblock_contact`, `mark_read`, `schedule_send` — and two schedule
+  management tools, `list_scheduled` and `cancel_scheduled`. Every WhatsApp-originated result (messages, names, captions,
   contacts) is wrapped in an explicit untrusted-data banner, so nothing
   arriving over WhatsApp can be mistaken for instructions to the model.
 - **A server-enforced send gate.** Every outbound action goes through one

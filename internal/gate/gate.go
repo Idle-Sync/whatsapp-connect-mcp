@@ -61,6 +61,11 @@ type Delivery struct {
 	// SelectableCount is how many poll options a voter may choose. 0 or 1
 	// means a single-choice poll.
 	SelectableCount int
+	// FireAt is the Unix time a scheduled send is due to deliver; 0 for an
+	// immediate send. It is part of the draft identity and the preview: the
+	// fire time belongs to what the human confirms, so changing it under a
+	// drafted token invalidates the token like any content change.
+	FireAt int64
 }
 
 // Result is the outcome of Submit. Preview is always set; DraftToken is set
@@ -233,8 +238,28 @@ func (g *Gate) deliverNow(ctx context.Context, d Delivery, preview string) (Resu
 	return Result{Sent: true, MessageID: id, Preview: preview}, nil
 }
 
+// ErrRateLimited marks a delivery refused because the shared limiter had
+// no token. Exported so the schedule runner can tell "wait and retry"
+// apart from a permanent delivery failure.
+var ErrRateLimited = errors.New("rate limit reached")
+
 func (g *Gate) rateLimitError() error {
-	return fmt.Errorf("rate limit reached — retry after %ds", g.perSeconds)
+	return fmt.Errorf("%w — retry after %ds", ErrRateLimited, g.perSeconds)
+}
+
+// DeliverScheduled delivers d immediately, without the draft flow: it is
+// the fire-time path for a schedule whose content (fire time included) the
+// human already confirmed when the schedule was created — either by
+// committing a draft or by being on the trust list at scheduling time. It
+// still validates and still consumes a token from the same shared rate
+// limiter as every other send, so scheduled sends can never outrun the
+// rate floor. Only the schedule runner may call this; a schedule entry is
+// the proof of prior confirmation.
+func (g *Gate) DeliverScheduled(ctx context.Context, d Delivery) (Result, error) {
+	if err := g.deliver.Validate(d); err != nil {
+		return Result{}, err
+	}
+	return g.deliverNow(ctx, d, buildPreview("", d))
 }
 
 // storeDraftLocked prunes expired drafts, evicts the oldest one if the
@@ -279,6 +304,7 @@ func newDraftToken(d Delivery) (string, error) {
 		[]string{
 			d.Kind, d.Text, d.Path, d.QuotedID, strings.Join(d.MessageIDs, ","), d.Author,
 			strings.Join(d.Options, "\x1f"), strconv.Itoa(d.SelectableCount),
+			strconv.FormatInt(d.FireAt, 10),
 		}, "|",
 	)))
 
@@ -322,6 +348,9 @@ func buildPreview(name string, d Delivery) string {
 	}
 	if d.SelectableCount > 1 {
 		parts = append(parts, fmt.Sprintf("selectable=%d", d.SelectableCount))
+	}
+	if d.FireAt > 0 {
+		parts = append(parts, fmt.Sprintf("send_at=%s", time.Unix(d.FireAt, 0).UTC().Format(time.RFC3339)))
 	}
 	return strings.Join(parts, " ")
 }
