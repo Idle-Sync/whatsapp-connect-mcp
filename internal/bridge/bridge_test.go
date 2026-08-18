@@ -1,6 +1,31 @@
 package bridge
 
-import "testing"
+import (
+	"testing"
+
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
+	waStore "go.mau.fi/whatsmeow/store"
+)
+
+// TestAnnouncedDeviceIdentity proves the package init actually overrode
+// whatsmeow's defaults, which announce an OS string of "whatsmeow" with an
+// UNKNOWN platform type. Both are process-global variables owned by another
+// module, so a whatsmeow upgrade can silently reset either one; without this
+// test that regression would only surface as a device name on someone's
+// phone after they had already paired.
+func TestAnnouncedDeviceIdentity(t *testing.T) {
+	if got := waStore.DeviceProps.GetOs(); got != deviceOS {
+		t.Errorf("announced OS = %q, want %q", got, deviceOS)
+	}
+
+	if got := waStore.DeviceProps.GetPlatformType(); got != devicePlatform {
+		t.Errorf("announced platform type = %v, want %v", got, devicePlatform)
+	}
+
+	if waStore.DeviceProps.GetPlatformType() == waCompanionReg.DeviceProps_UNKNOWN {
+		t.Error("platform type is still whatsmeow's UNKNOWN default")
+	}
+}
 
 // TestEventHandlerRegisteredExactlyOnce proves that no matter how many
 // times ensureHandlerRegistered is called — Open calls it once at

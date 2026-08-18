@@ -41,6 +41,13 @@ WhatsApp messages through it.
   [--add|--remove|--list]`, `remove` (deletes the local session), and
   `reset` (`remove` plus stored messages, media, and settings) — `remove`
   and `reset` both require a typed `yes`.
+- **A browser client identity.** The paired device announces itself as
+  Chrome rather than whatsmeow's default OS string of `whatsmeow` with an
+  unknown platform type, which is also what the phone shows under Linked
+  Devices. This only changes what is announced at pairing time: an
+  already-paired session keeps its original identity until re-paired, and
+  the build hash, user agent placeholders, and on-wire behaviour are
+  unchanged.
 - **Distribution:** GitHub Releases for six OS/architecture combinations, a
   one-line install script for macOS/Linux (`curl | sh`) and Windows (`irm |
   iex`), an `npx whatsapp-connect-mcp` wrapper, a per-platform MCPB bundle,
@@ -52,9 +59,11 @@ WhatsApp messages through it.
   [whatsmeow](https://github.com/tulir/whatsmeow)), not an official WhatsApp
   Business API. Meta bans numbers it detects on this protocol, and such bans
   are widely reported as permanent. The send gate and rate limiter cut the
-  behavioral half of that risk; they cannot touch the other half, which is
-  that this client is identifiable as a third-party client at all. Read the
-  README's "Ban risk" section before pairing a number you care about.
+  behavioral half of that risk. They cannot touch the other half, which is
+  that the session is distinguishable from an official client; announcing a
+  browser identity (below) defeats the most trivial form of that check and
+  no more. Read the README's "Ban risk" section before pairing a number you
+  care about.
 - Not for business automation. Support bots, outreach, and auto-responders
   are the use case most consistently reported to get numbers banned, and are
   what the official WhatsApp Business API exists for.

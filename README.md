@@ -176,10 +176,23 @@ Meta detects third-party clients in two independent ways, and only one of
 them is behavior.
 
 **1. The client is identifiable.** A linked device announces itself when it
-registers. whatsmeow's defaults announce an OS string of `whatsmeow` and an
-unknown platform type — which is also the device name your phone shows under
-Linked Devices. Nothing in this repo overrides that. Recognizing it
-server-side is a string comparison, not machine learning.
+registers. whatsmeow's defaults announce an OS string of `whatsmeow` with an
+unknown platform type, which is distinguishable from an official client by
+reading the pairing payload alone. This project overrides that and announces
+a Chrome browser identity instead (`internal/bridge/bridge.go`), which is
+also what your phone shows for this device under Linked Devices.
+
+Do not mistake that override for a fix. It defeats the most trivial version
+of the check and not the underlying problem: the registration payload still
+carries a build hash derived from whatsmeow's own version constant, the user
+agent keeps whatsmeow's placeholder carrier and manufacturer fields, and the
+session behaves on the wire like whatsmeow, not like Chrome. Users of
+whatsapp-web.js — which drives a real Chrome browser with a genuine
+fingerprint — received the same warnings described below, which suggests the
+announced identity was never the deciding signal. Changing it also does
+nothing for a session that is already paired: the identity is sent when
+pairing, so an existing session keeps whatever it registered with until you
+pair it again.
 
 **2. Behavior.** Reported triggers, roughly by how often they come up:
 messaging people who never messaged you first, high send velocity, volume
