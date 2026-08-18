@@ -438,6 +438,91 @@ func TestSendReactionResolvesAuthorFromMessageContext(t *testing.T) {
 	}
 }
 
+func TestEditMessageBuildsEditDeliveryAndDrafts(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	// Untrusted recipient: the first call must draft, not send.
+	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	result, _, err := d.editMessage(context.Background(), nil, editMessageInput{
+		ChatJID: "111@s.whatsapp.net", MessageID: "m1", Text: "corrected",
+	})
+	if err != nil {
+		t.Fatalf("editMessage() error = %v", err)
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times on the drafting call, want 0", deliverer.count())
+	}
+	text := resultText(t, result)
+	if extractField(t, text, "draft_token") == "" {
+		t.Fatalf("editMessage() draft text = %q, want a draft_token", text)
+	}
+}
+
+func TestEditMessageTrustedSendsEditKind(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, func(jid string) bool { return jid == "111@s.whatsapp.net" }, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	_, _, err := d.editMessage(context.Background(), nil, editMessageInput{
+		ChatJID: "111@s.whatsapp.net", MessageID: "m1", Text: "corrected",
+	})
+	if err != nil {
+		t.Fatalf("editMessage() error = %v", err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+	got := deliverer.delivered[0]
+	if got.Kind != "edit" || got.QuotedID != "m1" || got.Text != "corrected" {
+		t.Fatalf("delivered = %+v, want an edit of m1 with the new text", got)
+	}
+}
+
+func TestDeleteMessageResolvesAuthorAndSendsRevokeKind(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, func(jid string) bool { return jid == "c@g.us" }, 3, 12, time.Now)
+
+	st := &sendFakeStore{messageContext: map[string]store.MessageRow{
+		"c@g.us|m1": {ChatJID: "c@g.us", ID: "m1", SenderJID: "author@s.whatsapp.net"},
+	}}
+	d := &sendDeps{st: st, g: g}
+
+	_, _, err := d.deleteMessage(context.Background(), nil, deleteMessageInput{ChatJID: "c@g.us", MessageID: "m1"})
+	if err != nil {
+		t.Fatalf("deleteMessage() error = %v", err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+	got := deliverer.delivered[0]
+	if got.Kind != "revoke" {
+		t.Fatalf("delivered Kind = %q, want %q", got.Kind, "revoke")
+	}
+	if got.QuotedID != "m1" {
+		t.Fatalf("delivered QuotedID = %q, want %q", got.QuotedID, "m1")
+	}
+	// The author must be resolved so an admin-delete of someone else's
+	// message carries the right sender.
+	if got.Author != "author@s.whatsapp.net" {
+		t.Fatalf("delivered Author = %q, want the target's sender %q", got.Author, "author@s.whatsapp.net")
+	}
+}
+
+func TestDeleteMessageUnknownMessageIsCategoryError(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	_, _, err := d.deleteMessage(context.Background(), nil, deleteMessageInput{ChatJID: "c@g.us", MessageID: "missing"})
+	if err == nil {
+		t.Fatal("deleteMessage() error = nil, want an error for an unknown target message")
+	}
+	if deliverer.count() != 0 {
+		t.Fatalf("deliverer called %d times, want 0", deliverer.count())
+	}
+}
+
 func TestSendReactionUnknownMessageIsCategoryError(t *testing.T) {
 	deliverer := &fakeDeliverer{}
 	g := gate.New(deliverer, trustNoneSend, 3, 12, time.Now)

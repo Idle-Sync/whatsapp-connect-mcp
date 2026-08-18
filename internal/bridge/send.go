@@ -56,11 +56,64 @@ func (b *Bridge) Deliver(ctx context.Context, d gate.Delivery) (string, error) {
 		return b.deliverVoice(ctx, d)
 	case "reaction":
 		return b.deliverReaction(ctx, d)
+	case "edit":
+		return b.deliverEdit(ctx, d)
+	case "revoke":
+		return b.deliverRevoke(ctx, d)
 	case "read":
 		return b.deliverRead(ctx, d)
 	default:
 		return "", fmt.Errorf("unknown delivery kind %q", d.Kind)
 	}
+}
+
+// deliverEdit replaces the text of an already-sent message. WhatsApp only
+// permits editing your own messages, and only within a fixed window after
+// sending; both are enforced by WhatsApp and surface here as a send error.
+func (b *Bridge) deliverEdit(ctx context.Context, d gate.Delivery) (string, error) {
+	to, err := parseRecipient(d.To)
+	if err != nil {
+		return "", err
+	}
+	if d.QuotedID == "" {
+		return "", errors.New("edit requires a target message id")
+	}
+
+	newContent := &waE2E.Message{Conversation: proto.String(d.Text)}
+	resp, err := b.client.SendMessage(ctx, to, b.client.BuildEdit(to, d.QuotedID, newContent))
+	if err != nil {
+		return "", waErr("edit message", err)
+	}
+	return resp.ID, nil
+}
+
+// deliverRevoke deletes a message for everyone in the chat. d.Author is the
+// target message's sender: for your own message it is your own JID, which
+// whatsmeow accepts; for someone else's it is that sender's JID, and the
+// delete only succeeds if you are a group admin. WhatsApp enforces that and
+// reports a failure here as a send error.
+func (b *Bridge) deliverRevoke(ctx context.Context, d gate.Delivery) (string, error) {
+	to, err := parseRecipient(d.To)
+	if err != nil {
+		return "", err
+	}
+	if d.QuotedID == "" {
+		return "", errors.New("delete requires a target message id")
+	}
+
+	sender := types.EmptyJID
+	if d.Author != "" {
+		sender, err = parseRecipient(d.Author)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	resp, err := b.client.SendMessage(ctx, to, b.client.BuildRevoke(to, sender, d.QuotedID))
+	if err != nil {
+		return "", waErr("delete message", err)
+	}
+	return resp.ID, nil
 }
 
 func (b *Bridge) deliverText(ctx context.Context, d gate.Delivery) (string, error) {

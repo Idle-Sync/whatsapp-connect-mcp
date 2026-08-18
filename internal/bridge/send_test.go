@@ -41,6 +41,52 @@ func TestDeliverInvalidRecipientErrors(t *testing.T) {
 	}
 }
 
+func TestDeliverEditRequiresTargetID(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	_, err := b.Deliver(context.Background(), gate.Delivery{
+		Kind: "edit", To: "111@s.whatsapp.net", Text: "fixed text",
+	})
+	if err == nil {
+		t.Fatal("Deliver(edit) error = nil, want error when the target message id is empty")
+	}
+	if !strings.Contains(err.Error(), "target message id") {
+		t.Fatalf("Deliver(edit) error = %q, want it to name the missing target message id", err.Error())
+	}
+}
+
+func TestDeliverRevokeRequiresTargetID(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	_, err := b.Deliver(context.Background(), gate.Delivery{
+		Kind: "revoke", To: "111@s.whatsapp.net", Author: "111@s.whatsapp.net",
+	})
+	if err == nil {
+		t.Fatal("Deliver(revoke) error = nil, want error when the target message id is empty")
+	}
+	if !strings.Contains(err.Error(), "target message id") {
+		t.Fatalf("Deliver(revoke) error = %q, want it to name the missing target message id", err.Error())
+	}
+}
+
+// TestDeliverRevokeRejectsUnparsableAuthor guards the admin-delete path: a
+// non-empty but malformed Author must fail without echoing the value, since
+// an empty Author is the legitimate own-message case and must not be the
+// only path that is validated.
+func TestDeliverRevokeRejectsUnparsableAuthor(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	_, err := b.Deliver(context.Background(), gate.Delivery{
+		Kind: "revoke", To: "111@s.whatsapp.net", QuotedID: "MSG1", Author: "not a jid",
+	})
+	if err == nil {
+		t.Fatal("Deliver(revoke) error = nil, want error for an unparsable author")
+	}
+	if strings.Contains(err.Error(), "not a jid") {
+		t.Fatalf("Deliver(revoke) error = %q, must not echo the invalid author", err.Error())
+	}
+}
+
 func TestDeliverReactionRequiresQuotedID(t *testing.T) {
 	b, _ := newTestBridge(t)
 

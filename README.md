@@ -95,7 +95,7 @@ Point it at customers and you will lose the number.
 
 ## What it gives your MCP client
 
-Seventeen tools: twelve read-only, five gated sends, described below.
+Nineteen tools: twelve read-only, seven gated sends, described below.
 
 ### Read / search (no gate)
 
@@ -126,6 +126,8 @@ Seventeen tools: twelve read-only, five gated sends, described below.
 | `send_media` | Sends an image, video, or document from an allowed directory, with an optional caption. |
 | `send_voice_note` | Sends a voice note from an Ogg Opus (`.ogg`) file in an allowed directory. No transcoding — other formats are rejected. |
 | `send_reaction` | Reacts to a message with an emoji (empty emoji removes a prior reaction). |
+| `edit_message` | Edits the text of a message you sent, within WhatsApp's edit window. |
+| `delete_message` | Deletes a message for everyone (your own always; others' only as a group admin). |
 | `mark_read` | Marks one or more messages as read. |
 
 Every tool result built from WhatsApp data — messages, names, contacts,
@@ -136,9 +138,9 @@ follow: nothing arriving over WhatsApp can tell your assistant what to do.
 ## The send gate
 
 This is the part `verygoodplugins/whatsapp-mcp` doesn't have. Every
-outbound send — text, media, voice note, reaction, or read receipt — goes
-through one path, enforced by the server, not by prompting the model to
-"be careful":
+outbound send — text, media, voice note, reaction, edit, delete, or read
+receipt — goes through one path, enforced by the server, not by prompting
+the model to "be careful":
 
 1. **Draft first.** Call a send tool for a recipient you haven't trusted
    yet, and nothing is sent. You get back a preview (the recipient resolved

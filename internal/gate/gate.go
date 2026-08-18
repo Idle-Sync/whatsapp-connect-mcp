@@ -49,7 +49,7 @@ type Deliverer interface {
 // Delivery describes one outbound action, spanning every kind the gate
 // covers so a single rate limiter and draft flow guards all of them.
 type Delivery struct {
-	Kind       string // text|media|voice|reaction|read
+	Kind       string // text|media|voice|reaction|edit|revoke|read
 	To         string // JID
 	Text       string // body, caption, or emoji
 	Path       string // media/voice source file

@@ -13,13 +13,13 @@ WhatsApp messages through it.
 
 ### Added
 
-- **Seventeen MCP tools.** Twelve read-only — `list_chats`, `get_chat`,
+- **Nineteen MCP tools.** Twelve read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
   `get_call_history`, `download_media`, `fetch_older_messages`, `doctor` —
-  plus five gated sends:
+  plus seven gated sends:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
-  `mark_read`. Every WhatsApp-originated result (messages, names, captions,
+  `edit_message`, `delete_message`, `mark_read`. Every WhatsApp-originated result (messages, names, captions,
   contacts) is wrapped in an explicit untrusted-data banner, so nothing
   arriving over WhatsApp can be mistaken for instructions to the model.
 - **A server-enforced send gate.** Every outbound action goes through one
@@ -54,6 +54,12 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **`edit_message` and `delete_message`.** Two more gated sends. `edit_message`
+  replaces the text of a message you sent, within WhatsApp's edit window;
+  `delete_message` deletes a message for everyone (your own always, someone
+  else's only as a group admin). Both take the same draft-then-commit path
+  as every other send, and WhatsApp enforces the window and admin rules,
+  reporting a failure as a send error.
 - **A parent-process watchdog.** The stdio server also exits when its
   parent process goes away, not only when stdin closes, so an MCP client
   that crashes without cleanly closing the pipe does not leave an orphaned
