@@ -173,6 +173,20 @@ func (b *Bridge) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Blocklist returns the JIDs the paired account has blocked, fetched live.
+func (b *Bridge) Blocklist(ctx context.Context) ([]string, error) {
+	bl, err := b.client.GetBlocklist(ctx)
+	if err != nil {
+		return nil, waErr("fetch block list", err)
+	}
+
+	jids := make([]string, len(bl.JIDs))
+	for i, j := range bl.JIDs {
+		jids[i] = j.String()
+	}
+	return jids, nil
+}
+
 // GroupInfo returns a group's subject, description (topic), owner JID, and
 // the JIDs of its admins (regular and super), all fetched live.
 //

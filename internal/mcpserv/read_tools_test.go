@@ -132,6 +132,9 @@ type fakeLive struct {
 	groupOwner       string
 	groupAdmins      []string
 	groupInfoErr     error
+
+	blocklist    []string
+	blocklistErr error
 }
 
 func (f *fakeLive) RequestOlderMessages(_ context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error {
@@ -147,6 +150,10 @@ func (f *fakeLive) GroupParticipants(_ context.Context, _ string) ([]string, err
 
 func (f *fakeLive) GroupInfo(_ context.Context, _ string) (string, string, string, []string, error) {
 	return f.groupSubject, f.groupDescription, f.groupOwner, f.groupAdmins, f.groupInfoErr
+}
+
+func (f *fakeLive) Blocklist(_ context.Context) ([]string, error) {
+	return f.blocklist, f.blocklistErr
 }
 
 func (f *fakeLive) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
@@ -348,6 +355,42 @@ func TestFetchOlderMessagesIsNotBannerWrapped(t *testing.T) {
 	text := resultText(t, result)
 	if strings.HasPrefix(text, bannerWarning) || strings.Contains(text, bannerOpen) {
 		t.Errorf("result is banner-wrapped, want a plain status line: %q", text)
+	}
+}
+
+func TestGetBlocklistRendersJIDs(t *testing.T) {
+	live := &fakeLive{blocklist: []string{"spam1@s.whatsapp.net", "spam2@s.whatsapp.net"}}
+	d := &toolDeps{st: &fakeStore{}, live: live}
+
+	result, _, err := d.getBlocklist(context.Background(), nil, struct{}{})
+	if err != nil {
+		t.Fatalf("getBlocklist() error = %v", err)
+	}
+	text := resultText(t, result)
+	for _, j := range live.blocklist {
+		if !strings.Contains(text, j) {
+			t.Errorf("getBlocklist() text = %q, missing %q", text, j)
+		}
+	}
+	if !strings.HasPrefix(text, bannerWarning) {
+		t.Errorf("getBlocklist() result is not banner-wrapped: %q", text)
+	}
+}
+
+func TestGetBlocklistEmptyReportsSo(t *testing.T) {
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{blocklist: nil}}
+
+	result, _, err := d.getBlocklist(context.Background(), nil, struct{}{})
+	if err != nil {
+		t.Fatalf("getBlocklist() error = %v", err)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "no blocked contacts") {
+		t.Errorf("getBlocklist() text = %q, want the empty-list message", text)
+	}
+	// A plain status line, not WhatsApp content: no banner.
+	if strings.HasPrefix(text, bannerWarning) {
+		t.Errorf("getBlocklist() empty result should not be banner-wrapped: %q", text)
 	}
 }
 

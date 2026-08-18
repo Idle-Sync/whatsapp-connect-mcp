@@ -13,10 +13,10 @@ WhatsApp messages through it.
 
 ### Added
 
-- **Twenty-one MCP tools.** Thirteen read-only — `list_chats`, `get_chat`,
+- **Twenty-two MCP tools.** Fourteen read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
-  `get_group_info`, `get_call_history`, `download_media`,
+  `get_group_info`, `get_blocklist`, `get_call_history`, `download_media`,
   `fetch_older_messages`, `doctor` —
   plus eight gated sends:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
@@ -55,6 +55,9 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **`get_blocklist`.** A read tool listing the JIDs the account has blocked.
+  Blocking and unblocking, and reading a contact's presence, are not yet
+  included — see the notes in the backlog.
 - **`create_poll`.** A gated send that posts a poll — a question and two or
   more options, single- or multiple-choice — through the same draft-then-commit
   path as every other send. Reading who voted is not included: poll votes
