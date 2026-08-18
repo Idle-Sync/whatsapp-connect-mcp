@@ -393,6 +393,30 @@ func (s *Store) LastInteraction(jid string) (MessageRow, bool, error) {
 	return m, true, nil
 }
 
+// OldestMessage returns the earliest stored message in chatJID. ok is false
+// when the chat has no stored messages.
+//
+// This is the anchor an on-demand history request is built from: the phone
+// answers with messages from immediately before it, so paging further back
+// is a matter of calling this again once the previous batch has landed.
+// Ordering mirrors the newest-first queries above (ts, then id as the
+// tiebreak) so that a chat whose oldest messages share a timestamp resolves
+// to the same row every time rather than an arbitrary one.
+func (s *Store) OldestMessage(chatJID string) (MessageRow, bool, error) {
+	row := s.db.QueryRow(
+		messageSelect+` WHERE m.chat_jid = ? ORDER BY m.ts ASC, m.id ASC LIMIT 1`,
+		chatJID,
+	)
+	m, err := scanMessageRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MessageRow{}, false, nil
+	}
+	if err != nil {
+		return MessageRow{}, false, fmt.Errorf("oldest message: %w", err)
+	}
+	return m, true, nil
+}
+
 // Calls lists calls newest-first, optionally filtered to one peer JID.
 func (s *Store) Calls(peerJID string, limit int) ([]CallRow, error) {
 	limit = ClampLimit(limit)

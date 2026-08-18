@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -179,6 +180,42 @@ func (b *Bridge) GroupParticipants(ctx context.Context, groupJID string) ([]stri
 		participants[i] = p.JID.String()
 	}
 	return participants, nil
+}
+
+// RequestOlderMessages asks the paired phone to send up to count messages
+// from before the message identified by (chatJID, msgID, fromMe, ts), which
+// must be one this store already holds — the phone anchors its reply on it.
+//
+// This is a peer message to the user's own account, not a message to any
+// contact: nothing is delivered to anyone, and no send gate applies. It
+// requests our own history from our own phone.
+//
+// The call returns as soon as the request is accepted. Whatever the phone
+// decides to send arrives later as an ordinary history-sync event and is
+// ingested through the same path as pair-time sync, so a caller learns the
+// result by reading the store again rather than from a return value here.
+// The phone may answer with fewer messages than asked for, or none at all.
+//
+// The anchor is passed as separate values rather than a struct so that this
+// package stays absent from mcpserv's imports: mcpserv's Live interface is
+// satisfied structurally, and naming a type here would end that.
+func (b *Bridge) RequestOlderMessages(
+	ctx context.Context, chatJID, msgID string, fromMe bool, ts int64, count int,
+) error {
+	chat, err := parseRecipient(chatJID)
+	if err != nil {
+		return err
+	}
+
+	info := &types.MessageInfo{
+		MessageSource: types.MessageSource{Chat: chat, IsFromMe: fromMe},
+		ID:            msgID,
+		Timestamp:     time.Unix(ts, 0),
+	}
+	if _, err := b.client.SendPeerMessage(ctx, b.client.BuildHistorySyncRequest(info, count)); err != nil {
+		return waErr("request older messages", err)
+	}
+	return nil
 }
 
 // DownloadMedia fetches the media referenced by ref (as produced by

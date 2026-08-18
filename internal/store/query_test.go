@@ -528,6 +528,62 @@ func TestLastInteractionUnknownJIDReturnsNotOK(t *testing.T) {
 	}
 }
 
+// TestOldestMessageReturnsEarliestInChat pins the direction. LastInteraction
+// sits right beside it returning the newest row from a near-identical query,
+// so an inverted ORDER BY here would still return a real message and pass
+// any test that only checked for one — while anchoring a history request on
+// the newest message, which asks the phone for messages already stored.
+func TestOldestMessageReturnsEarliestInChat(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	row, ok, err := s.OldestMessage(f.chat1)
+	if err != nil {
+		t.Fatalf("OldestMessage: %v", err)
+	}
+	if !ok {
+		t.Fatalf("OldestMessage(%q) ok = false, want true", f.chat1)
+	}
+	if row.ID != "m1" {
+		t.Fatalf("OldestMessage(%q).ID = %q, want m1 (the earliest)", f.chat1, row.ID)
+	}
+	if row.TS != 100 {
+		t.Fatalf("OldestMessage(%q).TS = %d, want 100", f.chat1, row.TS)
+	}
+}
+
+// TestOldestMessageIsScopedToItsChat guards against dropping the chat_jid
+// predicate, which would silently anchor every chat's request on whichever
+// message happened to be oldest across the whole store.
+func TestOldestMessageIsScopedToItsChat(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	row, ok, err := s.OldestMessage(f.chat2)
+	if err != nil {
+		t.Fatalf("OldestMessage: %v", err)
+	}
+	if !ok {
+		t.Fatalf("OldestMessage(%q) ok = false, want true", f.chat2)
+	}
+	if row.ChatJID != f.chat2 {
+		t.Fatalf("OldestMessage(%q).ChatJID = %q, want the chat asked for", f.chat2, row.ChatJID)
+	}
+}
+
+func TestOldestMessageEmptyChatReturnsNotOK(t *testing.T) {
+	s := newTestStore(t)
+	seedFixture(t, s)
+
+	_, ok, err := s.OldestMessage("nonexistent@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("OldestMessage: %v", err)
+	}
+	if ok {
+		t.Fatalf("OldestMessage(nonexistent) ok = true, want false")
+	}
+}
+
 func TestCallsOrderedNewestFirstAndFilterByPeer(t *testing.T) {
 	s := newTestStore(t)
 	f := seedFixture(t, s)

@@ -74,8 +74,8 @@ type toolDeps struct {
 	doctorEnv DoctorEnv
 }
 
-// registerReadTools registers the ten read-only tools plus doctor, the
-// eleventh tool in ARCHITECTURE.md §6's read list, against server. The
+// registerReadTools registers the read-only tools — ARCHITECTURE.md §6's
+// read list, plus fetch_older_messages and doctor — against server. The
 // send tools are registered separately by registerSendTools onto the same
 // *mcp.Server this function is handed.
 func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, doc DoctorEnv) {
@@ -162,6 +162,20 @@ func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, 
 			"media kind wrapped in an untrusted-data banner, followed by the local saved_path " +
 			"(outside the banner: a path this server created, not WhatsApp content).",
 	}, d.downloadMedia)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "fetch_older_messages",
+		Description: "Asks the paired phone to send messages from before the oldest one already " +
+			"stored for a chat, widening how far back that chat can be read and searched. This " +
+			"messages nobody: it requests your own history from your own phone. Results arrive " +
+			"asynchronously and land in the local store, so this returns only whether the request " +
+			"was accepted — read the chat again (usually a few seconds later) to see what arrived. " +
+			"The phone decides what it actually sends and may send less than requested or nothing " +
+			"at all, and it cannot return messages it has itself deleted. Call again to page " +
+			"further back: each call anchors on the oldest message stored at that moment. Returns " +
+			"this server's own status line, not WhatsApp content — no untrusted-data banner " +
+			"applies.",
+	}, d.fetchOlderMessages)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "doctor",
@@ -306,6 +320,52 @@ func (d *toolDeps) listGroupParticipants(ctx context.Context, _ *mcp.CallToolReq
 		return nil, nil, err
 	}
 	return bannerResult(participants), nil, nil
+}
+
+// historyRequestCount bounds how many messages one fetch_older_messages
+// call asks for. whatsmeow documents 50 as the recommended request size;
+// maxHistoryRequestCount caps it well below the point where a single
+// request would be unusual, since paging is the intended way to go deep.
+const (
+	defaultHistoryRequestCount = 50
+	maxHistoryRequestCount     = 500
+)
+
+type fetchOlderMessagesInput struct {
+	ChatJID string `json:"chat_jid" jsonschema:"JID of the chat to fetch older messages for."`
+	Count   int    `json:"count,omitempty" jsonschema:"How many messages to request; default 50, max 500. The phone may send fewer."`
+}
+
+func (d *toolDeps) fetchOlderMessages(ctx context.Context, _ *mcp.CallToolRequest, in fetchOlderMessagesInput) (*mcp.CallToolResult, any, error) {
+	count := in.Count
+	if count <= 0 {
+		count = defaultHistoryRequestCount
+	}
+	if count > maxHistoryRequestCount {
+		count = maxHistoryRequestCount
+	}
+
+	// The phone anchors its reply on a message it can be told about, so a
+	// chat with nothing stored cannot be backfilled at all. Say that plainly
+	// rather than sending a request that could never be answered.
+	oldest, ok, err := d.st.OldestMessage(in.ChatJID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return textResult("no messages stored for this chat, so there is nothing to anchor a " +
+			"history request on; send or receive one message in it first"), nil, nil
+	}
+
+	if err := d.live.RequestOlderMessages(ctx, oldest.ChatJID, oldest.ID, oldest.FromMe, oldest.TS, count); err != nil {
+		return nil, nil, err
+	}
+
+	return textResult(fmt.Sprintf(
+		"requested up to %d messages from before %s (the oldest currently stored for this chat); "+
+			"results arrive asynchronously — read the chat again shortly to see what the phone sent",
+		count, formatTS(oldest.TS),
+	)), nil, nil
 }
 
 type getCallHistoryInput struct {

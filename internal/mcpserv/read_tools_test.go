@@ -52,6 +52,10 @@ type fakeStore struct {
 	mediaKind     string
 	mediaErr      error
 
+	oldestRet store.MessageRow
+	oldestOK  bool
+	oldestErr error
+
 	quickCheckErr error
 }
 
@@ -97,6 +101,10 @@ func (f *fakeStore) MessageMediaRef(_, _ string) ([]byte, string, string, error)
 	return f.mediaRef, f.mediaFilename, f.mediaKind, f.mediaErr
 }
 
+func (f *fakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
+	return f.oldestRet, f.oldestOK, f.oldestErr
+}
+
 func (f *fakeStore) QuickCheck() error {
 	return f.quickCheckErr
 }
@@ -110,6 +118,21 @@ type fakeLive struct {
 	downloadFilename string
 	downloadPath     string
 	downloadErr      error
+
+	historyCalls  int
+	historyChat   string
+	historyMsgID  string
+	historyFromMe bool
+	historyTS     int64
+	historyCount  int
+	historyErr    error
+}
+
+func (f *fakeLive) RequestOlderMessages(_ context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error {
+	f.historyCalls++
+	f.historyChat, f.historyMsgID, f.historyFromMe = chatJID, msgID, fromMe
+	f.historyTS, f.historyCount = ts, count
+	return f.historyErr
 }
 
 func (f *fakeLive) GroupParticipants(_ context.Context, _ string) ([]string, error) {
@@ -214,6 +237,107 @@ func TestGetChatNotFoundReturnsError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "missing@s.whatsapp.net") {
 		t.Fatalf("getChat() error embeds the JID, want a category-only message: %v", err)
+	}
+}
+
+// TestFetchOlderMessagesAnchorsOnOldestStored proves the request is built
+// from the oldest stored message rather than any other row: anchoring on
+// anything else would ask the phone for messages we already hold, so the
+// call would appear to succeed while widening nothing.
+func TestFetchOlderMessagesAnchorsOnOldestStored(t *testing.T) {
+	oldest := store.MessageRow{
+		ChatJID: "chat@s.whatsapp.net", ID: "OLDEST1", FromMe: true, TS: 1700000000,
+	}
+	st := &fakeStore{oldestRet: oldest, oldestOK: true}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live}
+
+	_, _, err := d.fetchOlderMessages(context.Background(), nil,
+		fetchOlderMessagesInput{ChatJID: oldest.ChatJID, Count: 25})
+	if err != nil {
+		t.Fatalf("fetchOlderMessages() error = %v", err)
+	}
+
+	if live.historyCalls != 1 {
+		t.Fatalf("RequestOlderMessages called %d times, want 1", live.historyCalls)
+	}
+	if live.historyChat != oldest.ChatJID || live.historyMsgID != oldest.ID {
+		t.Errorf("anchored on (%q, %q), want (%q, %q)",
+			live.historyChat, live.historyMsgID, oldest.ChatJID, oldest.ID)
+	}
+	if live.historyFromMe != oldest.FromMe || live.historyTS != oldest.TS {
+		t.Errorf("anchor fromMe/ts = %v/%d, want %v/%d",
+			live.historyFromMe, live.historyTS, oldest.FromMe, oldest.TS)
+	}
+	if live.historyCount != 25 {
+		t.Errorf("requested count = %d, want 25", live.historyCount)
+	}
+}
+
+// TestFetchOlderMessagesClampsCount covers both ends of the range plus the
+// unset case, since an out-of-range count would otherwise reach the phone.
+func TestFetchOlderMessagesClampsCount(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		in, want int
+	}{
+		{"unset defaults", 0, defaultHistoryRequestCount},
+		{"negative defaults", -5, defaultHistoryRequestCount},
+		{"over max clamps", maxHistoryRequestCount + 1, maxHistoryRequestCount},
+		{"in range passes", 120, 120},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &fakeStore{oldestRet: store.MessageRow{ChatJID: "c@s.whatsapp.net", ID: "X"}, oldestOK: true}
+			live := &fakeLive{}
+			d := &toolDeps{st: st, live: live}
+
+			if _, _, err := d.fetchOlderMessages(context.Background(), nil,
+				fetchOlderMessagesInput{ChatJID: "c@s.whatsapp.net", Count: tc.in}); err != nil {
+				t.Fatalf("fetchOlderMessages() error = %v", err)
+			}
+			if live.historyCount != tc.want {
+				t.Errorf("count %d became %d, want %d", tc.in, live.historyCount, tc.want)
+			}
+		})
+	}
+}
+
+// TestFetchOlderMessagesWithNothingStoredSendsNothing proves an empty chat
+// short-circuits. There is no message to anchor on, so a request could never
+// be answered; sending one anyway would burn a round trip and report success.
+func TestFetchOlderMessagesWithNothingStoredSendsNothing(t *testing.T) {
+	live := &fakeLive{}
+	d := &toolDeps{st: &fakeStore{oldestOK: false}, live: live}
+
+	result, _, err := d.fetchOlderMessages(context.Background(), nil,
+		fetchOlderMessagesInput{ChatJID: "empty@s.whatsapp.net"})
+	if err != nil {
+		t.Fatalf("fetchOlderMessages() error = %v", err)
+	}
+	if live.historyCalls != 0 {
+		t.Fatalf("RequestOlderMessages called %d times, want 0 for a chat with nothing stored", live.historyCalls)
+	}
+	if text := resultText(t, result); !strings.Contains(text, "nothing to anchor") {
+		t.Errorf("result = %q, want an explanation that there is nothing to anchor on", text)
+	}
+}
+
+// TestFetchOlderMessagesIsNotBannerWrapped guards the boundary the banner
+// exists to police: this tool reports our own status, never WhatsApp
+// content, so wrapping it would train callers to discount the banner where
+// it does matter.
+func TestFetchOlderMessagesIsNotBannerWrapped(t *testing.T) {
+	st := &fakeStore{oldestRet: store.MessageRow{ChatJID: "c@s.whatsapp.net", ID: "X"}, oldestOK: true}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	result, _, err := d.fetchOlderMessages(context.Background(), nil,
+		fetchOlderMessagesInput{ChatJID: "c@s.whatsapp.net"})
+	if err != nil {
+		t.Fatalf("fetchOlderMessages() error = %v", err)
+	}
+	text := resultText(t, result)
+	if strings.HasPrefix(text, bannerWarning) || strings.Contains(text, bannerOpen) {
+		t.Errorf("result is banner-wrapped, want a plain status line: %q", text)
 	}
 }
 

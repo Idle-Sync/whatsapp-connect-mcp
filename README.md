@@ -95,7 +95,7 @@ Point it at customers and you will lose the number.
 
 ## What it gives your MCP client
 
-Sixteen tools: eleven read-only, five gated sends, described below.
+Seventeen tools: twelve read-only, five gated sends, described below.
 
 ### Read / search (no gate)
 
@@ -111,6 +111,7 @@ Sixteen tools: eleven read-only, five gated sends, described below.
 | `list_group_participants` | A group's member JIDs, fetched live. |
 | `get_call_history` | Calls, newest first, optionally filtered to one peer. |
 | `download_media` | Downloads a message's attached media to the local data directory. |
+| `fetch_older_messages` | Asks the phone for messages from before the oldest one stored in a chat, widening how far back it can be read. Call repeatedly to page further back. |
 | `doctor` | Runs the diagnostics described in [Diagnostics](#diagnostics) as an MCP tool. |
 
 > How far back any of these reach is decided by the paired phone, not by this
@@ -244,8 +245,10 @@ number appears in this document for that reason.
   is no setting here that fetches more than the phone hands over.
   `setup --full-history` asks for as much as the protocol allows instead of
   the default few months, but it is a request, not a setting — and it only
-  applies when pairing, so an existing install has to re-pair to widen its
-  window.
+  applies when pairing. For an install that is already paired, the
+  `fetch_older_messages` tool asks the phone for more of a single chat
+  without re-pairing. Both are requests the phone is free to answer with
+  less, or nothing; neither recovers messages the phone itself has deleted.
 - **Voice notes need Ogg Opus input.** `send_voice_note` does no
   transcoding. If your source audio isn't already `.ogg`/Opus, convert it
   first (e.g. `ffmpeg -i in.mp3 -c:a libopus out.ogg`).

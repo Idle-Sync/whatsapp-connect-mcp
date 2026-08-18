@@ -93,6 +93,10 @@ func (f *sendFakeStore) MessageMediaRef(string, string) ([]byte, string, string,
 	return nil, "", "", nil
 }
 
+func (f *sendFakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
+	return store.MessageRow{}, false, nil
+}
+
 func (f *sendFakeStore) QuickCheck() error { return nil }
 
 // fakeDeliverer records every Delivery handed to it and returns a

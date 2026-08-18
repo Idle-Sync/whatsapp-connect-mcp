@@ -13,10 +13,11 @@ WhatsApp messages through it.
 
 ### Added
 
-- **Sixteen MCP tools.** Eleven read-only — `list_chats`, `get_chat`,
+- **Seventeen MCP tools.** Twelve read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
-  `get_call_history`, `download_media`, `doctor` — plus five gated sends:
+  `get_call_history`, `download_media`, `fetch_older_messages`, `doctor` —
+  plus five gated sends:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
   `mark_read`. Every WhatsApp-originated result (messages, names, captions,
   contacts) is wrapped in an explicit untrusted-data banner, so nothing
@@ -53,6 +54,13 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **`fetch_older_messages`.** Asks the phone for messages from before the
+  oldest one already stored in a chat, widening how far back that chat can
+  be read and searched without re-pairing. Anchored on the oldest stored
+  message, so calling it repeatedly pages further back. It messages nobody —
+  it requests the user's own history from their own phone — so no send gate
+  applies. Results arrive asynchronously through the same ingest path as
+  pair-time sync, so the tool reports only that the request was accepted.
 - **`setup --full-history`.** Asks the phone for up to ten years of history
   at pair time instead of whatsmeow's default of "recent" only, which the
   phone typically answers with about three months. The phone still decides

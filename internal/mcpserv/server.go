@@ -34,6 +34,7 @@ type Store interface {
 	MessageContext(chatJID, id string, before, after int) ([]store.MessageRow, error)
 	SearchContacts(query string, limit int) ([]store.ContactRow, error)
 	LastInteraction(jid string) (store.MessageRow, bool, error)
+	OldestMessage(chatJID string) (store.MessageRow, bool, error)
 	Calls(peerJID string, limit int) ([]store.CallRow, error)
 	MessageMediaRef(chatJID, id string) ([]byte, string, string, error)
 	QuickCheck() error
@@ -44,6 +45,7 @@ type Store interface {
 type Live interface {
 	GroupParticipants(ctx context.Context, groupJID string) ([]string, error)
 	DownloadMedia(ctx context.Context, ref []byte, destDir, filename string) (string, error)
+	RequestOlderMessages(ctx context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error
 }
 
 // serverName and serverTitle identify this server to MCP clients.
