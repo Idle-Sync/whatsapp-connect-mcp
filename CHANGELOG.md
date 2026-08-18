@@ -54,6 +54,12 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **Authentication for `--http`.** The streamable-HTTP transport now
+  requires a bearer token, generated on first use, persisted owner-only to
+  `.http-token`, and printed once for the operator to copy. Every request
+  must additionally be addressed to a loopback Host, which blocks a browser
+  from reaching the server by rebinding DNS to a loopback address. The stdio
+  transport, which speaks only to its parent process, is unaffected.
 - **An outbound file allowlist.** `send_media` and `send_voice_note` may
   only read files inside configured directories, defaulting to a dedicated
   `outbox` under the data directory and widened with `media_roots` in
@@ -99,5 +105,6 @@ WhatsApp messages through it.
 - `send_voice_note` requires Ogg Opus input; there is no transcoding.
 - No outbound calling — call history is readable, placing a call is not.
 - One paired WhatsApp number per install.
-- `--http` mode has no authentication of its own; bind it to `127.0.0.1`
-  unless you're putting your own access control in front of it.
+- `--http` mode authenticates with a bearer token and accepts only loopback
+  Host headers, but still bind it to `127.0.0.1` unless you are putting your
+  own access control in front of it.

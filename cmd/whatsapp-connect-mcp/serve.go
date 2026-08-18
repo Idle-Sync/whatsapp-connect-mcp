@@ -17,6 +17,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
@@ -33,7 +34,7 @@ const httpShutdownTimeout = 5 * time.Second
 func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	httpAddr := fs.String("http", "", "serve streamable HTTP on this address instead of stdio "+
-		"(no authentication — bind 127.0.0.1 unless you know what you're doing)")
+		"(bearer-token authenticated, loopback Host only — still bind 127.0.0.1)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -118,7 +119,18 @@ func runServe(args []string) int {
 	server := mcpserv.New(st, br, g, dataDir, doc)
 
 	if *httpAddr != "" {
-		return runHTTP(ctx, server, *httpAddr)
+		token, created, err := httpauth.LoadOrCreateToken(dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			return 1
+		}
+		if created {
+			// Printed once, only when freshly minted, so the operator can
+			// copy it into their client. On later starts it lives in the
+			// token file and is never logged.
+			fmt.Fprintf(os.Stderr, "serve: generated HTTP bearer token: %s\n", token)
+		}
+		return runHTTP(ctx, server, *httpAddr, token)
 	}
 	return runStdio(ctx, server)
 }
@@ -134,12 +146,13 @@ func runStdio(ctx context.Context, server *mcp.Server) int {
 }
 
 // runHTTP serves server over streamable HTTP on addr until ctx is
-// cancelled, then shuts the HTTP server down gracefully.
-func runHTTP(ctx context.Context, server *mcp.Server, addr string) int {
+// cancelled, then shuts the HTTP server down gracefully. Every request must
+// carry token and be addressed to a loopback Host; see internal/httpauth.
+func runHTTP(ctx context.Context, server *mcp.Server, addr, token string) int {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           httpauth.Middleware(token, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

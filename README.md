@@ -337,10 +337,16 @@ whatsapp-connect-mcp trust [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 ```
 
-> **`--http` has no authentication.** Anything that can reach the address
-> you bind can read your messages and drive the send tools. Bind
-> `127.0.0.1` unless you know what you're doing and have your own access
-> control (a reverse proxy, a VPN, a firewall rule) in front of it.
+> **`--http` requires a bearer token and a loopback Host.** On first use it
+> generates a 256-bit token, writes it to `.http-token` in the data
+> directory (owner-only), and prints it once — put it in your client's
+> `Authorization: Bearer <token>` header. Every request must also be
+> addressed to a loopback Host (`localhost`, `127.0.0.1`, `[::1]`), which
+> blocks a web page in your browser from reaching the server by rebinding
+> DNS to a loopback address. Still bind `127.0.0.1`: the token guards
+> against reaching the port, but binding a public interface exposes it to
+> your whole network, and if you must, put your own access control (a
+> reverse proxy, a VPN, a firewall rule) in front.
 
 ## Uninstall / reset
 
