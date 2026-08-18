@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.idle-sync/whatsapp-connect-mcp",
+  "name": "io.github.Idle-Sync/whatsapp-connect-mcp",
   "title": "WhatsApp Connect",
   "description": "Read, search, and send personal WhatsApp messages from any MCP client, behind a send-confirm gate.",
   "version": "0.0.0-dev",
