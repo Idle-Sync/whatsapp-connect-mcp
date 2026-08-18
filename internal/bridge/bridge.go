@@ -333,6 +333,8 @@ func (b *Bridge) downloadMessage(ctx context.Context, msg *waE2E.Message) ([]byt
 		return b.client.Download(ctx, msg.GetImageMessage())
 	case msg.GetVideoMessage() != nil:
 		return b.client.Download(ctx, msg.GetVideoMessage())
+	case msg.GetPtvMessage() != nil:
+		return b.client.Download(ctx, msg.GetPtvMessage())
 	case msg.GetAudioMessage() != nil:
 		return b.client.Download(ctx, msg.GetAudioMessage())
 	case msg.GetDocumentMessage() != nil:

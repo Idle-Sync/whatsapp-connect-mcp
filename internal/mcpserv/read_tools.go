@@ -485,7 +485,7 @@ type downloadMediaInput struct {
 	Date       string   `json:"date,omitempty" jsonschema:"Window form: a whole day, YYYY-MM-DD, interpreted in tz."`
 	Window     string   `json:"window,omitempty" jsonschema:"Window form: today, yesterday, last_24h, or last_7d, resolved against the server's clock in tz."`
 	TZ         string   `json:"tz,omitempty" jsonschema:"IANA timezone name for the window form; defaults to UTC."`
-	Kind       string   `json:"kind,omitempty" jsonschema:"Window form: restrict to one media kind (image, video, voice, audio, document, sticker)."`
+	Kind       string   `json:"kind,omitempty" jsonschema:"Window form: restrict to one media kind (image, video, video_note, voice, audio, document, sticker)."`
 	Limit      int      `json:"limit,omitempty" jsonschema:"Window form: maximum files to download; default 20, max 100."`
 }
 
@@ -554,7 +554,7 @@ func savedMediaFilename(messageID, kind, senderFilename string) (string, error) 
 	switch kind {
 	case "image":
 		ext = ".jpg"
-	case "video":
+	case "video", "video_note":
 		ext = ".mp4"
 	case "audio", "voice":
 		ext = ".ogg"

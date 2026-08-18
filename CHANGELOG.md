@@ -13,6 +13,17 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Message kinds beyond the basics.** Contact cards, locations (with name
+  and address as the row text), polls (question as text), poll votes,
+  group invites, round video notes (downloadable like any video), calendar
+  events, and protocol bookkeeping now decode as `contact`, `location`,
+  `poll`, `poll_update`, `group_invite`, `video_note`, `event`, and
+  `system` instead of collapsing to `other`. Disappearing-chat,
+  view-once, and document-with-caption wrappers are peeled first, so the
+  content inside reads as what it is — and its media downloads. Anything
+  still unrecognized reports `other:<subtype>` (e.g. `other:buttons`)
+  from the message's own type name, so a reader always knows what the
+  item is.
 - **LID senders resolve to real names.** Group messages often identify the
   sender only by a privacy LID (`…@lid`). Message events that carry both of
   the sender's addresses now teach the store the LID→phone pairing (a new

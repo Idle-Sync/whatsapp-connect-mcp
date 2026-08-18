@@ -36,7 +36,7 @@ CREATE TABLE chats (
 CREATE TABLE messages (
   chat_jid TEXT NOT NULL, id TEXT NOT NULL, sender_jid TEXT NOT NULL,
   from_me INTEGER NOT NULL, ts INTEGER NOT NULL,
-  kind TEXT NOT NULL,               -- text|image|video|audio|voice|document|sticker|reaction|other
+  kind TEXT NOT NULL,               -- text|image|video|video_note|audio|voice|document|sticker|reaction|contact|location|poll|poll_update|group_invite|event|system|other[:subtype]
   text TEXT NOT NULL DEFAULT '',    -- body or caption
   quoted_id TEXT NOT NULL DEFAULT '',
   media_ref BLOB,                   -- whatsmeow download keys, NULL for text

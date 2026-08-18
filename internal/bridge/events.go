@@ -8,6 +8,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
@@ -193,7 +194,7 @@ func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGro
 		chatName = info.PushName
 	}
 
-	msg := evt.Message
+	msg := unwrapMessage(evt.Message)
 	switch {
 	case msg.GetConversation() != "":
 		m.Kind = "text"
@@ -241,11 +242,124 @@ func decodeMessage(evt *events.Message) (m store.Message, chatName string, isGro
 		m.Kind = "reaction"
 		m.Text = rm.GetText()
 		m.QuotedID = rm.GetKey().GetID()
+	case msg.GetContactMessage() != nil:
+		m.Kind = "contact"
+		m.Text = msg.GetContactMessage().GetDisplayName()
+	case msg.GetContactsArrayMessage() != nil:
+		m.Kind = "contact"
+		m.Text = msg.GetContactsArrayMessage().GetDisplayName()
+	case msg.GetLocationMessage() != nil:
+		lo := msg.GetLocationMessage()
+		m.Kind = "location"
+		m.Text = strings.TrimSpace(lo.GetName() + " " + lo.GetAddress())
+	case msg.GetLiveLocationMessage() != nil:
+		m.Kind = "location"
+		m.Text = msg.GetLiveLocationMessage().GetCaption()
+	case pollCreation(msg) != nil:
+		m.Kind = "poll"
+		m.Text = pollCreation(msg).GetName()
+	case msg.GetPollUpdateMessage() != nil:
+		// A vote on a poll; the choice itself is end-to-end encrypted
+		// separately and is not decrypted here.
+		m.Kind = "poll_update"
+	case msg.GetGroupInviteMessage() != nil:
+		m.Kind = "group_invite"
+		m.Text = msg.GetGroupInviteMessage().GetGroupName()
+	case msg.GetPtvMessage() != nil:
+		m.Kind = "video_note"
+		m.MediaRef = marshalMediaRef(msg)
+	case msg.GetEventMessage() != nil:
+		m.Kind = "event"
+		m.Text = msg.GetEventMessage().GetName()
+	case msg.GetProtocolMessage() != nil:
+		// Revokes, edits, app-state key shares, and other bookkeeping the
+		// protocol sends as messages.
+		m.Kind = "system"
 	default:
-		m.Kind = "other"
+		m.Kind = otherKind(msg)
 	}
 
 	return m, chatName, isGroup
+}
+
+// unwrapMessage peels the FutureProofMessage envelopes WhatsApp nests real
+// content in — disappearing-chat (ephemeral), view-once, and
+// document-with-caption messages all arrive wrapped — returning the
+// innermost message so it decodes as what it is and its media reference
+// points at content the download dispatch can find. The loop is bounded
+// rather than unconditional so a malformed self-nested payload cannot spin
+// it; real messages wrap at most a couple of layers.
+func unwrapMessage(msg *waE2E.Message) *waE2E.Message {
+	for range 4 {
+		var inner *waE2E.Message
+		switch {
+		case msg.GetEphemeralMessage().GetMessage() != nil:
+			inner = msg.GetEphemeralMessage().GetMessage()
+		case msg.GetViewOnceMessage().GetMessage() != nil:
+			inner = msg.GetViewOnceMessage().GetMessage()
+		case msg.GetViewOnceMessageV2().GetMessage() != nil:
+			inner = msg.GetViewOnceMessageV2().GetMessage()
+		case msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
+			inner = msg.GetViewOnceMessageV2Extension().GetMessage()
+		case msg.GetDocumentWithCaptionMessage().GetMessage() != nil:
+			inner = msg.GetDocumentWithCaptionMessage().GetMessage()
+		default:
+			return msg
+		}
+		msg = inner
+	}
+	return msg
+}
+
+// pollCreation returns the poll-creation payload regardless of which
+// versioned field carries it (all but V4, a FutureProofMessage variant,
+// share the same payload type), or nil when msg is not a poll creation.
+func pollCreation(msg *waE2E.Message) *waE2E.PollCreationMessage {
+	for _, p := range []*waE2E.PollCreationMessage{
+		msg.GetPollCreationMessage(),
+		msg.GetPollCreationMessageV2(),
+		msg.GetPollCreationMessageV3(),
+		msg.GetPollCreationMessageV5(),
+		msg.GetPollCreationMessageV6(),
+	} {
+		if p != nil {
+			return p
+		}
+	}
+	return nil
+}
+
+// otherKind names a message type nothing above recognized: the populated
+// protobuf field's name, trimmed of its "Message" suffix, becomes an
+// "other:<subtype>" hint (e.g. "other:buttons"), so a reader at least
+// knows what kind of item the row is. The sender-key distribution blob
+// rides along with real content in group messages and is transport, not
+// content, so it is only ever the hint of last resort.
+func otherKind(msg *waE2E.Message) string {
+	var first, fallback string
+	msg.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		name := string(fd.Name())
+		trimmed := strings.TrimSuffix(name, "Message")
+		if trimmed == name || trimmed == "" {
+			return true
+		}
+		if trimmed == "senderKeyDistribution" || trimmed == "fastRatchetKeySenderKeyDistribution" {
+			fallback = trimmed
+			return true
+		}
+		if first == "" {
+			first = trimmed
+		}
+		return true
+	})
+	switch {
+	case first != "":
+		return "other:" + first
+	case fallback != "":
+		return "other:" + fallback
+	default:
+		return "other"
+	}
 }
 
 // marshalMediaRef serializes msg for later use with Bridge.DownloadMedia.

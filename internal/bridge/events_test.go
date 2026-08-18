@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -792,5 +793,125 @@ func TestHandleEventMessageWithoutAltRecordsNoMapping(t *testing.T) {
 
 	if len(fake.lidMappings) != 0 {
 		t.Fatalf("lid mappings = %+v, want none for a message with no alternative address", fake.lidMappings)
+	}
+}
+
+// --- kind decoding beyond the basics (issue #7: no more opaque "other") ---
+
+func decodeKind(t *testing.T, msg *waE2E.Message) store.Message {
+	t.Helper()
+	m, _, _ := decodeMessage(messageEvent(groupSource(), "Carol", msg))
+	return m
+}
+
+func TestDecodeMessageContactCard(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{ContactMessage: &waE2E.ContactMessage{DisplayName: proto.String("Bob Vcard")}})
+	if m.Kind != "contact" || m.Text != "Bob Vcard" {
+		t.Fatalf("contact card decoded as kind=%q text=%q, want contact/Bob Vcard", m.Kind, m.Text)
+	}
+}
+
+func TestDecodeMessageLocation(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{LocationMessage: &waE2E.LocationMessage{
+		Name: proto.String("Cafe X"), Address: proto.String("12 Road"),
+	}})
+	if m.Kind != "location" {
+		t.Fatalf("location decoded as kind=%q, want location", m.Kind)
+	}
+	if !strings.Contains(m.Text, "Cafe X") || !strings.Contains(m.Text, "12 Road") {
+		t.Fatalf("location text = %q, want it to carry name and address", m.Text)
+	}
+}
+
+func TestDecodeMessagePollCreation(t *testing.T) {
+	poll := &waE2E.PollCreationMessage{Name: proto.String("Lunch where?")}
+	for name, msg := range map[string]*waE2E.Message{
+		"v1": {PollCreationMessage: poll},
+		"v3": {PollCreationMessageV3: poll},
+	} {
+		m := decodeKind(t, msg)
+		if m.Kind != "poll" || m.Text != "Lunch where?" {
+			t.Fatalf("%s poll decoded as kind=%q text=%q, want poll/Lunch where?", name, m.Kind, m.Text)
+		}
+	}
+}
+
+func TestDecodeMessageGroupInvite(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{GroupInviteMessage: &waE2E.GroupInviteMessage{GroupName: proto.String("Fun Group")}})
+	if m.Kind != "group_invite" || m.Text != "Fun Group" {
+		t.Fatalf("group invite decoded as kind=%q text=%q, want group_invite/Fun Group", m.Kind, m.Text)
+	}
+}
+
+func TestDecodeMessageVideoNote(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{PtvMessage: &waE2E.VideoMessage{URL: proto.String("https://example.invalid/v")}})
+	if m.Kind != "video_note" {
+		t.Fatalf("ptv decoded as kind=%q, want video_note", m.Kind)
+	}
+	if len(m.MediaRef) == 0 {
+		t.Fatal("video note stored without a MediaRef; download_media could not fetch it")
+	}
+}
+
+func TestDecodeMessageProtocolIsSystem(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{}})
+	if m.Kind != "system" {
+		t.Fatalf("protocol message decoded as kind=%q, want system", m.Kind)
+	}
+}
+
+// A disappearing-chat message nests the real content inside an ephemeral
+// wrapper; the wrapper must be peeled so the message reads as what it is,
+// and the media reference must point at the inner message so download
+// dispatch can find the attachment.
+func TestDecodeMessageEphemeralUnwraps(t *testing.T) {
+	inner := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String("vanishing pic")}}
+	m := decodeKind(t, &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{Message: inner}})
+	if m.Kind != "image" || m.Text != "vanishing pic" {
+		t.Fatalf("ephemeral image decoded as kind=%q text=%q, want image/vanishing pic", m.Kind, m.Text)
+	}
+
+	var ref waE2E.Message
+	if err := proto.Unmarshal(m.MediaRef, &ref); err != nil {
+		t.Fatalf("unmarshal media ref: %v", err)
+	}
+	if ref.GetImageMessage() == nil {
+		t.Fatal("media ref does not carry the unwrapped ImageMessage; download dispatch would find nothing")
+	}
+}
+
+func TestDecodeMessageViewOnceUnwraps(t *testing.T) {
+	inner := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: proto.String("view once")}}
+	m := decodeKind(t, &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: inner}})
+	if m.Kind != "video" || m.Text != "view once" {
+		t.Fatalf("view-once video decoded as kind=%q text=%q, want video/view once", m.Kind, m.Text)
+	}
+}
+
+// Types with no dedicated kind must still say what they are: the populated
+// protobuf field's name becomes an "other:<subtype>" hint.
+func TestDecodeMessageOtherCarriesSubtypeHint(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{ButtonsMessage: &waE2E.ButtonsMessage{}})
+	if m.Kind != "other:buttons" {
+		t.Fatalf("buttons message decoded as kind=%q, want other:buttons", m.Kind)
+	}
+}
+
+// The sender-key blob rides along with real content in group messages and
+// must never be reported as the message's own type.
+func TestDecodeMessageOtherSkipsSenderKeyDistribution(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{
+		SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{},
+		ButtonsMessage:               &waE2E.ButtonsMessage{},
+	})
+	if m.Kind != "other:buttons" {
+		t.Fatalf("kind = %q, want other:buttons (the SKDM blob is transport, not content)", m.Kind)
+	}
+}
+
+func TestDecodeMessageTrulyUnknownStaysPlainOther(t *testing.T) {
+	m := decodeKind(t, &waE2E.Message{})
+	if m.Kind != "other" {
+		t.Fatalf("empty message decoded as kind=%q, want plain other", m.Kind)
 	}
 }

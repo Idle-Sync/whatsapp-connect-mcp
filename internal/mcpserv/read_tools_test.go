@@ -677,6 +677,7 @@ func TestSavedMediaFilename(t *testing.T) {
 	}{
 		{"image ignores sender name", "m1", "image", "photo.png", "m1.jpg", false},
 		{"video", "m1", "video", "", "m1.mp4", false},
+		{"video note", "m1", "video_note", "", "m1.mp4", false},
 		{"audio", "m1", "audio", "", "m1.ogg", false},
 		{"voice", "m1", "voice", "", "m1.ogg", false},
 		{"sticker", "m1", "sticker", "", "m1.webp", false},
