@@ -626,6 +626,46 @@ func TestCallsTimeWindow(t *testing.T) {
 	}
 }
 
+// MediaMessageIDs backs the batch form of download_media: it must return
+// only messages that actually carry media, scoped to one chat, newest
+// first, honoring the kind filter and time bounds.
+func TestMediaMessageIDs(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s) // chat1 has one media message: m3 (image, ts 300)
+
+	ids, err := s.MediaMessageIDs(f.chat1, 0, 0, "", 0)
+	if err != nil {
+		t.Fatalf("MediaMessageIDs: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "m3" {
+		t.Fatalf("MediaMessageIDs(chat1) = %v, want [m3] — text rows must not appear", ids)
+	}
+
+	ids, err = s.MediaMessageIDs(f.chat1, 0, 0, "document", 0)
+	if err != nil {
+		t.Fatalf("MediaMessageIDs(kind): %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("MediaMessageIDs(chat1, document) = %v, want none (m3 is an image)", ids)
+	}
+
+	ids, err = s.MediaMessageIDs(f.chat1, 250, 0, "", 0)
+	if err != nil {
+		t.Fatalf("MediaMessageIDs(before): %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("MediaMessageIDs(chat1, before=250) = %v, want none (m3 is ts 300)", ids)
+	}
+
+	ids, err = s.MediaMessageIDs(f.chat2, 0, 0, "voice", 0)
+	if err != nil {
+		t.Fatalf("MediaMessageIDs(chat2): %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "g3" {
+		t.Fatalf("MediaMessageIDs(chat2, voice) = %v, want [g3]", ids)
+	}
+}
+
 func TestCallsPeerNameResolvesViaContactsWithJIDFallback(t *testing.T) {
 	s := newTestStore(t)
 	f := seedFixture(t, s)

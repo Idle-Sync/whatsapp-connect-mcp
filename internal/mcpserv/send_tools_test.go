@@ -89,6 +89,9 @@ func (f *sendFakeStore) LastInteraction(string) (store.MessageRow, bool, error) 
 	return store.MessageRow{}, false, nil
 }
 func (f *sendFakeStore) Calls(string, int64, int64, int) ([]store.CallRow, error) { return nil, nil }
+func (f *sendFakeStore) MediaMessageIDs(string, int64, int64, string, int) ([]string, error) {
+	return nil, nil
+}
 func (f *sendFakeStore) MessageMediaRef(string, string) ([]byte, string, string, error) {
 	return nil, "", "", nil
 }

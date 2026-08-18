@@ -37,6 +37,7 @@ type Store interface {
 	OldestMessage(chatJID string) (store.MessageRow, bool, error)
 	Calls(peerJID string, beforeTS, afterTS int64, limit int) ([]store.CallRow, error)
 	MessageMediaRef(chatJID, id string) ([]byte, string, string, error)
+	MediaMessageIDs(chatJID string, beforeTS, afterTS int64, kind string, limit int) ([]string, error)
 	QuickCheck() error
 }
 

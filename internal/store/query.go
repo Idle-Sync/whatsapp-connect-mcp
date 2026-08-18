@@ -471,6 +471,52 @@ LEFT JOIN contacts c ON c.jid = ca.peer_jid WHERE 1 = 1`)
 	return out, nil
 }
 
+// MediaMessageIDs lists the ids of messages in chatJID that carry media,
+// newest first, optionally filtered to one kind (image, video, voice,
+// audio, document, sticker) and bounded by beforeTS/afterTS with the same
+// semantics as Messages. It backs the batch form of download_media: the
+// returned ids are fed one by one through MessageMediaRef.
+func (s *Store) MediaMessageIDs(chatJID string, beforeTS, afterTS int64, kind string, limit int) ([]string, error) {
+	limit = ClampLimit(limit)
+
+	var b strings.Builder
+	b.WriteString(`SELECT id FROM messages WHERE chat_jid = ? AND media_ref IS NOT NULL`)
+	args := []any{chatJID}
+	if kind != "" {
+		b.WriteString(` AND kind = ?`)
+		args = append(args, kind)
+	}
+	if beforeTS > 0 {
+		b.WriteString(` AND ts < ?`)
+		args = append(args, beforeTS)
+	}
+	if afterTS > 0 {
+		b.WriteString(` AND ts > ?`)
+		args = append(args, afterTS)
+	}
+	b.WriteString(` ORDER BY ts DESC, id DESC LIMIT ?`)
+	args = append(args, limit)
+
+	rows, err := s.db.Query(b.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list media messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list media messages: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list media messages: %w", err)
+	}
+	return out, nil
+}
+
 // Counts holds the row count of each table, for the `status` CLI command.
 type Counts struct {
 	Chats, Messages, Contacts, Calls int

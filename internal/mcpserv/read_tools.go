@@ -190,10 +190,15 @@ func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, 
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "download_media",
-		Description: "Downloads the media attached to one message and saves it under this " +
-			"server's data directory, fetched live. Returns the WhatsApp-supplied filename and " +
-			"media kind wrapped in an untrusted-data banner, followed by the local saved_path " +
-			"(outside the banner: a path this server created, not WhatsApp content).",
+		Description: "Downloads media from one chat and saves it under this server's data " +
+			"directory, fetched live. Select what to download with exactly one of: `message_id` " +
+			"(one message), `message_ids` (a batch, max 100), or a time window — before/after " +
+			"bounds, a whole `date`, or a named `window` (today, yesterday, last_24h, last_7d) " +
+			"in an IANA `tz`, optionally narrowed by media `kind`, up to `limit` files (default " +
+			"20, max 100). Returns the WhatsApp-supplied filenames and media kinds wrapped in an " +
+			"untrusted-data banner, followed by one local saved_path line per file (outside the " +
+			"banner: paths this server created, not WhatsApp content). In a batch, a failure on " +
+			"one file is reported on its own `failed:` line and the rest still download.",
 	}, d.downloadMedia)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -472,8 +477,21 @@ func (d *toolDeps) getCallHistory(_ context.Context, _ *mcp.CallToolRequest, in 
 }
 
 type downloadMediaInput struct {
-	ChatJID   string `json:"chat_jid" jsonschema:"JID of the chat the message belongs to."`
-	MessageID string `json:"message_id" jsonschema:"ID of the message carrying the media, as returned in a message row."`
+	ChatJID    string   `json:"chat_jid" jsonschema:"JID of the chat the messages belong to."`
+	MessageID  string   `json:"message_id,omitempty" jsonschema:"ID of one message carrying media, as returned in a message row. Use exactly one of message_id, message_ids, or a time window."`
+	MessageIDs []string `json:"message_ids,omitempty" jsonschema:"IDs of several messages carrying media, downloaded in one call; max 100. A failure on one file is reported per file and does not stop the rest."`
+	Before     string   `json:"before,omitempty" jsonschema:"Window form: only media before this time (unix seconds, RFC 3339, or YYYY-MM-DD in tz)."`
+	After      string   `json:"after,omitempty" jsonschema:"Window form: only media after this time (unix seconds, RFC 3339, or YYYY-MM-DD in tz)."`
+	Date       string   `json:"date,omitempty" jsonschema:"Window form: a whole day, YYYY-MM-DD, interpreted in tz."`
+	Window     string   `json:"window,omitempty" jsonschema:"Window form: today, yesterday, last_24h, or last_7d, resolved against the server's clock in tz."`
+	TZ         string   `json:"tz,omitempty" jsonschema:"IANA timezone name for the window form; defaults to UTC."`
+	Kind       string   `json:"kind,omitempty" jsonschema:"Window form: restrict to one media kind (image, video, voice, audio, document, sticker)."`
+	Limit      int      `json:"limit,omitempty" jsonschema:"Window form: maximum files to download; default 20, max 100."`
+}
+
+// hasTimeWindow reports whether any of the window-form fields is set.
+func (in downloadMediaInput) hasTimeWindow() bool {
+	return in.Before != "" || in.After != "" || in.Date != "" || in.Window != "" || in.Kind != "" || in.Limit != 0
 }
 
 // chatMediaDirReplacer maps JID characters that are invalid in a Windows
@@ -558,15 +576,57 @@ func savedMediaFilename(messageID, kind, senderFilename string) (string, error) 
 	return name, nil
 }
 
-func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in downloadMediaInput) (*mcp.CallToolResult, any, error) {
-	ref, filename, kind, err := d.st.MessageMediaRef(in.ChatJID, in.MessageID)
+// downloadOne fetches one message's media into destDir. bannerRow is the
+// WhatsApp-derived display data (sender-declared filename and kind) callers
+// must keep inside the untrusted-data banner; savedPath is this server's
+// own output and belongs outside it.
+func (d *toolDeps) downloadOne(ctx context.Context, chatJID, destDir, messageID string) (bannerRow, savedPath string, err error) {
+	ref, filename, kind, err := d.st.MessageMediaRef(chatJID, messageID)
 	if err != nil {
-		return nil, nil, err
+		return "", "", err
 	}
 
-	savedName, err := savedMediaFilename(in.MessageID, kind, filename)
+	savedName, err := savedMediaFilename(messageID, kind, filename)
 	if err != nil {
-		return nil, nil, err
+		return "", "", err
+	}
+
+	path, err := d.live.DownloadMedia(ctx, ref, destDir, savedName)
+	if err != nil {
+		return "", "", err
+	}
+
+	// filename is the sender-declared name (possibly empty — WhatsApp only
+	// carries one for document messages) shown for the user's benefit; it
+	// plays no part in savedName or path above.
+	return fmt.Sprintf("%s\t%s", filename, kind), path, nil
+}
+
+// safeMessageIDForEcho bounds what a per-file failure line may echo: a
+// message id originates with the sending client, so it is only repeated
+// verbatim if it passes the same single-path-component check a filename
+// must; anything else is replaced with a fixed placeholder.
+func safeMessageIDForEcho(id string) string {
+	if _, err := sanitizeMediaFilename(id); err != nil {
+		return "(invalid message id)"
+	}
+	return id
+}
+
+func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in downloadMediaInput) (*mcp.CallToolResult, any, error) {
+	hasWindow := in.hasTimeWindow()
+	forms := 0
+	if in.MessageID != "" {
+		forms++
+	}
+	if len(in.MessageIDs) > 0 {
+		forms++
+	}
+	if hasWindow {
+		forms++
+	}
+	if forms != 1 {
+		return nil, nil, errors.New("use exactly one of message_id, message_ids, or a time window (before/after, date, window, kind, or limit)")
 	}
 
 	destDir, err := chatMediaDir(d.dataDir, in.ChatJID)
@@ -574,16 +634,56 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, nil, err
 	}
 
-	path, err := d.live.DownloadMedia(ctx, ref, destDir, savedName)
-	if err != nil {
-		return nil, nil, err
+	// The single-id form keeps its original contract: any failure is a tool
+	// error, and the result shape is one banner row plus one saved_path.
+	if in.MessageID != "" {
+		bannerRow, path, err := d.downloadOne(ctx, in.ChatJID, destDir, in.MessageID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return textResult(Banner(bannerRow) + "\nsaved_path: " + path), nil, nil
 	}
 
-	// filename is the sender-declared name (possibly empty — WhatsApp only
-	// carries one for document messages) shown for the user's benefit; it
-	// plays no part in savedName or path above.
-	banner := Banner(fmt.Sprintf("%s\t%s", filename, kind))
-	return textResult(banner + "\nsaved_path: " + path), nil, nil
+	ids := in.MessageIDs
+	if len(ids) > store.MaxLimit {
+		return nil, nil, fmt.Errorf("too many message ids in one call (max %d)", store.MaxLimit)
+	}
+	if len(ids) == 0 {
+		afterTS, beforeTS, err := timewin.Resolve(timewin.Spec{
+			After: in.After, Before: in.Before, Date: in.Date, Window: in.Window, TZ: in.TZ,
+		}, d.clock())
+		if err != nil {
+			return nil, nil, err
+		}
+		ids, err = d.st.MediaMessageIDs(in.ChatJID, beforeTS, afterTS, in.Kind, store.ClampLimit(in.Limit))
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(ids) == 0 {
+			return textResult("no media messages found for that selection"), nil, nil
+		}
+	}
+
+	// Batch: one bad file is reported on its own line and does not stop the
+	// rest — 17 good downloads must not be lost to 1 broken one.
+	var bannerRows, statusLines []string
+	for _, id := range ids {
+		bannerRow, path, err := d.downloadOne(ctx, in.ChatJID, destDir, id)
+		if err != nil {
+			statusLines = append(statusLines, "failed: "+safeMessageIDForEcho(id)+": "+err.Error())
+			continue
+		}
+		bannerRows = append(bannerRows, bannerRow)
+		statusLines = append(statusLines, "saved_path: "+path)
+	}
+
+	var b strings.Builder
+	if len(bannerRows) > 0 {
+		b.WriteString(Banner(strings.Join(bannerRows, "\n")))
+		b.WriteString("\n")
+	}
+	b.WriteString(strings.Join(statusLines, "\n"))
+	return textResult(b.String()), nil, nil
 }
 
 func (d *toolDeps) doctor(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {

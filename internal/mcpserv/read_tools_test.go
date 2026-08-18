@@ -55,6 +55,12 @@ type fakeStore struct {
 	mediaKind     string
 	mediaErr      error
 
+	mediaIDsBefore, mediaIDsAfter int64
+	mediaIDsKind                  string
+	mediaIDsLimit                 int
+	mediaIDsRet                   []string
+	mediaIDsErr                   error
+
 	oldestRet store.MessageRow
 	oldestOK  bool
 	oldestErr error
@@ -106,6 +112,12 @@ func (f *fakeStore) MessageMediaRef(_, _ string) ([]byte, string, string, error)
 	return f.mediaRef, f.mediaFilename, f.mediaKind, f.mediaErr
 }
 
+func (f *fakeStore) MediaMessageIDs(_ string, before, after int64, kind string, limit int) ([]string, error) {
+	f.mediaIDsBefore, f.mediaIDsAfter = before, after
+	f.mediaIDsKind, f.mediaIDsLimit = kind, limit
+	return f.mediaIDsRet, f.mediaIDsErr
+}
+
 func (f *fakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
 	return f.oldestRet, f.oldestOK, f.oldestErr
 }
@@ -123,6 +135,11 @@ type fakeLive struct {
 	downloadFilename string
 	downloadPath     string
 	downloadErr      error
+	// downloadFilenames records every filename across calls (downloadFilename
+	// only keeps the last), and downloadErrByName fails just the named files,
+	// for the batch tests.
+	downloadFilenames []string
+	downloadErrByName map[string]error
 
 	historyCalls  int
 	historyChat   string
@@ -164,8 +181,15 @@ func (f *fakeLive) Blocklist(_ context.Context) ([]string, error) {
 func (f *fakeLive) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
 	f.downloadDestDir = destDir
 	f.downloadFilename = filename
+	f.downloadFilenames = append(f.downloadFilenames, filename)
+	if err, ok := f.downloadErrByName[filename]; ok {
+		return "", err
+	}
 	if f.downloadErr != nil {
 		return "", f.downloadErr
+	}
+	if f.downloadPath == "" {
+		return filepath.Join(destDir, filename), nil
 	}
 	return f.downloadPath, nil
 }
@@ -749,6 +773,115 @@ func TestDownloadMediaNeutralizesTraversalFilename(t *testing.T) {
 	savedPath := text[pathIdx+len("saved_path: "):]
 	if strings.Contains(savedPath, "..") || strings.Contains(savedPath, "evil") {
 		t.Fatalf("saved_path = %q, contains a sender-controlled component", savedPath)
+	}
+}
+
+func TestDownloadMediaBatchIDs(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image"}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", MessageIDs: []string{"m1", "m2"},
+	})
+	if err != nil {
+		t.Fatalf("downloadMedia(batch) error = %v", err)
+	}
+
+	if len(live.downloadFilenames) != 2 || live.downloadFilenames[0] != "m1.jpg" || live.downloadFilenames[1] != "m2.jpg" {
+		t.Fatalf("DownloadMedia calls = %v, want [m1.jpg m2.jpg]", live.downloadFilenames)
+	}
+	text := resultText(t, result)
+	if strings.Count(text, "saved_path: ") != 2 {
+		t.Fatalf("downloadMedia(batch) text has %d saved_path lines, want 2: %q", strings.Count(text, "saved_path: "), text)
+	}
+}
+
+// One bad file must not abort the batch: the remaining downloads still run
+// and the failure is reported per file rather than as a tool error.
+func TestDownloadMediaBatchContinuesPastFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image"}
+	live := &fakeLive{downloadErrByName: map[string]error{"m1.jpg": errors.New("download media: WhatsApp request failed")}}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", MessageIDs: []string{"m1", "m2"},
+	})
+	if err != nil {
+		t.Fatalf("downloadMedia(batch) error = %v, want per-file failure reporting instead", err)
+	}
+
+	if len(live.downloadFilenames) != 2 {
+		t.Fatalf("DownloadMedia calls = %v, want both files attempted despite the first failing", live.downloadFilenames)
+	}
+	text := resultText(t, result)
+	if strings.Count(text, "saved_path: ") != 1 {
+		t.Fatalf("want exactly 1 saved_path line (m2), got: %q", text)
+	}
+	if !strings.Contains(text, "failed: m1") {
+		t.Fatalf("want a per-file failed line naming m1, got: %q", text)
+	}
+}
+
+// The window form resolves time bounds server-side (same forms as
+// list_messages) and downloads whatever media the store reports in it.
+func TestDownloadMediaWindowForm(t *testing.T) {
+	dataDir := t.TempDir()
+	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image", mediaIDsRet: []string{"m9", "m8"}}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live, dataDir: dataDir, now: fixedNow}
+
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", Window: "yesterday", TZ: "Asia/Kolkata", Kind: "image",
+	})
+	if err != nil {
+		t.Fatalf("downloadMedia(window) error = %v", err)
+	}
+
+	const istAug17, istAug18 = 1786905000, 1786991400
+	if st.mediaIDsAfter != istAug17-1 || st.mediaIDsBefore != istAug18 {
+		t.Fatalf("MediaMessageIDs bounds = (after=%d, before=%d), want (%d, %d)",
+			st.mediaIDsAfter, st.mediaIDsBefore, istAug17-1, istAug18)
+	}
+	if st.mediaIDsKind != "image" {
+		t.Fatalf("MediaMessageIDs kind = %q, want image", st.mediaIDsKind)
+	}
+	if len(live.downloadFilenames) != 2 {
+		t.Fatalf("DownloadMedia calls = %v, want both window matches downloaded", live.downloadFilenames)
+	}
+	if strings.Count(resultText(t, result), "saved_path: ") != 2 {
+		t.Fatalf("want 2 saved_path lines, got: %q", resultText(t, result))
+	}
+}
+
+func TestDownloadMediaWindowFormNoMatches(t *testing.T) {
+	st := &fakeStore{mediaIDsRet: nil}
+	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: t.TempDir(), now: fixedNow}
+
+	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
+		ChatJID: "chat@s.whatsapp.net", Window: "yesterday",
+	})
+	if err != nil {
+		t.Fatalf("downloadMedia(empty window) error = %v, want a no-matches result instead", err)
+	}
+	if !strings.Contains(resultText(t, result), "no media messages") {
+		t.Fatalf("want a no-media-messages notice, got: %q", resultText(t, result))
+	}
+}
+
+func TestDownloadMediaSelectorValidation(t *testing.T) {
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}, dataDir: t.TempDir()}
+
+	for name, in := range map[string]downloadMediaInput{
+		"id and ids":    {ChatJID: "c@s.whatsapp.net", MessageID: "m1", MessageIDs: []string{"m2"}},
+		"id and window": {ChatJID: "c@s.whatsapp.net", MessageID: "m1", Window: "today"},
+		"no selector":   {ChatJID: "c@s.whatsapp.net"},
+	} {
+		if _, _, err := d.downloadMedia(context.Background(), nil, in); err == nil {
+			t.Errorf("downloadMedia(%s): want an error, got nil", name)
+		}
 	}
 }
 

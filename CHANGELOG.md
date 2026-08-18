@@ -13,6 +13,13 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Batch media download.** `download_media` now takes exactly one of: a
+  single `message_id` (unchanged), a `message_ids` batch (max 100 per
+  call), or a time window — the same before/after/date/window/tz forms as
+  `list_messages`, optionally narrowed by media `kind` — so "pull every
+  attachment from yesterday" is one call instead of one per file. In a
+  batch, a failure on one file is reported on its own line and the rest
+  still download.
 - **Outbound sends land in the local store.** A message sent through this
   server (text, media, voice note, reaction, poll) is recorded exactly as an
   inbound copy would be, so it appears in `list_messages`,
