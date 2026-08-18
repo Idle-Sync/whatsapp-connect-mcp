@@ -127,6 +127,7 @@ func (b *Bridge) deliverPoll(ctx context.Context, d gate.Delivery) (string, erro
 	if err != nil {
 		return "", waErr("create poll", err)
 	}
+	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
 }
 
@@ -205,6 +206,7 @@ func (b *Bridge) deliverText(ctx context.Context, d gate.Delivery) (string, erro
 	if err != nil {
 		return "", waErr("send message", err)
 	}
+	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
 }
 
@@ -308,6 +310,7 @@ func (b *Bridge) deliverReaction(ctx context.Context, d gate.Delivery) (string, 
 	if err != nil {
 		return "", waErr("send reaction", err)
 	}
+	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
 }
 
@@ -337,6 +340,35 @@ func (b *Bridge) deliverRead(ctx context.Context, d gate.Delivery) (string, erro
 	return "", nil
 }
 
+// recordOutbound writes a just-sent message into the local store through
+// the same decode path (ingestMessage/decodeMessage) an inbound copy would
+// take, so a sent message shows up in list_messages, search_messages, and
+// get_message_context — and an outbound media message keeps a working
+// media reference for download_media — exactly like a received one.
+// whatsmeow does not echo this client's own sends back as events, so
+// without this the outbound half of every conversation would be missing
+// from the store. Called only after SendMessage succeeds: a failed send
+// stores nothing.
+func (b *Bridge) recordOutbound(to types.JID, id string, ts time.Time, msg *waE2E.Message) {
+	sender := types.EmptyJID
+	if own := b.client.Store.ID; own != nil {
+		sender = own.ToNonAD()
+	}
+	b.ingestMessage(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     to,
+				Sender:   sender,
+				IsFromMe: true,
+				IsGroup:  to.Server == types.GroupServer,
+			},
+			ID:        id,
+			Timestamp: ts,
+		},
+		Message: msg,
+	})
+}
+
 // uploadAndSend uploads data as mediaType, builds the outbound message from
 // the upload response via build, and sends it to.
 func (b *Bridge) uploadAndSend(
@@ -348,10 +380,12 @@ func (b *Bridge) uploadAndSend(
 		return "", waErr("upload media", err)
 	}
 
-	resp, err := b.client.SendMessage(ctx, to, build(up))
+	msg := build(up)
+	resp, err := b.client.SendMessage(ctx, to, msg)
 	if err != nil {
 		return "", waErr("send media", err)
 	}
+	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
 }
 

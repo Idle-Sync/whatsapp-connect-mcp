@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
@@ -268,5 +273,71 @@ func TestDeliverRechecksRootsIndependently(t *testing.T) {
 	})
 	if !errors.Is(err, mediapath.ErrOutsideRoots) {
 		t.Errorf("Deliver(media) = %v, want ErrOutsideRoots before any read or network call", err)
+	}
+}
+
+// recordOutbound is what makes a sent message readable back through
+// list_messages: it must write the same store rows an inbound copy of the
+// message would have produced.
+
+func TestRecordOutboundStoresFromMeTextMessage(t *testing.T) {
+	b, fake := newTestBridge(t)
+	to, _ := types.ParseJID("111@s.whatsapp.net")
+	sentAt := time.Unix(1787056496, 0)
+
+	b.recordOutbound(to, "SENT1", sentAt, &waE2E.Message{Conversation: proto.String("hello from me")})
+
+	if len(fake.messages) != 1 {
+		t.Fatalf("stored %d messages, want 1", len(fake.messages))
+	}
+	m := fake.messages[0]
+	if !m.FromMe {
+		t.Fatalf("stored message FromMe = false, want true")
+	}
+	if m.ChatJID != "111@s.whatsapp.net" || m.ID != "SENT1" || m.TS != sentAt.Unix() {
+		t.Fatalf("stored message = %+v, want chat 111@s.whatsapp.net, id SENT1, ts %d", m, sentAt.Unix())
+	}
+	if m.Kind != "text" || m.Text != "hello from me" {
+		t.Fatalf("stored message kind/text = %q/%q, want text/hello from me", m.Kind, m.Text)
+	}
+
+	if len(fake.chats) != 1 {
+		t.Fatalf("upserted %d chats, want 1 (the chat row must exist and bump last_message_at)", len(fake.chats))
+	}
+	if fake.chats[0].jid != "111@s.whatsapp.net" || fake.chats[0].lastMessageAt != sentAt.Unix() || fake.chats[0].isGroup {
+		t.Fatalf("upserted chat = %+v, want the DM chat with last_message_at %d", fake.chats[0], sentAt.Unix())
+	}
+}
+
+func TestRecordOutboundGroupChatIsGroup(t *testing.T) {
+	b, fake := newTestBridge(t)
+	to, _ := types.ParseJID("222@g.us")
+
+	b.recordOutbound(to, "SENT2", time.Unix(1787056496, 0), &waE2E.Message{Conversation: proto.String("hi group")})
+
+	if len(fake.chats) != 1 || !fake.chats[0].isGroup {
+		t.Fatalf("upserted chats = %+v, want one group chat row", fake.chats)
+	}
+}
+
+// An outbound media message must store a media reference, so download_media
+// works on your own sends the same as on received ones.
+func TestRecordOutboundMediaCarriesMediaRef(t *testing.T) {
+	b, fake := newTestBridge(t)
+	to, _ := types.ParseJID("111@s.whatsapp.net")
+
+	b.recordOutbound(to, "SENT3", time.Unix(1787056496, 0), &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{Caption: proto.String("a photo"), URL: proto.String("https://example.invalid/x")},
+	})
+
+	if len(fake.messages) != 1 {
+		t.Fatalf("stored %d messages, want 1", len(fake.messages))
+	}
+	m := fake.messages[0]
+	if m.Kind != "image" || m.Text != "a photo" {
+		t.Fatalf("stored message kind/caption = %q/%q, want image/a photo", m.Kind, m.Text)
+	}
+	if len(m.MediaRef) == 0 {
+		t.Fatal("stored outbound media message has no MediaRef; download_media could not fetch it back")
 	}
 }

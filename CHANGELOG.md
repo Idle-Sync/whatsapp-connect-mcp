@@ -13,6 +13,14 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Outbound sends land in the local store.** A message sent through this
+  server (text, media, voice note, reaction, poll) is recorded exactly as an
+  inbound copy would be, so it appears in `list_messages`,
+  `search_messages`, and `get_message_context` immediately — the outbound
+  half of a conversation is no longer invisible to reads — and
+  `download_media` works on your own sent attachments. whatsmeow does not
+  echo this client's own sends back as events, so the send path records
+  them itself, only after WhatsApp accepts the send.
 - **Server-side time windows.** `list_messages` and `get_call_history`
   resolve human-shaped time bounds themselves: a named `window` (`today`,
   `yesterday`, `last_24h`, `last_7d`) or a whole `date` (YYYY-MM-DD),
