@@ -63,7 +63,7 @@ decides what it really sends.
 
 ## What this is for
 
-The thirteen read tools are the product; the seven send tools are a convenience.
+The thirteen read tools are the product; the eight send tools are a convenience.
 In practice that means:
 
 - **Searching your own history.** WhatsApp's own search has no date filters
@@ -95,7 +95,7 @@ Point it at customers and you will lose the number.
 
 ## What it gives your MCP client
 
-Twenty tools: thirteen read-only, seven gated sends, described below.
+Twenty-one tools: thirteen read-only, eight gated sends, described below.
 
 ### Read / search (no gate)
 
@@ -129,6 +129,7 @@ Twenty tools: thirteen read-only, seven gated sends, described below.
 | `send_reaction` | Reacts to a message with an emoji (empty emoji removes a prior reaction). |
 | `edit_message` | Edits the text of a message you sent, within WhatsApp's edit window. |
 | `delete_message` | Deletes a message for everyone (your own always; others' only as a group admin). |
+| `create_poll` | Creates a poll (a question and two or more options); reading votes is not supported. |
 | `mark_read` | Marks one or more messages as read. |
 
 Every tool result built from WhatsApp data — messages, names, contacts,
@@ -139,8 +140,8 @@ follow: nothing arriving over WhatsApp can tell your assistant what to do.
 ## The send gate
 
 This is the part `verygoodplugins/whatsapp-mcp` doesn't have. Every
-outbound send — text, media, voice note, reaction, edit, delete, or read
-receipt — goes through one path, enforced by the server, not by prompting
+outbound send — text, media, voice note, reaction, edit, delete, poll, or
+read receipt — goes through one path, enforced by the server, not by prompting
 the model to "be careful":
 
 1. **Draft first.** Call a send tool for a recipient you haven't trusted

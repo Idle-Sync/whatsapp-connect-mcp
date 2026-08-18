@@ -36,9 +36,26 @@ func (b *Bridge) Validate(d gate.Delivery) error {
 	switch d.Kind {
 	case "media", "voice":
 		return b.mediaRoots.Allows(d.Path)
+	case "poll":
+		return validatePoll(d)
 	default:
 		return nil
 	}
+}
+
+// validatePoll rejects a poll that could never be created, so it is refused
+// before a draft is minted rather than after a preview is approved.
+func validatePoll(d gate.Delivery) error {
+	if strings.TrimSpace(d.Text) == "" {
+		return errors.New("poll requires a question")
+	}
+	if len(d.Options) < 2 {
+		return errors.New("poll requires at least two options")
+	}
+	if d.SelectableCount > len(d.Options) {
+		return errors.New("poll allows choosing more options than it offers")
+	}
+	return nil
 }
 
 // Deliver performs the outbound WhatsApp action described by d. It is the
@@ -60,11 +77,38 @@ func (b *Bridge) Deliver(ctx context.Context, d gate.Delivery) (string, error) {
 		return b.deliverEdit(ctx, d)
 	case "revoke":
 		return b.deliverRevoke(ctx, d)
+	case "poll":
+		return b.deliverPoll(ctx, d)
 	case "read":
 		return b.deliverRead(ctx, d)
 	default:
 		return "", fmt.Errorf("unknown delivery kind %q", d.Kind)
 	}
+}
+
+// deliverPoll creates a poll message in the chat. It re-validates rather
+// than trusting Validate to have run, for the same reason the media path is
+// re-checked at delivery: the guarantee must not depend on a caller.
+func (b *Bridge) deliverPoll(ctx context.Context, d gate.Delivery) (string, error) {
+	if err := validatePoll(d); err != nil {
+		return "", err
+	}
+	to, err := parseRecipient(d.To)
+	if err != nil {
+		return "", err
+	}
+
+	selectable := d.SelectableCount
+	if selectable < 1 {
+		selectable = 1
+	}
+
+	msg := b.client.BuildPollCreation(d.Text, d.Options, selectable)
+	resp, err := b.client.SendMessage(ctx, to, msg)
+	if err != nil {
+		return "", waErr("create poll", err)
+	}
+	return resp.ID, nil
 }
 
 // deliverEdit replaces the text of an already-sent message. WhatsApp only

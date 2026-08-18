@@ -438,6 +438,29 @@ func TestSendReactionResolvesAuthorFromMessageContext(t *testing.T) {
 	}
 }
 
+func TestCreatePollTrustedSendsPollKind(t *testing.T) {
+	deliverer := &fakeDeliverer{}
+	g := gate.New(deliverer, func(jid string) bool { return jid == "c@g.us" }, 3, 12, time.Now)
+	d := &sendDeps{st: &sendFakeStore{}, g: g}
+
+	_, _, err := d.createPoll(context.Background(), nil, createPollInput{
+		To: "c@g.us", Question: "Lunch?", Options: []string{"Pizza", "Sushi"}, SelectableCount: 1,
+	})
+	if err != nil {
+		t.Fatalf("createPoll() error = %v", err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliverer called %d times, want 1", deliverer.count())
+	}
+	got := deliverer.delivered[0]
+	if got.Kind != "poll" || got.Text != "Lunch?" {
+		t.Fatalf("delivered = %+v, want a poll with the question", got)
+	}
+	if len(got.Options) != 2 || got.Options[0] != "Pizza" || got.Options[1] != "Sushi" {
+		t.Fatalf("delivered Options = %v, want [Pizza Sushi]", got.Options)
+	}
+}
+
 func TestEditMessageBuildsEditDeliveryAndDrafts(t *testing.T) {
 	deliverer := &fakeDeliverer{}
 	// Untrusted recipient: the first call must draft, not send.

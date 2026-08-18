@@ -13,14 +13,14 @@ WhatsApp messages through it.
 
 ### Added
 
-- **Twenty MCP tools.** Thirteen read-only — `list_chats`, `get_chat`,
+- **Twenty-one MCP tools.** Thirteen read-only — `list_chats`, `get_chat`,
   `list_messages`, `search_messages`, `get_message_context`,
   `search_contacts`, `get_last_interaction`, `list_group_participants`,
   `get_group_info`, `get_call_history`, `download_media`,
   `fetch_older_messages`, `doctor` —
-  plus seven gated sends:
+  plus eight gated sends:
   `send_message`, `send_media`, `send_voice_note`, `send_reaction`,
-  `edit_message`, `delete_message`, `mark_read`. Every WhatsApp-originated result (messages, names, captions,
+  `edit_message`, `delete_message`, `create_poll`, `mark_read`. Every WhatsApp-originated result (messages, names, captions,
   contacts) is wrapped in an explicit untrusted-data banner, so nothing
   arriving over WhatsApp can be mistaken for instructions to the model.
 - **A server-enforced send gate.** Every outbound action goes through one
@@ -55,6 +55,11 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **`create_poll`.** A gated send that posts a poll — a question and two or
+  more options, single- or multiple-choice — through the same draft-then-commit
+  path as every other send. Reading who voted is not included: poll votes
+  arrive as separate encrypted update messages that would need their own
+  decryption and tallying, a feature in its own right.
 - **`edit_message` and `delete_message`.** Two more gated sends. `edit_message`
   replaces the text of a message you sent, within WhatsApp's edit window;
   `delete_message` deletes a message for everyone (your own always, someone

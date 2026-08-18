@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,13 +50,17 @@ type Deliverer interface {
 // Delivery describes one outbound action, spanning every kind the gate
 // covers so a single rate limiter and draft flow guards all of them.
 type Delivery struct {
-	Kind       string // text|media|voice|reaction|edit|revoke|read
+	Kind       string // text|media|voice|reaction|edit|revoke|poll|read
 	To         string // JID
-	Text       string // body, caption, or emoji
+	Text       string // body, caption, emoji, or poll question
 	Path       string // media/voice source file
 	QuotedID   string
 	MessageIDs []string // read receipts
 	Author     string   // JID of the target message's author: the reacted-to message's sender for "reaction", the sender of MessageIDs for "read"; empty for text/media/voice
+	Options    []string // poll option names, for "poll"
+	// SelectableCount is how many poll options a voter may choose. 0 or 1
+	// means a single-choice poll.
+	SelectableCount int
 }
 
 // Result is the outcome of Submit. Preview is always set; DraftToken is set
@@ -256,7 +261,10 @@ func (g *Gate) evictOldestLocked() {
 // hex(sha256(to || sha256(kind|text|path|quoted|ids|author) || nonce)).
 func newDraftToken(d Delivery) (string, error) {
 	content := sha256.Sum256([]byte(strings.Join(
-		[]string{d.Kind, d.Text, d.Path, d.QuotedID, strings.Join(d.MessageIDs, ","), d.Author}, "|",
+		[]string{
+			d.Kind, d.Text, d.Path, d.QuotedID, strings.Join(d.MessageIDs, ","), d.Author,
+			strings.Join(d.Options, "\x1f"), strconv.Itoa(d.SelectableCount),
+		}, "|",
 	)))
 
 	nonce := make([]byte, 8)
@@ -293,6 +301,12 @@ func buildPreview(name string, d Delivery) string {
 	}
 	if len(d.MessageIDs) > 0 {
 		parts = append(parts, fmt.Sprintf("ids=%s", strings.Join(d.MessageIDs, ",")))
+	}
+	if len(d.Options) > 0 {
+		parts = append(parts, fmt.Sprintf("options=%q", strings.Join(d.Options, " | ")))
+	}
+	if d.SelectableCount > 1 {
+		parts = append(parts, fmt.Sprintf("selectable=%d", d.SelectableCount))
 	}
 	return strings.Join(parts, " ")
 }

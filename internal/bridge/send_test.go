@@ -41,6 +41,32 @@ func TestDeliverInvalidRecipientErrors(t *testing.T) {
 	}
 }
 
+func TestDeliverPollValidation(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	for _, tc := range []struct {
+		name string
+		d    gate.Delivery
+		want string
+	}{
+		{"no question", gate.Delivery{Kind: "poll", To: "111@s.whatsapp.net", Options: []string{"a", "b"}}, "question"},
+		{"one option", gate.Delivery{Kind: "poll", To: "111@s.whatsapp.net", Text: "Q?", Options: []string{"a"}}, "two options"},
+		{"selectable exceeds options", gate.Delivery{
+			Kind: "poll", To: "111@s.whatsapp.net", Text: "Q?", Options: []string{"a", "b"}, SelectableCount: 3,
+		}, "more options than it offers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := b.Deliver(context.Background(), tc.d)
+			if err == nil {
+				t.Fatalf("Deliver(%s) error = nil, want a validation error", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Deliver(%s) error = %q, want it to mention %q", tc.name, err.Error(), tc.want)
+			}
+		})
+	}
+}
+
 func TestDeliverEditRequiresTargetID(t *testing.T) {
 	b, _ := newTestBridge(t)
 
