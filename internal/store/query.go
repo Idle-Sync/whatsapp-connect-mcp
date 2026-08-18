@@ -96,16 +96,29 @@ type querier interface {
 // messageSelect is the shared column list and join every message-row query
 // builds on: it resolves sender_name via contacts and leaves the caller to
 // append its own WHERE/ORDER/LIMIT.
+//
+// Resolution order for a sender stored as a LID: a contact on the LID
+// itself (a push name ingested live), then the contact on the phone JID
+// the lid_map pairs it with, then the bare phone JID (still far more
+// useful than an opaque LID), and only then the raw sender value. The
+// NULLs a missed LEFT JOIN produces fall through each CASE arm naturally
+// (NULL <> '' is not true).
 const messageSelect = `
 SELECT m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
        CASE
          WHEN c.full_name <> '' THEN c.full_name
          WHEN c.push_name <> '' THEN c.push_name
          WHEN c.business_name <> '' THEN c.business_name
+         WHEN cp.full_name <> '' THEN cp.full_name
+         WHEN cp.push_name <> '' THEN cp.push_name
+         WHEN cp.business_name <> '' THEN cp.business_name
+         WHEN lm.pn IS NOT NULL THEN lm.pn
          ELSE m.sender_jid
        END
 FROM messages m
-LEFT JOIN contacts c ON c.jid = m.sender_jid`
+LEFT JOIN contacts c ON c.jid = m.sender_jid
+LEFT JOIN lid_map lm ON lm.lid = m.sender_jid
+LEFT JOIN contacts cp ON cp.jid = lm.pn`
 
 func scanMessageRow(row scanner) (MessageRow, error) {
 	var m MessageRow

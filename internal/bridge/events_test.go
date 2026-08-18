@@ -255,11 +255,16 @@ func TestCallStatusMapping(t *testing.T) {
 // fakeIngest records every call made through the Ingest interface so tests
 // can assert on the bridge's dispatch behavior without a real store.
 type fakeIngest struct {
-	chats    []fakeChatCall
-	messages []store.Message
-	contacts []fakeContactCall
-	reads    []fakeReadCall
-	calls    []fakeCallCall
+	chats       []fakeChatCall
+	messages    []store.Message
+	contacts    []fakeContactCall
+	reads       []fakeReadCall
+	calls       []fakeCallCall
+	lidMappings []fakeLIDMappingCall
+}
+
+type fakeLIDMappingCall struct {
+	lid, pn string
 }
 
 type fakeChatCall struct {
@@ -302,6 +307,11 @@ func (f *fakeIngest) UpsertContact(jid, phone, pushName, fullName, businessName 
 
 func (f *fakeIngest) MarkRead(chatJID string, ids []string, readAt int64) error {
 	f.reads = append(f.reads, fakeReadCall{chatJID, ids, readAt})
+	return nil
+}
+
+func (f *fakeIngest) UpsertLIDMapping(lid, pn string) error {
+	f.lidMappings = append(f.lidMappings, fakeLIDMappingCall{lid, pn})
 	return nil
 }
 
@@ -707,5 +717,80 @@ func TestHandleEventHistorySyncSkipsUnparsableConversationID(t *testing.T) {
 
 	if len(fake.chats) != 0 || len(fake.messages) != 0 {
 		t.Fatalf("chats/messages = %+v/%+v, want none for an unparsable conversation ID", fake.chats, fake.messages)
+	}
+}
+
+// lidGroupSource is a group message whose sender arrives as a privacy LID,
+// with the phone JID carried alongside as the alternative address.
+func lidGroupSource() types.MessageSource {
+	return types.MessageSource{
+		Chat:      types.NewJID("222", types.GroupServer),
+		Sender:    types.NewJID("99566015803422", types.HiddenUserServer),
+		SenderAlt: types.NewJID("444", types.DefaultUserServer),
+		IsFromMe:  false,
+		IsGroup:   true,
+	}
+}
+
+func TestHandleEventMessageRecordsLIDMapping(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(messageEvent(lidGroupSource(), "Bobby", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	want := fakeLIDMappingCall{lid: "99566015803422@lid", pn: "444@s.whatsapp.net"}
+	if len(fake.lidMappings) != 1 || fake.lidMappings[0] != want {
+		t.Fatalf("lid mappings = %+v, want exactly %+v", fake.lidMappings, want)
+	}
+}
+
+// The sender's push name must land on the phone-JID contact too (with its
+// phone number), not only on the LID row: the phone identity is the one the
+// app-state contact sync and search_contacts know.
+func TestHandleEventMessageLIDSenderNamesPhoneContact(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(messageEvent(lidGroupSource(), "Bobby", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	var pnRow *fakeContactCall
+	for i := range fake.contacts {
+		if fake.contacts[i].jid == "444@s.whatsapp.net" {
+			pnRow = &fake.contacts[i]
+		}
+	}
+	if pnRow == nil {
+		t.Fatalf("contacts = %+v, want an upsert for the phone JID 444@s.whatsapp.net", fake.contacts)
+	}
+	if pnRow.pushName != "Bobby" || pnRow.phone != "444" {
+		t.Fatalf("phone contact = %+v, want pushName Bobby and phone 444", *pnRow)
+	}
+}
+
+// When the addresses arrive the other way around (sender already the phone
+// JID, LID as the alternative), the same mapping is recorded.
+func TestHandleEventMessageLIDAltAlsoRecordsMapping(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	src := types.MessageSource{
+		Chat:      types.NewJID("222", types.GroupServer),
+		Sender:    types.NewJID("444", types.DefaultUserServer),
+		SenderAlt: types.NewJID("99566015803422", types.HiddenUserServer),
+		IsFromMe:  false,
+		IsGroup:   true,
+	}
+	b.handleEvent(messageEvent(src, "Bobby", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	want := fakeLIDMappingCall{lid: "99566015803422@lid", pn: "444@s.whatsapp.net"}
+	if len(fake.lidMappings) != 1 || fake.lidMappings[0] != want {
+		t.Fatalf("lid mappings = %+v, want exactly %+v", fake.lidMappings, want)
+	}
+}
+
+func TestHandleEventMessageWithoutAltRecordsNoMapping(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	b.handleEvent(messageEvent(groupSource(), "Carol", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	if len(fake.lidMappings) != 0 {
+		t.Fatalf("lid mappings = %+v, want none for a message with no alternative address", fake.lidMappings)
 	}
 }

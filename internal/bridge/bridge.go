@@ -32,6 +32,7 @@ type Ingest interface {
 	UpsertChat(jid, name string, isGroup bool, lastMessageAt int64) error
 	UpsertMessage(m store.Message) error
 	UpsertContact(jid, phone, pushName, fullName, businessName string) error
+	UpsertLIDMapping(lid, pn string) error
 	MarkRead(chatJID string, ids []string, readAt int64) error
 	InsertCall(id, peerJID string, ts int64, direction, status string, isVideo bool) error
 }

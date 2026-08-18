@@ -13,6 +13,15 @@ WhatsApp messages through it.
 
 ### Added
 
+- **LID senders resolve to real names.** Group messages often identify the
+  sender only by a privacy LID (`…@lid`). Message events that carry both of
+  the sender's addresses now teach the store the LID→phone pairing (a new
+  `lid_map` table, migrated in place on first open), and message rows
+  resolve a LID sender through it: the LID's own contact name if one is
+  known, else the phone-number contact's name, else at least the phone JID
+  — the raw LID is the last resort, not the default. The sender's push
+  name is recorded against the phone-number identity too, so
+  `search_contacts` can find them.
 - **Batch media download.** `download_media` now takes exactly one of: a
   single `message_id` (unchanged), a `message_ids` batch (max 100 per
   call), or a time window — the same before/after/date/window/tz forms as

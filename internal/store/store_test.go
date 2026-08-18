@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestOpenCreatesSchemaVersion1(t *testing.T) {
+func TestOpenCreatesLatestSchemaVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "messages.db")
 
 	s, err := Open(path)
@@ -18,8 +18,38 @@ func TestOpenCreatesSchemaVersion1(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema_version = %d, want 1", version)
+	if want := migrations[len(migrations)-1].version; version != want {
+		t.Fatalf("schema_version = %d, want %d (the latest migration)", version, want)
+	}
+}
+
+// A database created before a migration existed must be upgraded in place
+// on the next Open, not just fresh databases.
+func TestOpenUpgradesOlderSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.db")
+
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	// Rewind to schema version 1 by undoing migration 2 by hand.
+	if _, err := s1.db.Exec(`DROP TABLE lid_map`); err != nil {
+		t.Fatalf("drop lid_map: %v", err)
+	}
+	if _, err := s1.db.Exec(`UPDATE schema_version SET version = 1`); err != nil {
+		t.Fatalf("rewind version: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("re-Open() error: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+	if err := s2.UpsertLIDMapping("1@lid", "1@s.whatsapp.net"); err != nil {
+		t.Fatalf("lid_map not recreated by migration: %v", err)
 	}
 }
 
@@ -44,8 +74,8 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema_version = %d, want 1", version)
+	if want := migrations[len(migrations)-1].version; version != want {
+		t.Fatalf("schema_version = %d, want %d (the latest migration)", version, want)
 	}
 
 	var rowCount int

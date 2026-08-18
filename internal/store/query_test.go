@@ -626,6 +626,126 @@ func TestCallsTimeWindow(t *testing.T) {
 	}
 }
 
+// findMessage fails the test unless rows contains a message with id, and
+// returns it.
+func findMessage(t *testing.T, rows []MessageRow, id string) MessageRow {
+	t.Helper()
+	for _, r := range rows {
+		if r.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("no message %q in %+v", id, rows)
+	return MessageRow{}
+}
+
+// A group sender often appears only as a LID (privacy identifier). With no
+// mapping the raw LID is all there is; once the LID→PN mapping is stored,
+// the sender name must resolve through the phone-number contact.
+func TestSenderNameResolvesThroughLIDMapping(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	const lid = "99566015803422@lid"
+	if err := s.UpsertMessage(Message{ChatJID: f.chat2, ID: "L1", SenderJID: lid, TS: 400, Kind: "text", Text: "who am I"}); err != nil {
+		t.Fatalf("seed lid message: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "L1").SenderName; got != lid {
+		t.Fatalf("unmapped LID SenderName = %q, want the raw LID %q", got, lid)
+	}
+
+	// contactB carries push_name "Bobby Push".
+	if err := s.UpsertLIDMapping(lid, f.contactB); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+	rows, err = s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages after mapping: %v", err)
+	}
+	if got := findMessage(t, rows, "L1").SenderName; got != "Bobby Push" {
+		t.Fatalf("mapped LID SenderName = %q, want the PN contact's name %q", got, "Bobby Push")
+	}
+}
+
+// A mapping to a phone JID with no contacts row still improves on the LID:
+// the phone JID is shown instead.
+func TestSenderNameLIDMappingFallsBackToPhoneJID(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	const lid, pn = "12345@lid", "777@s.whatsapp.net"
+	if err := s.UpsertMessage(Message{ChatJID: f.chat2, ID: "L2", SenderJID: lid, TS: 401, Kind: "text", Text: "x"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.UpsertLIDMapping(lid, pn); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "L2").SenderName; got != pn {
+		t.Fatalf("SenderName = %q, want the mapped phone JID %q", got, pn)
+	}
+}
+
+// A contact stored against the LID itself (e.g. a push name ingested from
+// a live message) outranks the mapped PN contact.
+func TestSenderNameDirectLIDContactWins(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	const lid = "54321@lid"
+	if err := s.UpsertMessage(Message{ChatJID: f.chat2, ID: "L3", SenderJID: lid, TS: 402, Kind: "text", Text: "x"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.UpsertContact(lid, "", "Lid Push", "", ""); err != nil {
+		t.Fatalf("UpsertContact: %v", err)
+	}
+	if err := s.UpsertLIDMapping(lid, f.contactB); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "L3").SenderName; got != "Lid Push" {
+		t.Fatalf("SenderName = %q, want the LID's own contact name %q", got, "Lid Push")
+	}
+}
+
+// A remapped LID keeps only the latest phone number.
+func TestUpsertLIDMappingLastWriteWins(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	const lid = "67890@lid"
+	if err := s.UpsertMessage(Message{ChatJID: f.chat2, ID: "L4", SenderJID: lid, TS: 403, Kind: "text", Text: "x"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.UpsertLIDMapping(lid, "111111@s.whatsapp.net"); err != nil {
+		t.Fatalf("first mapping: %v", err)
+	}
+	if err := s.UpsertLIDMapping(lid, "222222@s.whatsapp.net"); err != nil {
+		t.Fatalf("remap: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "L4").SenderName; got != "222222@s.whatsapp.net" {
+		t.Fatalf("SenderName = %q, want the remapped phone JID", got)
+	}
+}
+
 // MediaMessageIDs backs the batch form of download_media: it must return
 // only messages that actually carry media, scoped to one chat, newest
 // first, honoring the kind filter and time bounds.

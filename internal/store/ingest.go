@@ -99,6 +99,26 @@ func (s *Store) UpsertContact(jid, phone, pushName, fullName, businessName strin
 	return nil
 }
 
+// UpsertLIDMapping records that the privacy identifier lid ("...@lid")
+// belongs to the account whose phone JID is pn. Last write wins: WhatsApp
+// controls the pairing, so the most recently observed one is the truth.
+// Empty arguments are a no-op rather than an error — callers pass through
+// whatever a message event carried, which is often nothing.
+func (s *Store) UpsertLIDMapping(lid, pn string) error {
+	if lid == "" || pn == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO lid_map (lid, pn) VALUES (?, ?)
+		ON CONFLICT (lid) DO UPDATE SET pn = excluded.pn`,
+		lid, pn,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert lid mapping: %w", err)
+	}
+	return nil
+}
+
 // MarkRead sets read_at on the given message ids within chatJID, moving it
 // forward only. Ids that do not exist (or belong to a different chat) are
 // silently skipped rather than treated as an error. An empty ids slice is a

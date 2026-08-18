@@ -15,7 +15,18 @@ type migration struct {
 // schemaVersion tracks how many have been applied.
 var migrations = []migration{
 	{version: 1, sql: migration1SQL},
+	{version: 2, sql: migration2SQL},
 }
+
+// migration2SQL adds the LID→phone-number mapping table. WhatsApp
+// increasingly identifies group senders by a privacy LID
+// ("...@lid") instead of their phone JID; this table records the pairing
+// (learned from message events that carry both addresses) so reads can
+// resolve a LID sender to the phone-number contact's name.
+const migration2SQL = `
+CREATE TABLE lid_map (
+  lid TEXT PRIMARY KEY, pn TEXT NOT NULL) STRICT;
+`
 
 const migration1SQL = `
 CREATE TABLE chats (

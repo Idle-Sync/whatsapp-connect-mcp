@@ -59,8 +59,45 @@ func (b *Bridge) ingestMessage(evt *events.Message) {
 	_ = b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS)
 	_ = b.store.UpsertMessage(m)
 
+	// A message that carries both of the sender's addresses (privacy LID
+	// and phone JID, in either order) teaches the store the pairing, which
+	// is what lets a LID-only sender row read back with a real name. The
+	// mapping is recorded under the exact sender string too when it differs
+	// (a device-qualified JID), since sender_jid joins against it verbatim.
+	lidExact, lidCanon, pn := lidPairing(evt.Info.MessageSource)
+	if pn != "" {
+		_ = b.store.UpsertLIDMapping(lidExact, pn)
+		if lidCanon != lidExact {
+			_ = b.store.UpsertLIDMapping(lidCanon, pn)
+		}
+	}
+
 	if !m.FromMe && evt.Info.PushName != "" {
 		_ = b.store.UpsertContact(m.SenderJID, phoneFromJID(m.SenderJID), evt.Info.PushName, "", "")
+		// Name the phone-number identity as well: that is the one the
+		// app-state contact sync and search_contacts know, and the LID row
+		// alone would leave it nameless.
+		if pn != "" && pn != m.SenderJID {
+			_ = b.store.UpsertContact(pn, phoneFromJID(pn), evt.Info.PushName, "", "")
+		}
+	}
+}
+
+// lidPairing extracts the LID↔phone-number pairing a message source
+// carries, if any: either the sender is a LID with the phone JID as the
+// alternative address, or the reverse. lidExact preserves the LID exactly
+// as the sender string would be stored (device suffix included), lidCanon
+// is its device-stripped form, and pn is the device-stripped phone JID.
+// All three are empty when the source carries no such pairing.
+func lidPairing(src types.MessageSource) (lidExact, lidCanon, pn string) {
+	switch {
+	case src.Sender.Server == types.HiddenUserServer && src.SenderAlt.Server == types.DefaultUserServer:
+		return src.Sender.String(), src.Sender.ToNonAD().String(), src.SenderAlt.ToNonAD().String()
+	case src.SenderAlt.Server == types.HiddenUserServer && src.Sender.Server == types.DefaultUserServer:
+		lid := src.SenderAlt.ToNonAD().String()
+		return lid, lid, src.Sender.ToNonAD().String()
+	default:
+		return "", "", ""
 	}
 }
 
