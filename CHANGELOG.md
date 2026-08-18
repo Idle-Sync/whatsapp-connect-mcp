@@ -54,6 +54,12 @@ WhatsApp messages through it.
   derived from it track a real release rather than whichever was vendored at
   build time. Best-effort on a 2-second timeout: a failure is reported and
   ignored, and a stale version still connects.
+- **A parent-process watchdog.** The stdio server also exits when its
+  parent process goes away, not only when stdin closes, so an MCP client
+  that crashes without cleanly closing the pipe does not leave an orphaned
+  server holding the WhatsApp connection open. Where the parent id never
+  changes after a parent exits (Windows), the watch is a safe no-op and
+  stdin-close remains the signal.
 - **Authentication for `--http`.** The streamable-HTTP transport now
   requires a bearer token, generated on first use, persisted owner-only to
   `.http-token`, and printed once for the operator to copy. Every request

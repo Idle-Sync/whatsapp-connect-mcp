@@ -21,6 +21,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/watchdog"
 )
 
 // httpShutdownTimeout bounds how long runServe waits for in-flight HTTP
@@ -135,10 +136,24 @@ func runServe(args []string) int {
 	return runStdio(ctx, server)
 }
 
-// runStdio runs server over stdio until ctx is cancelled or the client
-// disconnects.
+// runStdio runs server over stdio until ctx is cancelled, the client
+// disconnects (stdin closes), or the parent process goes away. The last of
+// these is the watchdog: a client that crashes without closing the pipe
+// would otherwise leave this process orphaned, still holding the WhatsApp
+// connection.
 func runStdio(ctx context.Context, server *mcp.Server) int {
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		if watchdog.WatchParent(runCtx, os.Getppid(), watchdog.DefaultInterval, os.Getppid) {
+			// Parent gone: cancel runCtx so server.Run unblocks and we exit
+			// like any other clean shutdown.
+			cancel()
+		}
+	}()
+
+	if err := server.Run(runCtx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
