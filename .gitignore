@@ -2,6 +2,7 @@
 /dist/
 /bin/
 *.exe
+*.exe~
 
 # Local state (session keys, message store) — never commit
 *.db
