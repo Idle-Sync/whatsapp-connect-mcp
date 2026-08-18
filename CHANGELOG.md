@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-18
+
 whatsapp-connect-mcp is a WhatsApp MCP server shipped as a single static Go
 binary: pair once via QR code, and any MCP client can read, search, and send
 WhatsApp messages through it.

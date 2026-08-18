@@ -102,7 +102,7 @@ type querier interface {
 // the lid_map pairs it with, then the bare phone JID (still far more
 // useful than an opaque LID), and only then the raw sender value. The
 // NULLs a missed LEFT JOIN produces fall through each CASE arm naturally
-// (NULL <> '' is not true).
+// (a NULL compared against the empty string is not true).
 const messageColumns = `m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
        CASE
          WHEN c.full_name <> '' THEN c.full_name
