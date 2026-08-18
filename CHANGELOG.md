@@ -13,6 +13,13 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Mentions in message text resolve to names.** WhatsApp renders a
+  mention into the body as `@<digits>` (a phone number or privacy LID
+  local part). Message rows now rewrite standalone mention tokens
+  through the same chain sender names use — LID contact, mapped phone
+  contact, phone-JID contact, then the mapped phone digits — so
+  `@99566015803422` reads as `@Bhassker Ghosh`. Unresolvable tokens,
+  email addresses, and mid-word `@` are left untouched.
 - **Reads wait out the reconnect catch-up window.** WhatsApp redelivers
   messages that arrived while the server was down during the first
   seconds after connecting. Store-backed reads (`list_messages`,

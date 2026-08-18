@@ -227,6 +227,7 @@ func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
+	s.resolveMentionRows(out)
 	return out, nil
 }
 
@@ -280,6 +281,7 @@ func (s *Store) SearchMessages(query, chatJID string, limit int) ([]MessageRow, 
 	if err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)
 	}
+	s.resolveMentionRows(out)
 	return out, nil
 }
 
@@ -333,6 +335,7 @@ func (s *Store) MessageContext(chatJID, id string, before, after int) ([]Message
 	out = append(out, beforeRows...)
 	out = append(out, target)
 	out = append(out, afterRows...)
+	s.resolveMentionRows(out)
 	return out, nil
 }
 
@@ -403,6 +406,7 @@ func (s *Store) LastInteraction(jid string) (MessageRow, bool, error) {
 	if err != nil {
 		return MessageRow{}, false, fmt.Errorf("last interaction: %w", err)
 	}
+	m.Text = s.resolveMentions(m.Text, map[string]string{})
 	return m, true, nil
 }
 

@@ -746,6 +746,145 @@ func TestUpsertLIDMappingLastWriteWins(t *testing.T) {
 	}
 }
 
+// WhatsApp renders a mention into message text as "@<digits>" — the phone
+// number's or LID's local part — which reads as an opaque number. Message
+// rows must resolve those tokens through the same chain sender names use.
+
+func TestMentionsResolveThroughLIDMapping(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	const lid = "99566015803422@lid"
+	if err := s.UpsertLIDMapping(lid, f.contactB); err != nil { // contactB: push_name "Bobby Push"
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+	if err := s.UpsertMessage(Message{
+		ChatJID: f.chat2, ID: "MN1", SenderJID: f.contactA, TS: 500,
+		Kind: "text", Text: "@99566015803422 please review the doc",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "MN1").Text; got != "@Bobby Push please review the doc" {
+		t.Fatalf("mention text = %q, want the LID resolved to the contact name", got)
+	}
+}
+
+func TestMentionsResolvePhoneNumberContacts(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	// contactB's JID local part is 444; a phone mention names it directly.
+	if err := s.UpsertMessage(Message{
+		ChatJID: f.chat2, ID: "MN2", SenderJID: f.contactA, TS: 501,
+		Kind: "text", Text: "ping @44400 and @444444",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.UpsertContact("44400@s.whatsapp.net", "44400", "Direct Dial", "", ""); err != nil {
+		t.Fatalf("seed contact: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	got := findMessage(t, rows, "MN2").Text
+	if !strings.Contains(got, "@Direct Dial") {
+		t.Fatalf("mention text = %q, want the phone contact resolved", got)
+	}
+	if !strings.Contains(got, "@444444") {
+		t.Fatalf("mention text = %q, want the unknown mention left as-is", got)
+	}
+}
+
+// A mapped LID whose phone number has no contact row still improves to the
+// phone digits — same fallback order as sender names.
+func TestMentionsFallBackToPhoneDigits(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	if err := s.UpsertLIDMapping("77777@lid", "919876543210@s.whatsapp.net"); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+	if err := s.UpsertMessage(Message{
+		ChatJID: f.chat2, ID: "MN3", SenderJID: f.contactA, TS: 502,
+		Kind: "text", Text: "@77777 wdyt",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "MN3").Text; got != "@919876543210 wdyt" {
+		t.Fatalf("mention text = %q, want the mapped phone digits", got)
+	}
+}
+
+// Only standalone @digits tokens are mentions: an email address or an @
+// embedded mid-word must never be rewritten.
+func TestMentionsLeaveEmailsAndMidWordTokensAlone(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	if err := s.UpsertContact("123456@s.whatsapp.net", "123456", "Should Not Appear", "", ""); err != nil {
+		t.Fatalf("seed contact: %v", err)
+	}
+	const text = "mail me at bob@123456.com about item x@123456 thanks"
+	if err := s.UpsertMessage(Message{
+		ChatJID: f.chat2, ID: "MN4", SenderJID: f.contactA, TS: 503,
+		Kind: "text", Text: text,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rows, err := s.Messages(f.chat2, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if got := findMessage(t, rows, "MN4").Text; got != text {
+		t.Fatalf("text = %q, want it untouched (no standalone mention present)", got)
+	}
+}
+
+// Search and context rows render through the same resolution.
+func TestMentionsResolveInSearchAndContext(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	if err := s.UpsertLIDMapping("99566015803422@lid", f.contactB); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+	if err := s.UpsertMessage(Message{
+		ChatJID: f.chat2, ID: "MN5", SenderJID: f.contactA, TS: 504,
+		Kind: "text", Text: "@99566015803422 mentionsearchterm",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	found, err := s.SearchMessages("mentionsearchterm", "", 0)
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if len(found) != 1 || !strings.Contains(found[0].Text, "@Bobby Push") {
+		t.Fatalf("search rows = %+v, want the mention resolved", found)
+	}
+
+	ctxRows, err := s.MessageContext(f.chat2, "MN5", 0, 0)
+	if err != nil {
+		t.Fatalf("MessageContext: %v", err)
+	}
+	if len(ctxRows) != 1 || !strings.Contains(ctxRows[0].Text, "@Bobby Push") {
+		t.Fatalf("context rows = %+v, want the mention resolved in the target row", ctxRows)
+	}
+}
+
 // MediaMessageIDs backs the batch form of download_media: it must return
 // only messages that actually carry media, scoped to one chat, newest
 // first, honoring the kind filter and time bounds.
