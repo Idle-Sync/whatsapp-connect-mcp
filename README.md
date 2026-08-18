@@ -11,10 +11,13 @@ messages, with every outbound send protected by a server-enforced gate.
 > whatsapp-connect-mcp talks to WhatsApp the same way WhatsApp Web does, via
 > [whatsmeow](https://github.com/tulir/whatsmeow) — not an official WhatsApp
 > Business API. Meta can and does ban numbers it detects using third-party
-> clients on this protocol. The send gate and rate limiter described below
-> reduce that risk (accidental bulk sends, a model going rogue) but **do not
-> remove it**. Pair a number you're comfortable losing, not your only line
-> to your bank or your family.
+> clients on this protocol, and such bans are widely reported as permanent.
+> The send gate and rate limiter described below cut the behavioral half of
+> that risk (accidental bulk sends, a model going rogue); **they cannot touch
+> the other half**, which is that this client is identifiable as a
+> third-party client at all. [Ban risk](#ban-risk) lays out what the public
+> evidence actually shows, with dates. Pair a number you're comfortable
+> losing, not your only line to your bank or your family.
 
 Status: pre-release.
 
@@ -52,6 +55,38 @@ manual JSON editing.
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
 
+## What this is for
+
+The eleven read tools are the product; the five send tools are a convenience.
+In practice that means:
+
+- **Searching your own history.** WhatsApp's own search has no date filters
+  and shows you a hit with no context around it. `search_messages` plus
+  `get_message_context` does both.
+- **Catching up.** Point a model at the 400 messages a group accumulated
+  while you were away and ask what happened.
+- **Reading your own attachments.** `download_media` pulls down the invoices,
+  receipts, and screenshots people sent you so a model can actually read
+  them.
+- **Finding loose ends.** `get_last_interaction` answers "who messaged me
+  that I never replied to?"
+- **Drafting replies.** The model writes it, the send gate makes you confirm
+  it, then it sends.
+- **Searching WhatsApp alongside everything else.** With mail, chat, or
+  calendar MCP servers connected to the same client, "did this client contact
+  me about the invoice, and where?" becomes one question instead of three
+  separate searches. For anyone whose real correspondence lives in WhatsApp,
+  this is the reason to run it.
+
+### What not to use it for
+
+Do not build a support bot, an outreach tool, or an auto-responder on this.
+Messaging people who never messaged you first, at volume, is the behavior
+most consistently reported to get numbers banned (see
+[Ban risk](#ban-risk)) — and it is precisely the use case Meta sells the
+WhatsApp Business API for. This is a personal tool for your own messages.
+Point it at customers and you will lose the number.
+
 ## What it gives your MCP client
 
 Sixteen tools: eleven read-only, five gated sends, described below.
@@ -71,6 +106,10 @@ Sixteen tools: eleven read-only, five gated sends, described below.
 | `get_call_history` | Calls, newest first, optionally filtered to one peer. |
 | `download_media` | Downloads a message's attached media to the local data directory. |
 | `doctor` | Runs the diagnostics described in [Diagnostics](#diagnostics) as an MCP tool. |
+
+> How far back any of these reach is decided by the paired phone, not by this
+> server. "Search my whole history" can turn out to mean "search the last few
+> months" — see [Limitations](#limitations-stated-plainly).
 
 ### Send (gated — see below)
 
@@ -131,8 +170,54 @@ no send safety:
 | Diagnostics | None | `doctor` (CLI subcommand and MCP tool), sanitized output |
 | Distribution | Git clone only | GitHub Releases, install script, MCP Registry, MCPB bundle, npm wrapper |
 
+## Ban risk
+
+Meta detects third-party clients in two independent ways, and only one of
+them is behavior.
+
+**1. The client is identifiable.** A linked device announces itself when it
+registers. whatsmeow's defaults announce an OS string of `whatsmeow` and an
+unknown platform type — which is also the device name your phone shows under
+Linked Devices. Nothing in this repo overrides that. Recognizing it
+server-side is a string comparison, not machine learning.
+
+**2. Behavior.** Reported triggers, roughly by how often they come up:
+messaging people who never messaged you first, high send velocity, volume
+soon after pairing, the same message sent repeatedly, automated Status posts,
+and noisy reconnection loops.
+
+The uncomfortable part is that the public evidence points at (1) as the
+dominant factor. In [whatsmeow#810](https://github.com/tulir/whatsmeow/issues/810)
+— the May 2025 "your account may be at risk" wave, closed `not planned` in
+July 2026 — users report the warning on accounts that were idle and merely
+connected, having never sent a message, and on accounts that had been
+disconnected for weeks. Users of whatsapp-web.js, an entirely different
+implementation, received it too. A Baileys maintainer in that same thread
+argues the opposite, that it is "mostly a behavioral issue." Nobody
+established which, and the thread was closed without an answer.
+
+So: the send gate and rate limiter here are real mitigations for (2) and do
+nothing for (1). On the available evidence, behaving well affects when your
+turn comes rather than whether it comes.
+
+Reports worth reading before you pair, dated so you can judge how current
+they are:
+
+| Report | Opened | Last activity |
+|---|---|---|
+| [whatsmeow#810](https://github.com/tulir/whatsmeow/issues/810) — "account may be at risk" wave | May 2025 | Jul 2026 (closed) |
+| [Baileys#2309](https://github.com/WhiskeySockets/Baileys/issues/2309) — permanent ban after automated Status posts | Jan 2026 | May 2026 (open) |
+| [Baileys#1869](https://github.com/WhiskeySockets/Baileys/issues/1869) — five suspensions in a week, on instances running 3+ years | Oct 2025 | May 2026 |
+
+Treat ban statistics from vendor blogs — "68% of businesses banned within 12
+months", "a rolling 30-day no-reply threshold" — as unsourced marketing from
+paid Business API resellers. No primary source supports them, and neither
+number appears in this document for that reason.
+
 ## Limitations (stated plainly)
 
+- **Your number can be banned, and this project cannot prevent it.** See
+  [Ban risk](#ban-risk). This is the limitation that matters most.
 - **History depth is phone-decided.** Like every WhatsApp Web client, the
   paired phone controls how much chat history syncs to this server. There
   is no setting here that fetches more than the phone hands over.

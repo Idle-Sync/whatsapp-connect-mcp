@@ -49,9 +49,15 @@ WhatsApp messages through it.
 ### Known limitations
 
 - This relies on the unofficial WhatsApp Web protocol (via
-  [whatsmeow](https://github.com/tulir/whatsmeow)), not an official
-  WhatsApp Business API — see the README before pairing a number you
-  care about.
+  [whatsmeow](https://github.com/tulir/whatsmeow)), not an official WhatsApp
+  Business API. Meta bans numbers it detects on this protocol, and such bans
+  are widely reported as permanent. The send gate and rate limiter cut the
+  behavioral half of that risk; they cannot touch the other half, which is
+  that this client is identifiable as a third-party client at all. Read the
+  README's "Ban risk" section before pairing a number you care about.
+- Not for business automation. Support bots, outreach, and auto-responders
+  are the use case most consistently reported to get numbers banned, and are
+  what the official WhatsApp Business API exists for.
 - History depth is phone-decided: like any WhatsApp Web client, how much
   chat history syncs here is controlled by the paired phone.
 - `send_voice_note` requires Ogg Opus input; there is no transcoding.
