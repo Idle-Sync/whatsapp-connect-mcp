@@ -13,6 +13,19 @@ WhatsApp messages through it.
 
 ### Added
 
+- **`poll_new_messages`: agents can wait for new messages.** A
+  cursor-based long poll in the shape Telegram's `getUpdates` and
+  Matrix's `/sync` converged on: the first call (no cursor) anchors a
+  `next_cursor` at now; later calls return what arrived after it,
+  oldest first, optionally scoped to one chat, with a fresh cursor —
+  replaying a cursor can neither skip nor duplicate a message. With
+  `timeout_seconds` (max 240) the call blocks until a matching message
+  arrives, emitting MCP progress notifications so client idle timers
+  keep resetting — in clients that background long tool calls this
+  behaves like push. Own sends are excluded by default so an agent is
+  never woken by its own messages; results carry the untrusted-data
+  banner; the tool is read-only and reacting still goes through the
+  send gate unchanged.
 - **Mentions in message text resolve to names.** WhatsApp renders a
   mention into the body as `@<digits>` (a phone number or privacy LID
   local part). Message rows now rewrite standalone mention tokens

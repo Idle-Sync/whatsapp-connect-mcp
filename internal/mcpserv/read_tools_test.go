@@ -61,6 +61,18 @@ type fakeStore struct {
 	mediaIDsRet                   []string
 	mediaIDsErr                   error
 
+	latestRowIDRet int64
+	latestRowIDErr error
+
+	afterRowIDCalls      int
+	afterRowIDArg        int64
+	afterRowIDChat       string
+	afterRowIDIncludeOwn bool
+	afterRowsEmptyCalls  int
+	afterRowsRet         []store.MessageRow
+	afterRowsNext        int64
+	afterRowsErr         error
+
 	oldestRet store.MessageRow
 	oldestOK  bool
 	oldestErr error
@@ -116,6 +128,28 @@ func (f *fakeStore) MediaMessageIDs(_ string, before, after int64, kind string, 
 	f.mediaIDsBefore, f.mediaIDsAfter = before, after
 	f.mediaIDsKind, f.mediaIDsLimit = kind, limit
 	return f.mediaIDsRet, f.mediaIDsErr
+}
+
+func (f *fakeStore) LatestRowID() (int64, error) {
+	return f.latestRowIDRet, f.latestRowIDErr
+}
+
+func (f *fakeStore) MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, _ int) ([]store.MessageRow, int64, error) {
+	f.afterRowIDCalls++
+	f.afterRowIDArg = afterRowID
+	f.afterRowIDChat = chatJID
+	f.afterRowIDIncludeOwn = includeOwn
+	if f.afterRowsErr != nil {
+		return nil, 0, f.afterRowsErr
+	}
+	if f.afterRowsEmptyCalls > 0 {
+		f.afterRowsEmptyCalls--
+		return nil, afterRowID, nil
+	}
+	if len(f.afterRowsRet) == 0 {
+		return nil, afterRowID, nil
+	}
+	return f.afterRowsRet, f.afterRowsNext, nil
 }
 
 func (f *fakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
@@ -1017,6 +1051,131 @@ func TestStoreBackedReadsWaitForCatchUp(t *testing.T) {
 		call()
 		if live.catchUpWaits != before+1 {
 			t.Errorf("%s did not wait for catch-up before reading the store", name)
+		}
+	}
+}
+
+// poll_new_messages: the cursor long-poll that lets an agent learn a new
+// message arrived without re-reading chats.
+
+func TestPollNewMessagesBootstrapReturnsWatermarkOnly(t *testing.T) {
+	st := &fakeStore{latestRowIDRet: 41}
+	live := &fakeLive{}
+	d := &toolDeps{st: st, live: live}
+
+	result, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{})
+	if err != nil {
+		t.Fatalf("pollNewMessages() error = %v", err)
+	}
+
+	text := resultText(t, result)
+	if !strings.Contains(text, "next_cursor: 41") {
+		t.Fatalf("bootstrap result = %q, want the current watermark as next_cursor", text)
+	}
+	if st.afterRowIDCalls != 0 {
+		t.Fatal("bootstrap with no cursor must not query messages — it starts from now")
+	}
+	if live.catchUpWaits != 1 {
+		t.Fatal("pollNewMessages must wait for the reconnect catch-up window")
+	}
+}
+
+func TestPollNewMessagesReturnsRowsAfterCursor(t *testing.T) {
+	st := &fakeStore{
+		afterRowsRet: []store.MessageRow{
+			{ChatJID: "c@g.us", ID: "N1", SenderName: "Alice", TS: 900, Kind: "text", Text: "hello"},
+		},
+		afterRowsNext: 57,
+	}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	result, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Cursor: "41"})
+	if err != nil {
+		t.Fatalf("pollNewMessages() error = %v", err)
+	}
+
+	if st.afterRowIDArg != 41 {
+		t.Fatalf("MessagesAfterRowID called with cursor %d, want 41", st.afterRowIDArg)
+	}
+	text := resultText(t, result)
+	closeIdx := strings.Index(text, bannerClose)
+	if closeIdx == -1 || !strings.Contains(text[:closeIdx], "hello") {
+		t.Fatalf("result = %q, want the message row inside the banner", text)
+	}
+	nextIdx := strings.Index(text, "next_cursor: 57")
+	if nextIdx == -1 || nextIdx < closeIdx {
+		t.Fatalf("result = %q, want next_cursor 57 outside (after) the banner", text)
+	}
+}
+
+func TestPollNewMessagesRejectsBadCursor(t *testing.T) {
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}}
+
+	_, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Cursor: "banana"})
+	if err == nil || !strings.Contains(err.Error(), "cursor") {
+		t.Fatalf("error = %v, want a cursor validation error", err)
+	}
+}
+
+// With a timeout, the handler keeps checking until rows appear.
+func TestPollNewMessagesLongPollReleasesOnArrival(t *testing.T) {
+	st := &fakeStore{
+		afterRowsEmptyCalls: 2, // empty twice, then the message "arrives"
+		afterRowsRet:        []store.MessageRow{{ChatJID: "c@g.us", ID: "N2", SenderName: "Bob", TS: 901, Kind: "text", Text: "finally"}},
+		afterRowsNext:       88,
+	}
+	d := &toolDeps{st: st, live: &fakeLive{}, pollEvery: 10 * time.Millisecond}
+
+	result, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Cursor: "41", TimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("pollNewMessages() error = %v", err)
+	}
+	if st.afterRowIDCalls < 3 {
+		t.Fatalf("store queried %d times, want at least 3 (two empty checks, then the arrival)", st.afterRowIDCalls)
+	}
+	if !strings.Contains(resultText(t, result), "next_cursor: 88") {
+		t.Fatalf("result = %q, want the advanced cursor", resultText(t, result))
+	}
+}
+
+func TestPollNewMessagesLongPollTimesOutEmpty(t *testing.T) {
+	st := &fakeStore{afterRowsEmptyCalls: 1 << 30}
+	d := &toolDeps{st: st, live: &fakeLive{}, pollEvery: 10 * time.Millisecond}
+
+	start := time.Now()
+	result, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{Cursor: "41", TimeoutSeconds: 1})
+	if err != nil {
+		t.Fatalf("pollNewMessages() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("long poll returned after %v, want ~1s", elapsed)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "no new messages") || !strings.Contains(text, "next_cursor: 41") {
+		t.Fatalf("timeout result = %q, want a no-new-messages notice with the unchanged cursor", text)
+	}
+}
+
+func TestPollNewMessagesPassesFiltersThrough(t *testing.T) {
+	st := &fakeStore{}
+	d := &toolDeps{st: st, live: &fakeLive{}}
+
+	_, _, err := d.pollNewMessages(context.Background(), nil, pollNewMessagesInput{
+		Cursor: "41", ChatJID: "team@g.us", IncludeOwn: true,
+	})
+	if err != nil {
+		t.Fatalf("pollNewMessages() error = %v", err)
+	}
+	if st.afterRowIDChat != "team@g.us" || !st.afterRowIDIncludeOwn {
+		t.Fatalf("store received chat=%q includeOwn=%v, want the inputs passed through", st.afterRowIDChat, st.afterRowIDIncludeOwn)
+	}
+}
+
+func TestClampPollTimeout(t *testing.T) {
+	cases := map[int]int{-5: 0, 0: 0, 60: 60, 240: 240, 100000: 240}
+	for in, want := range cases {
+		if got := clampPollTimeout(in); got != want {
+			t.Errorf("clampPollTimeout(%d) = %d, want %d", in, got, want)
 		}
 	}
 }

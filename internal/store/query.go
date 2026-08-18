@@ -103,8 +103,7 @@ type querier interface {
 // useful than an opaque LID), and only then the raw sender value. The
 // NULLs a missed LEFT JOIN produces fall through each CASE arm naturally
 // (NULL <> '' is not true).
-const messageSelect = `
-SELECT m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
+const messageColumns = `m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
        CASE
          WHEN c.full_name <> '' THEN c.full_name
          WHEN c.push_name <> '' THEN c.push_name
@@ -114,11 +113,16 @@ SELECT m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted
          WHEN cp.business_name <> '' THEN cp.business_name
          WHEN lm.pn IS NOT NULL THEN lm.pn
          ELSE m.sender_jid
-       END
+       END`
+
+const messageFrom = `
 FROM messages m
 LEFT JOIN contacts c ON c.jid = m.sender_jid
 LEFT JOIN lid_map lm ON lm.lid = m.sender_jid
 LEFT JOIN contacts cp ON cp.jid = lm.pn`
+
+const messageSelect = `
+SELECT ` + messageColumns + messageFrom
 
 func scanMessageRow(row scanner) (MessageRow, error) {
 	var m MessageRow
@@ -486,6 +490,64 @@ LEFT JOIN contacts c ON c.jid = ca.peer_jid WHERE 1 = 1`)
 		return nil, fmt.Errorf("list calls: %w", err)
 	}
 	return out, nil
+}
+
+// LatestRowID reports the newest message row's rowid, 0 for an empty
+// store: the bootstrap watermark a poll_new_messages call with no cursor
+// starts from ("from now").
+func (s *Store) LatestRowID() (int64, error) {
+	var id int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM messages`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("latest row id: %w", err)
+	}
+	return id, nil
+}
+
+// MessagesAfterRowID lists messages inserted after afterRowID, oldest
+// first, optionally scoped to one chat and (with includeOwn false)
+// excluding this account's own sends — an autonomous agent must not be
+// woken by its own messages. nextRowID is the cursor covering everything
+// returned (afterRowID unchanged when nothing matched): rowids are
+// insertion-ordered with no ties, so replaying a cursor can neither skip
+// nor duplicate a message.
+func (s *Store) MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, limit int) (rows []MessageRow, nextRowID int64, err error) {
+	limit = ClampLimit(limit)
+
+	var b strings.Builder
+	b.WriteString(`SELECT m.rowid, ` + messageColumns + messageFrom)
+	b.WriteString(` WHERE m.rowid > ?`)
+	args := []any{afterRowID}
+	if chatJID != "" {
+		b.WriteString(` AND m.chat_jid = ?`)
+		args = append(args, chatJID)
+	}
+	if !includeOwn {
+		b.WriteString(` AND m.from_me = 0`)
+	}
+	b.WriteString(` ORDER BY m.rowid ASC LIMIT ?`)
+	args = append(args, limit)
+
+	dbRows, err := s.db.Query(b.String(), args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("poll messages: %w", err)
+	}
+	defer func() { _ = dbRows.Close() }()
+
+	nextRowID = afterRowID
+	for dbRows.Next() {
+		var rid int64
+		var m MessageRow
+		if err := dbRows.Scan(&rid, &m.ChatJID, &m.ID, &m.SenderJID, &m.FromMe, &m.TS, &m.Kind, &m.Text, &m.QuotedID, &m.HasMedia, &m.SenderName); err != nil {
+			return nil, 0, fmt.Errorf("poll messages: %w", err)
+		}
+		nextRowID = rid
+		rows = append(rows, m)
+	}
+	if err := dbRows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("poll messages: %w", err)
+	}
+	s.resolveMentionRows(rows)
+	return rows, nextRowID, nil
 }
 
 // MediaMessageIDs lists the ids of messages in chatJID that carry media,

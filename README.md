@@ -123,6 +123,7 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 | `get_blocklist` | The JIDs the account has blocked, fetched live. |
 | `get_call_history` | Calls, newest first, optionally filtered to one peer and time-bounded with the same window/date/tz forms as `list_messages`. |
 | `download_media` | Downloads attached media to the local data directory — one message, a batch of message ids, or everything in a time window (same window/date/tz forms as `list_messages`, optionally filtered by kind). |
+| `poll_new_messages` | New messages after a cursor, oldest first — optionally blocking up to 240s until one arrives, so an agent can react to activity without re-reading chats. Own sends excluded unless asked for. Read-only; reacting still goes through the send gate. |
 | `fetch_older_messages` | Asks the phone for messages from before the oldest one stored in a chat, widening how far back it can be read. Call repeatedly to page further back. |
 | `doctor` | Runs the diagnostics described in [Diagnostics](#diagnostics) as an MCP tool. |
 

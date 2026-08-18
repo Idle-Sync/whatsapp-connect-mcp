@@ -885,6 +885,105 @@ func TestMentionsResolveInSearchAndContext(t *testing.T) {
 	}
 }
 
+// MessagesAfterRowID and LatestRowID back poll_new_messages: an opaque
+// rowid cursor (strictly insertion-ordered, no (ts,id) tie ambiguity) that
+// an agent replays to receive each message exactly once.
+
+func TestLatestRowIDAndMessagesAfterRowID(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	watermark, err := s.LatestRowID()
+	if err != nil {
+		t.Fatalf("LatestRowID: %v", err)
+	}
+	if watermark == 0 {
+		t.Fatal("LatestRowID = 0 on a seeded store, want the newest row's id")
+	}
+
+	// Nothing after the watermark yet.
+	rows, next, err := s.MessagesAfterRowID("", watermark, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 0 || next != watermark {
+		t.Fatalf("rows=%d next=%d, want none and the cursor unchanged", len(rows), next)
+	}
+
+	// Two new messages arrive; both must come back oldest-first, and the
+	// cursor must advance to cover them.
+	if err := s.UpsertMessage(Message{ChatJID: f.chat1, ID: "P1", SenderJID: f.contactA, TS: 900, Kind: "text", Text: "first"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.UpsertMessage(Message{ChatJID: f.chat2, ID: "P2", SenderJID: f.contactB, TS: 901, Kind: "text", Text: "second"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rows, next, err = s.MessagesAfterRowID("", watermark, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != "P1" || rows[1].ID != "P2" {
+		t.Fatalf("rows = %+v, want [P1 P2] oldest-first", rows)
+	}
+	if next <= watermark {
+		t.Fatalf("next = %d, want it advanced past %d", next, watermark)
+	}
+
+	// Replaying the advanced cursor yields nothing: exactly-once delivery.
+	rows, _, err = s.MessagesAfterRowID("", next, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID(replay): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("replay rows = %+v, want none", rows)
+	}
+}
+
+func TestMessagesAfterRowIDChatFilter(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	watermark, _ := s.LatestRowID()
+	_ = s.UpsertMessage(Message{ChatJID: f.chat1, ID: "PC1", SenderJID: f.contactA, TS: 900, Kind: "text", Text: "in chat1"})
+	_ = s.UpsertMessage(Message{ChatJID: f.chat2, ID: "PC2", SenderJID: f.contactB, TS: 901, Kind: "text", Text: "in chat2"})
+
+	rows, _, err := s.MessagesAfterRowID(f.chat2, watermark, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "PC2" {
+		t.Fatalf("rows = %+v, want only the chat2 message", rows)
+	}
+}
+
+// With includeOwn false, from-me rows are never returned — an autonomous
+// agent must not be woken by (or react to) its own sends.
+func TestMessagesAfterRowIDExcludesOwnSends(t *testing.T) {
+	s := newTestStore(t)
+	f := seedFixture(t, s)
+
+	watermark, _ := s.LatestRowID()
+	_ = s.UpsertMessage(Message{ChatJID: f.chat1, ID: "PO1", SenderJID: f.chat1, FromMe: true, TS: 900, Kind: "text", Text: "my own send"})
+	_ = s.UpsertMessage(Message{ChatJID: f.chat1, ID: "PO2", SenderJID: f.contactA, TS: 901, Kind: "text", Text: "their reply"})
+
+	rows, _, err := s.MessagesAfterRowID("", watermark, false, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "PO2" {
+		t.Fatalf("rows = %+v, want only the inbound message", rows)
+	}
+
+	rows, _, err = s.MessagesAfterRowID("", watermark, true, 0)
+	if err != nil {
+		t.Fatalf("MessagesAfterRowID(includeOwn): %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want both with includeOwn", rows)
+	}
+}
+
 // MediaMessageIDs backs the batch form of download_media: it must return
 // only messages that actually carry media, scoped to one chat, newest
 // first, honoring the kind filter and time bounds.
