@@ -170,13 +170,13 @@ the model to "be careful":
 3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <jid>` marks a
    contact or group as trusted, so sends to it commit on the first call
    instead of drafting. This is a CLI-only switch — no MCP tool can grant
-   trust, so a model can't trust its way around the draft step. A running
-   `serve` process reads the trust list once at startup, so a change takes
-   effect the next time `serve` starts, not immediately. For the running
-   session there is a lighter-weight grant: `whatsapp-connect-mcp trust
-   --session --add <jid>` elevates a recipient for the life of the current
-   `serve` process only — it takes effect immediately, is never written to
-   `config.json`, and is wiped automatically the next time `serve` starts.
+   trust, so a model can't trust its way around the draft step. The list
+   is re-read on every send decision, so `trust --add`/`--remove` apply
+   immediately, including to a `serve` process already running. For a
+   grant you don't want to keep, there is a session-scoped form:
+   `whatsapp-connect-mcp trust --session --add <jid>` elevates a recipient
+   for the life of the current `serve` process only — never written to
+   `config.json`, wiped automatically the next time `serve` starts.
    Use it when you are actively drafting a thread with one person or group
    and have already confirmed the first sends by hand; it cuts the
    draft-and-confirm round-trip for that recipient without granting

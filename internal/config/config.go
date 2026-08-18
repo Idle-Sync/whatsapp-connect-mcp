@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const (
@@ -130,6 +131,48 @@ func Save(dir string, c Config) error {
 // IsTrusted reports whether jid exactly matches an entry in TrustedJIDs.
 func (c Config) IsTrusted(jid string) bool {
 	for _, t := range c.TrustedJIDs {
+		if t == jid {
+			return true
+		}
+	}
+	return false
+}
+
+// TrustReader answers trust checks against the CURRENT config.json rather
+// than a startup snapshot, so `trust --add`/`--remove` take effect in a
+// running serve without a restart (issue #11). The file is tiny and sends
+// are rate-limited to at most one per five seconds, so a read per check
+// costs nothing; a transiently unreadable or invalid file (a hand-edit in
+// progress) neither grants nor revokes — the last successfully read list
+// stays in force. The trust decision stays CLI-only exactly as before: no
+// MCP tool writes config.json.
+type TrustReader struct {
+	dir string
+
+	mu       sync.Mutex
+	lastGood []string
+}
+
+// NewTrustReader builds a TrustReader over dir's config.json.
+func NewTrustReader(dir string) *TrustReader {
+	r := &TrustReader{dir: dir}
+	if c, err := Load(dir); err == nil {
+		r.lastGood = c.TrustedJIDs
+	}
+	return r
+}
+
+// Trusted reports whether jid is on the trust list as of the file's
+// current content (or the last good read, when the file is momentarily
+// unreadable).
+func (r *TrustReader) Trusted(jid string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if c, err := Load(r.dir); err == nil {
+		r.lastGood = c.TrustedJIDs
+	}
+	for _, t := range r.lastGood {
 		if t == jid {
 			return true
 		}

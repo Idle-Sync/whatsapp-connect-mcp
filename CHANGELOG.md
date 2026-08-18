@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`trust --add`/`--remove` apply to a running serve** (#11). The
+  persistent trust list was read once at startup, so changing it
+  required a restart — inconsistent with `trust --session`, which has
+  always applied live. The gate now re-reads config.json's list on
+  every send decision (the file is tiny and sends are rate-limited); a
+  transiently broken file neither grants nor revokes — the last good
+  read stays in force. Trust remains CLI-only: no MCP tool writes the
+  file.
+
 ## [0.1.0] - 2026-08-18
 
 whatsapp-connect-mcp is a WhatsApp MCP server shipped as a single static Go

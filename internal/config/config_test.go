@@ -238,3 +238,79 @@ func TestLoadExplicitMediaRootsAreRespected(t *testing.T) {
 		t.Fatalf("Load() MediaRoots = %v, want the file's own values preserved", got.MediaRoots)
 	}
 }
+
+// TrustReader is what lets `trust --add` take effect in a running serve
+// without a restart (issue #11): the trust list is re-read on every check
+// instead of being a startup snapshot.
+
+func TestTrustReaderSeesAdditionsLive(t *testing.T) {
+	dir := t.TempDir()
+	if err := Save(dir, Config{}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	r := NewTrustReader(dir)
+	const jid = "111@s.whatsapp.net"
+	if r.Trusted(jid) {
+		t.Fatal("Trusted() = true before the JID was added")
+	}
+
+	if err := Save(dir, Config{TrustedJIDs: []string{jid}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !r.Trusted(jid) {
+		t.Fatal("Trusted() = false after trust --add wrote the config; the running server must see it without a restart")
+	}
+}
+
+func TestTrustReaderSeesRemovalsLive(t *testing.T) {
+	dir := t.TempDir()
+	const jid = "111@s.whatsapp.net"
+	if err := Save(dir, Config{TrustedJIDs: []string{jid}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	r := NewTrustReader(dir)
+	if !r.Trusted(jid) {
+		t.Fatal("Trusted() = false for a listed JID")
+	}
+
+	if err := Save(dir, Config{}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if r.Trusted(jid) {
+		t.Fatal("Trusted() = true after trust --remove; revocation must apply without a restart")
+	}
+}
+
+// A transiently broken config.json (e.g. mid hand-edit) must neither grant
+// nor revoke: the last successfully read list stays in force.
+func TestTrustReaderKeepsLastGoodListOnBrokenFile(t *testing.T) {
+	dir := t.TempDir()
+	const jid = "111@s.whatsapp.net"
+	if err := Save(dir, Config{TrustedJIDs: []string{jid}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	r := NewTrustReader(dir)
+	if !r.Trusted(jid) {
+		t.Fatal("Trusted() = false for a listed JID")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("corrupt config: %v", err)
+	}
+	if !r.Trusted(jid) {
+		t.Fatal("Trusted() = false while the file is broken; the last good list must stay in force")
+	}
+	if r.Trusted("222@s.whatsapp.net") {
+		t.Fatal("Trusted() granted an unlisted JID while the file is broken")
+	}
+}
+
+func TestTrustReaderNoFileMeansNoTrust(t *testing.T) {
+	r := NewTrustReader(t.TempDir())
+	if r.Trusted("111@s.whatsapp.net") {
+		t.Fatal("Trusted() = true with no config file at all")
+	}
+}

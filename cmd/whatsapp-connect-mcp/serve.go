@@ -131,18 +131,20 @@ func runServe(args []string) int {
 		return 1
 	}
 
-	// Session trust (trust --session): grants are wiped here, before the
-	// gate exists, so nothing granted for a previous process — or while
-	// serve was down — carries into this one. The composed predicate keeps
-	// the persistent list's startup-snapshot semantics while session grants
-	// are read live, which is what lets the CLI elevate a recipient in a
-	// running session without a restart.
+	// Trust is answered live on every check, for both forms: the
+	// persistent list is re-read from config.json (so `trust --add` and
+	// `--remove` apply to a running serve without a restart — issue #11),
+	// and session grants (trust --session) are read from their own file,
+	// wiped here before the gate exists so nothing granted for a previous
+	// process carries into this one. Both stay CLI-only: no MCP tool
+	// writes either file.
 	sess := sessiontrust.Open(dataDir)
 	if err := sess.ClearAtStartup(); err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
-	trusted := func(jid string) bool { return cfg.IsTrusted(jid) || sess.Trusted(jid) }
+	trustReader := config.NewTrustReader(dataDir)
+	trusted := func(jid string) bool { return trustReader.Trusted(jid) || sess.Trusted(jid) }
 
 	g := gate.New(br, trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
 

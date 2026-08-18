@@ -278,6 +278,7 @@ func trustAdd(dataDir string, cfg config.Config, jid string) int {
 		}
 	}
 	fmt.Printf("trusted: %s\n", jid)
+	fmt.Println("Applies immediately, including to a serve process already running.")
 	return 0
 }
 
