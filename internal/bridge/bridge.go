@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -52,6 +53,13 @@ type Bridge struct {
 	// — the safe direction for a caller that never needed to.
 	mediaRoots mediapath.Roots
 
+	// openedAt and lastEventAt are the ingestion-liveness signals behind
+	// LastEventAt/OpenedAt: doctor's event-flow check compares them against
+	// the connection state to notice a stalled event pipeline (a socket
+	// that stays "connected" while no events reach handleEvent).
+	openedAt    time.Time
+	lastEventAt atomic.Int64
+
 	handlerOnce sync.Once
 	// handlerRegistrations counts how many times ensureHandlerRegistered
 	// actually registered the event handler (as opposed to how many times
@@ -92,7 +100,7 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 	}
 
 	client := whatsmeow.NewClient(device, waLog.Noop)
-	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir, mediaRoots: roots}
+	b := &Bridge{client: client, container: container, store: st, dataDir: dataDir, mediaRoots: roots, openedAt: time.Now()}
 	// Registered here, once, rather than in Connect: PairQR also needs
 	// inbound events flowing (history sync can start arriving mid-pairing),
 	// and registering in exactly one place removes any chance of a second
@@ -120,6 +128,23 @@ func (b *Bridge) Close() error {
 		return fmt.Errorf("close session store: %w", err)
 	}
 	return nil
+}
+
+// LastEventAt reports when handleEvent last saw any WhatsApp event, zero
+// if none since Open. Together with OpenedAt it is the signal doctor's
+// event-flow check reads.
+func (b *Bridge) LastEventAt() time.Time {
+	ts := b.lastEventAt.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(ts, 0)
+}
+
+// OpenedAt reports when this Bridge was constructed — the baseline the
+// event-flow check falls back to for a session with no events yet.
+func (b *Bridge) OpenedAt() time.Time {
+	return b.openedAt
 }
 
 // NeedsPairing reports whether the session store has no paired device yet,

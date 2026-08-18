@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"runtime"
@@ -25,6 +26,7 @@ const versionCheckTimeout = 2 * time.Second
 func registry() []Check {
 	return []Check{
 		{Name: "session", Run: checkSession},
+		{Name: "events", Run: checkEventFlow},
 		{Name: "database", Run: checkDatabase},
 		{Name: "clients", Run: checkClients},
 		{Name: "permissions", Run: checkPermissions},
@@ -57,6 +59,49 @@ func checkSession(_ context.Context, env Env) Finding {
 		}
 	}
 	return Finding{Check: "session", Status: StatusOK, Detail: "session is paired and connected"}
+}
+
+// eventStallThreshold is how long a connected session may go without a
+// single WhatsApp event before checkEventFlow warns. Receipts, presence,
+// and notifications normally arrive far more often than this on any
+// active account, but a quiet account can legitimately go silent for a
+// while — hence a warn, not a fail.
+const eventStallThreshold = 30 * time.Minute
+
+// checkEventFlow reports whether WhatsApp events are actually reaching the
+// event handler. The failure mode it exists for: the socket keepalive
+// stays healthy (LoggedIn true) while the event pipeline is dead, so
+// messages are silently lost with every other check green. It can only
+// warn — event silence has innocent explanations — but the warning names
+// the one state the operator cannot otherwise see.
+func checkEventFlow(_ context.Context, env Env) Finding {
+	if env.LoggedIn == nil || !env.LoggedIn() {
+		return Finding{Check: "events", Status: StatusOK, Detail: "not connected — no event flow expected"}
+	}
+	if env.LastEventAt == nil || env.OpenedAt == nil {
+		return Finding{Check: "events", Status: StatusOK, Detail: "event flow not observable here"}
+	}
+
+	// The baseline is the later of "last event seen" and "bridge started":
+	// a fresh start with no events yet is not a stall.
+	base := env.OpenedAt()
+	if last := env.LastEventAt(); last.After(base) {
+		base = last
+	}
+	if base.IsZero() {
+		return Finding{Check: "events", Status: StatusOK, Detail: "event flow not observable here"}
+	}
+
+	quiet := time.Since(base)
+	if quiet > eventStallThreshold {
+		return Finding{
+			Check:  "events",
+			Status: StatusWarn,
+			Detail: fmt.Sprintf("no WhatsApp events received for %s despite a live connection", quiet.Round(time.Minute)),
+			Fix:    "if messages are arriving on the phone, the event pipeline may be stalled — restart serve",
+		}
+	}
+	return Finding{Check: "events", Status: StatusOK, Detail: "events are flowing"}
 }
 
 // checkDatabase runs the message store's integrity check.

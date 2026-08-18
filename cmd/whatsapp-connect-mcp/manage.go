@@ -73,6 +73,8 @@ func runCheck(args []string) int {
 		Store:        st,
 		NeedsPairing: br.NeedsPairing,
 		LoggedIn:     br.LoggedIn,
+		LastEventAt:  br.LastEventAt,
+		OpenedAt:     br.OpenedAt,
 	}
 	findings := doctor.Run(context.Background(), env)
 

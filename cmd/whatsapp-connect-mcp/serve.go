@@ -18,6 +18,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/instancelock"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mcpserv"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
@@ -49,6 +50,19 @@ func runServe(args []string) int {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
+
+	// One serve per data directory, enforced before anything opens the
+	// SQLite files: an MCP client reconnect can spawn a fresh process while
+	// an orphaned one is still alive, and two servers double-attached to
+	// the same session/message databases is a real observed failure mode.
+	// The OS releases the lock on process exit, however the process dies,
+	// so there is no stale-lock case.
+	lock, err := instancelock.Acquire(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+	defer func() { _ = lock.Release() }()
 
 	cfg, err := config.Load(dataDir)
 	if err != nil {
@@ -130,7 +144,11 @@ func runServe(args []string) int {
 	trusted := func(jid string) bool { return cfg.IsTrusted(jid) || sess.Trusted(jid) }
 
 	g := gate.New(br, trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
-	doc := mcpserv.DoctorEnv{Home: home, BinaryPath: binaryPath, NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn}
+	doc := mcpserv.DoctorEnv{
+		Home: home, BinaryPath: binaryPath,
+		NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
+		LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
+	}
 	server := mcpserv.New(st, br, g, dataDir, doc)
 
 	if *httpAddr != "" {

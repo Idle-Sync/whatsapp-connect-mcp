@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 // Finding statuses, in ascending severity order.
@@ -61,6 +62,13 @@ type Env struct {
 	Store        DBChecker
 	NeedsPairing func() bool
 	LoggedIn     func() bool
+	// LastEventAt and OpenedAt are *bridge.Bridge's methods of those
+	// names: when the last WhatsApp event reached the event handler (zero
+	// for none yet) and when the bridge was constructed. checkEventFlow
+	// compares them against LoggedIn to notice a stalled event pipeline;
+	// nil skips that check.
+	LastEventAt func() time.Time
+	OpenedAt    func() time.Time
 }
 
 // Check is one named diagnostic.

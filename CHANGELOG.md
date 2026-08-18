@@ -13,6 +13,17 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Single-instance guard.** `serve` takes an OS-level exclusive lock on
+  the data directory (flock on Unix, LockFileEx on Windows) before opening
+  anything, and refuses to start with a clear error while another serve
+  holds it — an MCP client reconnect can no longer leave two servers
+  double-attached to the same SQLite files. The OS releases the lock on
+  process exit, however the process dies, so there is no stale-lock case.
+- **Ingestion-liveness check in doctor.** The bridge records when the last
+  WhatsApp event reached the ingestion pipeline, and `doctor` warns when a
+  connected session has seen no events for over 30 minutes — the
+  silent-stall state (socket healthy, pipeline dead, messages lost) that
+  previously passed every check.
 - **Session-scoped trust (`trust --session`).** A recipient the human
   elevates mid-session auto-commits for the life of the current `serve`
   process, then evaporates: `trust --session --add <jid>` takes effect

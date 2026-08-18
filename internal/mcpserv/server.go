@@ -2,6 +2,7 @@ package mcpserv
 
 import (
 	"context"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -18,6 +19,10 @@ type DoctorEnv struct {
 	BinaryPath   string
 	NeedsPairing func() bool
 	LoggedIn     func() bool
+	// LastEventAt and OpenedAt feed doctor's event-flow (ingestion
+	// liveness) check; nil skips it.
+	LastEventAt func() time.Time
+	OpenedAt    func() time.Time
 }
 
 // Store is the read query API this package needs. It mirrors *store.Store's

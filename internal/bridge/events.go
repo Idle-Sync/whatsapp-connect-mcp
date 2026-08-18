@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"strings"
+	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
@@ -22,6 +23,9 @@ import (
 // failure via the idempotent upserts. It performs no network I/O itself:
 // every case below only decodes evt and writes to the store.
 func (b *Bridge) handleEvent(raw any) {
+	// Every event, recognized below or not, proves the pipeline is alive.
+	b.lastEventAt.Store(time.Now().Unix())
+
 	switch evt := raw.(type) {
 	case *events.Message:
 		b.ingestMessage(evt)

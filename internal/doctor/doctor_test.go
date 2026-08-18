@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
@@ -378,5 +379,47 @@ func TestRenderProducesOneLinePerFinding(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Render() output missing %q: %q", want, out)
 		}
+	}
+}
+
+// checkEventFlow is the ingestion-liveness check: a connected socket with
+// no events flowing is exactly the silent-stall state doctor previously
+// blessed as healthy.
+func TestCheckEventFlow(t *testing.T) {
+	now := time.Now()
+	at := func(t time.Time) func() time.Time { return func() time.Time { return t } }
+	trueFn := func() bool { return true }
+	falseFn := func() bool { return false }
+
+	tests := []struct {
+		name        string
+		loggedIn    func() bool
+		lastEventAt func() time.Time
+		openedAt    func() time.Time
+		wantStatus  string
+	}{
+		{name: "not connected", loggedIn: falseFn, lastEventAt: at(time.Time{}), openedAt: at(now), wantStatus: StatusOK},
+		{name: "signals unavailable", loggedIn: trueFn, lastEventAt: nil, openedAt: nil, wantStatus: StatusOK},
+		{name: "recent event", loggedIn: trueFn, lastEventAt: at(now.Add(-time.Minute)), openedAt: at(now.Add(-2 * time.Hour)), wantStatus: StatusOK},
+		{name: "stalled: no events for 45m", loggedIn: trueFn, lastEventAt: at(now.Add(-45 * time.Minute)), openedAt: at(now.Add(-2 * time.Hour)), wantStatus: StatusWarn},
+		{name: "fresh start, no events yet", loggedIn: trueFn, lastEventAt: at(time.Time{}), openedAt: at(now.Add(-5 * time.Minute)), wantStatus: StatusOK},
+		{name: "no events ever despite hours connected", loggedIn: trueFn, lastEventAt: at(time.Time{}), openedAt: at(now.Add(-2 * time.Hour)), wantStatus: StatusWarn},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := Env{
+				NeedsPairing: falseFn,
+				LoggedIn:     tt.loggedIn,
+				LastEventAt:  tt.lastEventAt,
+				OpenedAt:     tt.openedAt,
+			}
+			f := checkEventFlow(context.Background(), env)
+			if f.Status != tt.wantStatus {
+				t.Fatalf("checkEventFlow(%s) status = %q (detail %q), want %q", tt.name, f.Status, f.Detail, tt.wantStatus)
+			}
+			if tt.wantStatus == StatusWarn && f.Fix == "" {
+				t.Fatalf("a stall warning must carry a fix suggestion, got none (detail %q)", f.Detail)
+			}
+		})
 	}
 }

@@ -337,7 +337,10 @@ whatsapp-connect-mcp check
 ```
 
 Runs the same checks the `doctor` MCP tool exposes: session pairing/connect
-state, message database integrity, injected MCP client configs, data
+state, event-flow liveness (a connected session that has received no
+WhatsApp events for over 30 minutes gets a warning — the state where the
+socket looks healthy but ingestion has silently stalled), message database
+integrity, injected MCP client configs, data
 directory permissions (POSIX), and the version check above. Every finding
 is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the

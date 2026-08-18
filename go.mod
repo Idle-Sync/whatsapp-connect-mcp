@@ -6,6 +6,7 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	go.mau.fi/whatsmeow v0.0.0-20260816113502-fb386f152837
+	golang.org/x/sys v0.47.0
 	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.56.0
@@ -36,7 +37,6 @@ require (
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.74.4 // indirect

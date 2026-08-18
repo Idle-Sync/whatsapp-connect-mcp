@@ -940,3 +940,28 @@ func TestDecodeMessageCaptionedDocumentUnwraps(t *testing.T) {
 		t.Fatal("media ref does not carry the unwrapped DocumentMessage; download_media would report no media")
 	}
 }
+
+// LastEventAt is the ingestion-liveness signal doctor's event-flow check
+// reads: any WhatsApp event moving through handleEvent must advance it.
+func TestLastEventAtAdvancesOnAnyEvent(t *testing.T) {
+	b, _ := newTestBridge(t)
+	if !b.LastEventAt().IsZero() {
+		t.Fatalf("LastEventAt = %v before any event, want zero", b.LastEventAt())
+	}
+
+	b.handleEvent(messageEvent(dmSource(false), "Alice", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	if b.LastEventAt().IsZero() {
+		t.Fatal("LastEventAt still zero after an event was handled")
+	}
+	if time.Since(b.LastEventAt()) > time.Minute {
+		t.Fatalf("LastEventAt = %v, want approximately now", b.LastEventAt())
+	}
+}
+
+func TestOpenedAtIsSet(t *testing.T) {
+	b, _ := newTestBridge(t)
+	if b.OpenedAt().IsZero() {
+		t.Fatal("OpenedAt is zero; the event-flow check needs a baseline for a bridge with no events yet")
+	}
+}

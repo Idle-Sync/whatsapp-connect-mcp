@@ -217,9 +217,11 @@ func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, 
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "doctor",
-		Description: "Runs local diagnostic checks — WhatsApp session state, message database " +
-			"integrity, injected MCP client configuration, data directory permissions, and whether " +
-			"a newer release is available — and reports one status line per check (ok/warn/fail). " +
+		Description: "Runs local diagnostic checks — WhatsApp session state, event-flow liveness " +
+			"(whether events are actually reaching the ingestion pipeline, not just whether the " +
+			"socket is up), message database integrity, injected MCP client configuration, data " +
+			"directory permissions, and whether a newer release is available — and reports one " +
+			"status line per check (ok/warn/fail). " +
 			"This never sends anything over the network to WhatsApp or any WhatsApp contact; the " +
 			"only outbound call it makes is an optional, best-effort check against GitHub's release " +
 			"API. Every finding is this program's own diagnostic data, not WhatsApp content — no " +
@@ -694,6 +696,8 @@ func (d *toolDeps) doctor(ctx context.Context, _ *mcp.CallToolRequest, _ struct{
 		Store:        d.st,
 		NeedsPairing: d.doctorEnv.NeedsPairing,
 		LoggedIn:     d.doctorEnv.LoggedIn,
+		LastEventAt:  d.doctorEnv.LastEventAt,
+		OpenedAt:     d.doctorEnv.OpenedAt,
 	}
 	findings := doctor.Run(ctx, env)
 	// Findings are this program's own diagnostic data, not WhatsApp
