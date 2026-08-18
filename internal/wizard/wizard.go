@@ -51,9 +51,24 @@ type Deps struct {
 	// at BinaryPath. Called once per selected client, only after the
 	// user confirms.
 	Inject func(configPath, binaryPath string) error
+	// InjectHTTP writes an HTTP-transport entry into configPath, pointed
+	// at the shared server on 127.0.0.1:port. Called instead of Inject
+	// when the user picks the http transport.
+	InjectHTTP func(configPath string, port int) error
 	// BinaryPath is the absolute path to this binary, written into every
 	// injected entry.
 	BinaryPath string
+}
+
+// defaultHTTPPort is the port the http transport prompt offers when the
+// user just presses enter: outside the common dev-server range, so a
+// shared server on it is unlikely to collide with anything.
+const defaultHTTPPort = 2178
+
+// transport is the user's connection-mode choice.
+type transport struct {
+	http bool
+	port int // meaningful only when http
 }
 
 // Run drives the flow over in/out to completion. Nothing is written to
@@ -100,11 +115,55 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, deps Deps) error {
 		return ErrAborted
 	}
 
-	if !confirmTargets(ctx, r, out, targets) {
+	tr, err := askTransport(ctx, r, out)
+	if err != nil {
+		return abortOr(err)
+	}
+
+	if !confirmTargets(ctx, r, out, targets, tr) {
 		return ErrAborted
 	}
 
-	return injectAll(out, deps, targets)
+	return injectAll(out, deps, targets, tr)
+}
+
+// askTransport asks how clients should connect: stdio (each client starts
+// its own server process; only one client can be connected at a time,
+// because one serve holds the data directory's exclusive lock) or http
+// (one shared server on a local port that every client and session
+// connects to at once). Empty keeps the stdio default; picking http asks
+// for the port, defaulting to defaultHTTPPort.
+func askTransport(ctx context.Context, r *bufio.Reader, out io.Writer) (transport, error) {
+	_, _ = fmt.Fprintln(out, "\nHow should MCP clients connect?")
+	_, _ = fmt.Fprintln(out, "  1) stdio (default) — each client starts its own server; only one client/session at a time")
+	_, _ = fmt.Fprintln(out, "  2) http — one shared local server; several clients and sessions at once")
+	_, _ = fmt.Fprint(out, "Choose [1/2, default 1]: ")
+
+	answer, err := readLine(ctx, r)
+	if err != nil {
+		return transport{}, err
+	}
+	switch strings.ToLower(answer) {
+	case "", "1", "stdio":
+		return transport{}, nil
+	case "2", "http":
+	default:
+		return transport{}, fmt.Errorf("invalid transport %q: enter 1 (stdio) or 2 (http)", answer)
+	}
+
+	_, _ = fmt.Fprintf(out, "Port for the shared server [%d]: ", defaultHTTPPort)
+	portLine, err := readLine(ctx, r)
+	if err != nil {
+		return transport{}, err
+	}
+	port := defaultHTTPPort
+	if portLine != "" {
+		port, err = strconv.Atoi(portLine)
+		if err != nil || port < 1 || port > 65535 {
+			return transport{}, fmt.Errorf("invalid port %q: enter a number between 1 and 65535", portLine)
+		}
+	}
+	return transport{http: true, port: port}, nil
 }
 
 // runPairing prints the pairing prompt and drives Deps.PairQR, rendering
@@ -165,10 +224,15 @@ func resolveTargets(ctx context.Context, r *bufio.Reader, out io.Writer, clients
 
 // confirmTargets prints the summary and reads the final yes/no answer.
 // A read error (including context cancellation) counts as declined.
-func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets []Client) bool {
+func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets []Client, tr transport) bool {
 	_, _ = fmt.Fprintln(out, "\nWill configure:")
 	for _, c := range targets {
 		_, _ = fmt.Fprintf(out, "  - %s (%s)\n", c.Name, c.ConfigPath)
+	}
+	if tr.http {
+		_, _ = fmt.Fprintf(out, "Transport: http — shared server at http://127.0.0.1:%d\n", tr.port)
+	} else {
+		_, _ = fmt.Fprintln(out, "Transport: stdio — each client starts its own server")
 	}
 	_, _ = fmt.Fprint(out, "\nProceed? [y/N]: ")
 
@@ -180,12 +244,20 @@ func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets
 	return answer == "y" || answer == "yes"
 }
 
-// injectAll calls Deps.Inject for every target. One client's failure does
-// not stop the others; all failures are reported together.
-func injectAll(out io.Writer, deps Deps, targets []Client) error {
+// injectAll calls Deps.Inject (stdio) or Deps.InjectHTTP (http) for every
+// target. One client's failure does not stop the others; all failures are
+// reported together. For the http transport it ends by saying how to start
+// the shared server, since — unlike stdio — no client will start it.
+func injectAll(out io.Writer, deps Deps, targets []Client, tr transport) error {
 	var failed []string
 	for _, c := range targets {
-		if err := deps.Inject(c.ConfigPath, deps.BinaryPath); err != nil {
+		var err error
+		if tr.http {
+			err = deps.InjectHTTP(c.ConfigPath, tr.port)
+		} else {
+			err = deps.Inject(c.ConfigPath, deps.BinaryPath)
+		}
+		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", c.Name, err))
 			continue
 		}
@@ -193,6 +265,11 @@ func injectAll(out io.Writer, deps Deps, targets []Client) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("some clients failed to configure: %s", strings.Join(failed, "; "))
+	}
+	if tr.http {
+		_, _ = fmt.Fprintf(out, "\nClients connect to a shared server you run yourself. Start it with:\n")
+		_, _ = fmt.Fprintf(out, "  whatsapp-connect-mcp serve --http 127.0.0.1:%d\n", tr.port)
+		_, _ = fmt.Fprintln(out, "Clients can only connect while it is running (it does not start on boot).")
 	}
 	return nil
 }

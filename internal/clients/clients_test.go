@@ -513,3 +513,108 @@ func TestInjectErrorDoesNotLeakPathOrContent(t *testing.T) {
 		t.Fatalf("Inject() error = %q, must not echo file contents", err.Error())
 	}
 }
+
+func TestInjectHTTPWritesHTTPEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+
+	if err := InjectHTTP(path, "http://127.0.0.1:2178", "tok123"); err != nil {
+		t.Fatalf("InjectHTTP: %v", err)
+	}
+
+	root := readJSON(t, path)
+	entry := root["mcpServers"].(map[string]any)["whatsapp"].(map[string]any)
+	if entry["type"] != "http" || entry["url"] != "http://127.0.0.1:2178" {
+		t.Fatalf("entry = %v, want type http at the given url", entry)
+	}
+	headers, _ := entry["headers"].(map[string]any)
+	if headers["Authorization"] != "Bearer tok123" {
+		t.Fatalf("headers = %v, want a bearer Authorization header", headers)
+	}
+	if _, hasCmd := entry["command"]; hasCmd {
+		t.Fatalf("entry = %v, must not carry a command — nothing should spawn a process for an http entry", entry)
+	}
+}
+
+// Switching an existing stdio entry to http must fully replace it: a stale
+// command field would make the entry ambiguous.
+func TestInjectHTTPReplacesStdioEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Inject(path, "/bin/whatsapp-connect-mcp"); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+	if err := InjectHTTP(path, "http://127.0.0.1:2178", "tok"); err != nil {
+		t.Fatalf("InjectHTTP: %v", err)
+	}
+
+	root := readJSON(t, path)
+	entry := root["mcpServers"].(map[string]any)["whatsapp"].(map[string]any)
+	if _, hasCmd := entry["command"]; hasCmd {
+		t.Fatalf("entry = %v, stdio command survived the switch to http", entry)
+	}
+	if entry["type"] != "http" {
+		t.Fatalf("entry = %v, want type http", entry)
+	}
+}
+
+func TestInjectHTTPPreservesSiblings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	seed := `{"theme":"dark","mcpServers":{"other":{"command":"/bin/other"}}}`
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := InjectHTTP(path, "http://127.0.0.1:2178", "tok"); err != nil {
+		t.Fatalf("InjectHTTP: %v", err)
+	}
+
+	root := readJSON(t, path)
+	if root["theme"] != "dark" {
+		t.Fatalf("unrelated top-level key lost: %v", root)
+	}
+	servers := root["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Fatalf("sibling server entry lost: %v", servers)
+	}
+}
+
+// InjectedEntry tells stdio and http entries apart, so doctor can validate
+// each appropriately; both count as injected.
+func TestInjectedEntryDistinguishesTransports(t *testing.T) {
+	dir := t.TempDir()
+
+	stdioPath := filepath.Join(dir, "stdio.json")
+	if err := Inject(stdioPath, "/bin/whatsapp-connect-mcp"); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+	cmd, url, ok := InjectedEntry(stdioPath)
+	if !ok || cmd != "/bin/whatsapp-connect-mcp" || url != "" {
+		t.Fatalf("InjectedEntry(stdio) = (%q, %q, %v), want the command and no url", cmd, url, ok)
+	}
+
+	httpPath := filepath.Join(dir, "http.json")
+	if err := InjectHTTP(httpPath, "http://127.0.0.1:2178", "tok"); err != nil {
+		t.Fatalf("InjectHTTP: %v", err)
+	}
+	cmd, url, ok = InjectedEntry(httpPath)
+	if !ok || cmd != "" || url != "http://127.0.0.1:2178" {
+		t.Fatalf("InjectedEntry(http) = (%q, %q, %v), want the url and no command", cmd, url, ok)
+	}
+
+	if _, _, ok := InjectedEntry(filepath.Join(dir, "missing.json")); ok {
+		t.Fatal("InjectedEntry(missing) ok = true, want false")
+	}
+}
+
+// readJSON parses path's whole content into generic maps for assertions.
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return root
+}

@@ -53,22 +53,22 @@ func TestRunCommitAtEnd(t *testing.T) {
 	}{
 		{
 			name:       "confirm injects only the selected clients",
-			input:      "1,3\ny\n",
+			input:      "1,3\n\ny\n",
 			wantInject: []string{"/cfg/alpha.json", "/cfg/gamma.json"},
 		},
 		{
 			name:       "yes spelled out also confirms",
-			input:      "2\nyes\n",
+			input:      "2\n\nyes\n",
 			wantInject: []string{"/cfg/beta.json"},
 		},
 		{
 			name:       "all selects every detected client, never the custom entry",
-			input:      "all\ny\n",
+			input:      "all\n\ny\n",
 			wantInject: []string{"/cfg/alpha.json", "/cfg/beta.json", "/cfg/gamma.json"},
 		},
 		{
 			name:       "declining the confirm injects nothing",
-			input:      "1\nn\n",
+			input:      "1\n\nn\n",
 			wantErr:    ErrAborted,
 			wantInject: nil,
 		},
@@ -92,7 +92,7 @@ func TestRunCommitAtEnd(t *testing.T) {
 		},
 		{
 			name:       "custom path entry prompts for a path and injects it",
-			input:      "4\n/custom/config.json\ny\n",
+			input:      "4\n/custom/config.json\n\ny\n",
 			wantInject: []string{"/custom/config.json"},
 		},
 		{
@@ -149,7 +149,7 @@ func TestRunAllSelectionExcludesNotInstalledClients(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("all\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("all\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -173,7 +173,7 @@ func TestRunExplicitSelectionCanStillPickANotInstalledClient(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("2\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("2\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -196,7 +196,7 @@ func TestRunPairingSuccessThenInjects(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("1\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("1\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -265,7 +265,7 @@ func TestRunCtxCancelledBeforeStartAbortsImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := Run(ctx, strings.NewReader("1\ny\n"), &bytes.Buffer{}, deps)
+	err := Run(ctx, strings.NewReader("1\n\ny\n"), &bytes.Buffer{}, deps)
 	if !errors.Is(err, ErrAborted) {
 		t.Fatalf("Run() error = %v, want ErrAborted", err)
 	}
@@ -326,5 +326,111 @@ func TestParseSelection(t *testing.T) {
 				t.Fatalf("parseSelection() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// httpDeps is baseDeps plus a recording InjectHTTP; tests drive the
+// transport prompt to reach it.
+func httpDeps(t *testing.T, injected *[]string, ports *[]int) Deps {
+	t.Helper()
+	deps := baseDeps(t, injected)
+	deps.InjectHTTP = func(configPath string, port int) error {
+		*injected = append(*injected, configPath)
+		*ports = append(*ports, port)
+		return nil
+	}
+	return deps
+}
+
+// Choosing the HTTP transport asks for a port (defaulting when left
+// empty), routes every selected client through InjectHTTP instead of
+// Inject, and tells the user how to start the shared server.
+func TestRunHTTPTransportDefaultPort(t *testing.T) {
+	var injected []string
+	var ports []int
+	deps := httpDeps(t, &injected, &ports)
+	deps.Inject = func(string, string) error {
+		t.Fatal("stdio Inject called though the http transport was chosen")
+		return nil
+	}
+
+	var out bytes.Buffer
+	// select Alpha, transport 2 (http), empty port (default), confirm.
+	err := Run(context.Background(), strings.NewReader("1\n2\n\ny\n"), &out, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !slices.Equal(injected, []string{"/cfg/alpha.json"}) || !slices.Equal(ports, []int{2178}) {
+		t.Fatalf("InjectHTTP calls = %v ports %v, want alpha on default port 2178", injected, ports)
+	}
+	if !strings.Contains(out.String(), "serve --http 127.0.0.1:2178") {
+		t.Fatalf("output does not tell the user how to start the shared server:\n%s", out.String())
+	}
+}
+
+func TestRunHTTPTransportExplicitPort(t *testing.T) {
+	var injected []string
+	var ports []int
+	deps := httpDeps(t, &injected, &ports)
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("1,2\n2\n9137\ny\n"), &out, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !slices.Equal(ports, []int{9137, 9137}) {
+		t.Fatalf("ports = %v, want 9137 for both clients", ports)
+	}
+}
+
+func TestRunHTTPTransportRejectsBadPort(t *testing.T) {
+	for _, port := range []string{"abc", "0", "70000", "-5"} {
+		var injected []string
+		var ports []int
+		deps := httpDeps(t, &injected, &ports)
+
+		var out bytes.Buffer
+		err := Run(context.Background(), strings.NewReader("1\n2\n"+port+"\n"), &out, deps)
+		if err == nil || !strings.Contains(err.Error(), "port") {
+			t.Fatalf("Run(port=%q) error = %v, want a port validation error", port, err)
+		}
+		if len(injected) != 0 {
+			t.Fatalf("Run(port=%q) injected %v, want nothing on a rejected port", port, injected)
+		}
+	}
+}
+
+// An unrecognized transport answer is an error, not silently stdio.
+func TestRunTransportRejectsUnknownAnswer(t *testing.T) {
+	var injected []string
+	deps := baseDeps(t, &injected)
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("1\nbanana\n"), &out, deps)
+	if err == nil || !strings.Contains(err.Error(), "transport") {
+		t.Fatalf("Run() error = %v, want a transport validation error", err)
+	}
+	if len(injected) != 0 {
+		t.Fatalf("injected = %v, want nothing", injected)
+	}
+}
+
+// The empty answer keeps the old behavior: stdio, via Deps.Inject.
+func TestRunTransportDefaultsToStdio(t *testing.T) {
+	var injected []string
+	deps := baseDeps(t, &injected)
+	deps.InjectHTTP = func(string, int) error {
+		t.Fatal("InjectHTTP called though stdio was chosen by default")
+		return nil
+	}
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("1\n\ny\n"), &out, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !slices.Equal(injected, []string{"/cfg/alpha.json"}) {
+		t.Fatalf("injected = %v, want alpha via stdio Inject", injected)
 	}
 }

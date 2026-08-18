@@ -52,6 +52,16 @@ Device), then detects installed MCP clients and offers to inject a
 `whatsapp` server entry into whichever ones you pick. No toolchain, no
 manual JSON editing.
 
+`setup` also asks how clients should connect. **stdio** (the default) has
+each client start its own server process — simplest, but only one client
+or session can be connected at a time, since one `serve` holds the data
+directory's exclusive lock. **http** points every selected client at one
+shared local server (`http://127.0.0.1:<port>`, port of your choosing,
+default 2178, bearer-token authenticated) so several clients and sessions
+connect at once — the trade-off being that you start that server yourself
+with `whatsapp-connect-mcp serve --http 127.0.0.1:<port>` and clients can
+only connect while it is running.
+
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
 

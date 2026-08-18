@@ -13,6 +13,17 @@ WhatsApp messages through it.
 
 ### Added
 
+- **Transport choice in `setup`.** The wizard now asks how MCP clients
+  should connect: **stdio** (default — each client starts its own server;
+  one client/session at a time, since one `serve` holds the data
+  directory's lock) or **http** (one shared local server on a port of
+  your choosing, default 2178). The http choice injects a
+  `type: http` entry with the server URL and the bearer token from
+  `.http-token` — minted by setup if needed, so the header and
+  `serve --http` agree without hand-copying — and ends by printing the
+  `serve --http` command, since no client starts the shared server for
+  you. `doctor` validates http entries as configuration (a URL names no
+  binary to check).
 - **Single-instance guard.** `serve` takes an OS-level exclusive lock on
   the data directory (flock on Unix, LockFileEx on Windows) before opening
   anything, and refuses to start with a clear error while another serve

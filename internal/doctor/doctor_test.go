@@ -423,3 +423,21 @@ func TestCheckEventFlow(t *testing.T) {
 		})
 	}
 }
+
+// An http-transport entry names no binary at all — it points at a shared
+// server URL — so the binary-path validation must not flag it as broken.
+func TestCheckClientsAcceptsHTTPEntry(t *testing.T) {
+	home := t.TempDir()
+	cursor := findClient(t, clients.Detect(home), "Cursor")
+	if err := os.MkdirAll(filepath.Dir(cursor.ConfigPath), 0o700); err != nil {
+		t.Fatalf("seed client dir: %v", err)
+	}
+	if err := clients.InjectHTTP(cursor.ConfigPath, "http://127.0.0.1:2178", "tok"); err != nil {
+		t.Fatalf("InjectHTTP() error: %v", err)
+	}
+
+	got := checkClients(context.Background(), Env{Home: home, BinaryPath: filepath.Join(home, "bin")})
+	if got.Status != StatusOK {
+		t.Fatalf("Status = %q, want %q for an http entry (finding: %+v)", got.Status, StatusOK, got)
+	}
+}

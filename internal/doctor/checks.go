@@ -138,8 +138,18 @@ func checkClients(_ context.Context, env Env) Finding {
 			continue
 		}
 		checked++
-		cmd, ok := clients.InjectedCommand(c.ConfigPath)
-		if !ok || cmd != env.BinaryPath {
+		cmd, url, ok := clients.InjectedEntry(c.ConfigPath)
+		if !ok {
+			broken = append(broken, c.Name)
+			continue
+		}
+		// An http entry points at a shared server URL rather than a binary;
+		// there is no path to validate (whether that server is running is a
+		// runtime state, not a config defect).
+		if url != "" {
+			continue
+		}
+		if cmd != env.BinaryPath {
 			broken = append(broken, c.Name)
 			continue
 		}

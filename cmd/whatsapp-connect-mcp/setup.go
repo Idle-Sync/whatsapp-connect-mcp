@@ -13,6 +13,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/wizard"
@@ -115,7 +116,18 @@ func runSetup(args []string) int {
 			}
 			return out
 		},
-		Inject:     clients.Inject,
+		Inject: clients.Inject,
+		// The http transport authenticates with the same bearer token
+		// serve --http uses; minting it here (first use wins, later calls
+		// re-read it) means the injected header and the server agree
+		// without the user ever copying a token by hand.
+		InjectHTTP: func(configPath string, port int) error {
+			token, _, err := httpauth.LoadOrCreateToken(dataDir)
+			if err != nil {
+				return err
+			}
+			return clients.InjectHTTP(configPath, fmt.Sprintf("http://127.0.0.1:%d", port), token)
+		},
 		BinaryPath: binaryPath,
 	}
 

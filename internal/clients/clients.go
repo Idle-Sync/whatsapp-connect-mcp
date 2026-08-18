@@ -26,10 +26,15 @@ type Client struct {
 	Injected   bool   // whether the config currently has our entry
 }
 
-// mcpEntry is the value written under mcpServers["whatsapp"].
+// mcpEntry is the value written under mcpServers["whatsapp"]: a stdio
+// entry carries Command/Args, an http entry carries Type/URL/Headers.
+// Every field is omitempty so neither shape leaks the other's keys.
 type mcpEntry struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Type    string            `json:"type,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // clientDef is a known client's path resolution logic.
@@ -156,6 +161,42 @@ func Inject(configPath, binaryPath string) error {
 	return writeAtomic(configPath, root)
 }
 
+// InjectHTTP writes an mcpServers["whatsapp"] entry that connects to an
+// already-running shared server at url over streamable HTTP,
+// authenticating with token as a bearer Authorization header. It fully
+// replaces any existing entry (a stale stdio command must not survive a
+// transport switch), preserves every other key in the file, and creates
+// the file if missing. Unlike the stdio entry, nothing in it spawns a
+// process: the user runs `serve --http` themselves.
+func InjectHTTP(configPath, url, token string) error {
+	root, err := loadRawObject(configPath)
+	if err != nil {
+		return err
+	}
+	servers, err := extractObject(root, "mcpServers")
+	if err != nil {
+		return err
+	}
+
+	entryData, err := json.Marshal(mcpEntry{
+		Type:    "http",
+		URL:     url,
+		Headers: map[string]string{"Authorization": "Bearer " + token},
+	})
+	if err != nil {
+		return errUnwritable
+	}
+	servers[entryKey] = entryData
+
+	serversData, err := json.Marshal(servers)
+	if err != nil {
+		return errUnwritable
+	}
+	root["mcpServers"] = serversData
+
+	return writeAtomic(configPath, root)
+}
+
 // Remove deletes the mcpServers["whatsapp"] entry from the config file at
 // configPath, leaving every other key untouched. Removing from a config
 // that doesn't exist, or that has no such entry, is a no-op. A config file
@@ -189,25 +230,36 @@ func Remove(configPath string) error {
 
 // InjectedCommand reports the command currently configured for our entry in
 // the config file at configPath. It returns false if the file is missing,
-// fails to parse, or has no "whatsapp" entry under mcpServers.
+// fails to parse, or has no "whatsapp" entry under mcpServers. An http
+// entry reports ok with an empty command; use InjectedEntry to tell the
+// transports apart.
 func InjectedCommand(configPath string) (string, bool) {
+	command, _, ok := InjectedEntry(configPath)
+	return command, ok
+}
+
+// InjectedEntry reports our entry's command (stdio) and url (http) — at
+// most one is non-empty — and whether an entry exists at all. It returns
+// ok == false if the file is missing, fails to parse, or has no
+// "whatsapp" entry under mcpServers.
+func InjectedEntry(configPath string) (command, url string, ok bool) {
 	root, err := loadRawObject(configPath)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	servers, err := extractObject(root, "mcpServers")
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	raw, ok := servers[entryKey]
-	if !ok {
-		return "", false
+	raw, present := servers[entryKey]
+	if !present {
+		return "", "", false
 	}
 	var entry mcpEntry
 	if err := json.Unmarshal(raw, &entry); err != nil {
-		return "", false
+		return "", "", false
 	}
-	return entry.Command, true
+	return entry.Command, entry.URL, true
 }
 
 var (
