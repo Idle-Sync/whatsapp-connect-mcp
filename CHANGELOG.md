@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-08-19
+
+### Fixed
+
+- **npm publish from the release workflow works.** 0.1.2's `publish-npm`
+  job failed: the npm-side trusted publisher connection was not yet
+  saved, and the npm package's `repository.url` spelled the GitHub org
+  in lowercase where trusted publishing's provenance check requires the
+  exact `Idle-Sync` casing. 0.1.2 therefore never reached npm; this
+  release is otherwise identical to it.
+
 ## [0.1.2] - 2026-08-19
 
 ### Added

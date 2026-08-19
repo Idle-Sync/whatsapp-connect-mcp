@@ -6,7 +6,7 @@
   "homepage": "https://github.com/idle-sync/whatsapp-connect-mcp",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/idle-sync/whatsapp-connect-mcp.git"
+    "url": "git+https://github.com/Idle-Sync/whatsapp-connect-mcp.git"
   },
   "bin": {
     "whatsapp-connect-mcp": "install.js"
