@@ -41,13 +41,17 @@ irm https://raw.githubusercontent.com/idle-sync/whatsapp-connect-mcp/main/script
 ```sh
 # Anywhere with Node installed, no separate download step
 npx whatsapp-connect-mcp setup
+# or, sturdier for setup: a global install
+npm install -g whatsapp-connect-mcp
 ```
 
 > `npx whatsapp-connect-mcp serve` works fine on its own, but for `setup`
-> prefer one of the install scripts above. `setup` injects an absolute path
-> to the running binary into each MCP client's config, and under `npx` that
-> path is inside npm's package cache — clear that cache and every client
-> config `setup` wrote now points at a binary that's gone.
+> prefer one of the install scripts above or the global install. `setup`
+> injects an absolute path to the running binary into each MCP client's
+> config, and under `npx` that path is inside npm's package cache — clear
+> that cache and every client config `setup` wrote now points at a binary
+> that's gone. A global install keeps the binary at a stable path until
+> the package itself is upgraded or removed.
 
 Each of these downloads the release binary for your OS/architecture and runs
 `setup`: it shows a QR code to scan from WhatsApp (Linked Devices → Link a

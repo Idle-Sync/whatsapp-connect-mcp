@@ -3,8 +3,11 @@ name: Release
 # Fires on every version tag (v0.1.0, v0.1.0-rc.1, ...). Runs the same
 # lint/test gates as ci.yml, cross-compiles six binaries, cuts a GitHub
 # Release whose body is the matching CHANGELOG.md section, bundles each
-# binary as an MCPB package, and publishes server.json to the MCP Registry
-# over OIDC (no stored registry credential).
+# binary as an MCPB package, publishes server.json to the MCP Registry
+# over OIDC (no stored registry credential), and publishes the npm
+# installer package (packaging/npm) via npm trusted publishing — also
+# OIDC, no token; the trusted publisher is configured in the package's
+# settings on npmjs.com, pointing at this repo and this workflow file.
 #
 # Asset naming convention (binaries and MCPB bundles alike), shared with
 # scripts/install.sh, scripts/install.ps1, and packaging/npm/install.js —
@@ -227,3 +230,26 @@ jobs:
         run: |
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish server.generated.json
+
+  publish-npm:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # Trusted publishing needs npm >= 11.5.1 (Node 24's bundled npm) and
+      # registry-url so the OIDC exchange targets the right registry.
+      # package.json keeps "0.0.0-dev" in the repo — the real version is
+      # rendered here, publish-time only, exactly like server.json above.
+      # Provenance is attested automatically under trusted publishing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Publish to npm
+        working-directory: packaging/npm
+        run: |
+          npm pkg set version="${{ needs.publish-release.outputs.version }}"
+          npm publish

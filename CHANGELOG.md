@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **npm distribution.** `npx whatsapp-connect-mcp setup` (or
+  `npm install -g`) now works: the `whatsapp-connect-mcp` package on npm
+  is a dependency-free installer that fetches the matching release
+  binary on first run. 0.1.1 was published by hand; every release from
+  here is published by the release workflow via npm trusted publishing
+  (OIDC, no stored token), the same way the MCP Registry publish
+  already works.
+
 ## [0.1.1] - 2026-08-19
 
 Day-one polish from field reports of real agent-driven use: `serve` now
