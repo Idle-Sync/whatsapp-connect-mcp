@@ -4,6 +4,9 @@ A WhatsApp MCP server shipped as a single static Go binary. One download, one
 `setup` command, one QR scan — then any MCP client (Claude Desktop, Claude
 Code, Cursor, Windsurf, Cline, …) can read, search, and send WhatsApp
 messages, with every outbound send protected by a server-enforced gate.
+That one-step path is the default stdio transport; the shared **http**
+transport adds one more step — a server you start and keep running (see
+[Install](#install-two-minutes)).
 
 > **This uses an unofficial protocol. Read this before you pair a number you
 > care about.**
@@ -58,9 +61,21 @@ or session can be connected at a time, since one `serve` holds the data
 directory's exclusive lock. **http** points every selected client at one
 shared local server (`http://127.0.0.1:<port>`, port of your choosing,
 default 2178, bearer-token authenticated) so several clients and sessions
-connect at once — the trade-off being that you start that server yourself
-with `whatsapp-connect-mcp serve --http 127.0.0.1:<port>` and clients can
-only connect while it is running.
+connect at once.
+
+> **Picked http? There is a step 2: start the server.** Nothing starts it
+> for you — until it runs, every client reports something like
+> `ConnectionRefused at http://127.0.0.1:2178`. Run (and keep running):
+>
+> ```sh
+> whatsapp-connect-mcp serve --http 127.0.0.1:2178
+> ```
+>
+> It acknowledges with `serve: listening on http://127.0.0.1:2178 …` and
+> stays in the foreground, so it dies with its terminal. To keep it alive
+> across logouts and reboots, use the service definitions in `packaging/`
+> — systemd for Linux, launchd for macOS — each with install commands in
+> its comments.
 
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  User launch agent for the shared whatsapp-connect-mcp HTTP server —
+  the macOS counterpart of packaging/systemd/whatsapp-connect-mcp.service.
+
+  launchd does not expand ~ or environment variables, so the paths below
+  carry a USERNAME placeholder. Install:
+
+    sed "s/USERNAME/$USER/g" com.idle-sync.whatsapp-connect-mcp.plist \
+      > ~/Library/LaunchAgents/com.idle-sync.whatsapp-connect-mcp.plist
+    launchctl load -w ~/Library/LaunchAgents/com.idle-sync.whatsapp-connect-mcp.plist
+
+  Stop and remove:
+
+    launchctl unload -w ~/Library/LaunchAgents/com.idle-sync.whatsapp-connect-mcp.plist
+    rm ~/Library/LaunchAgents/com.idle-sync.whatsapp-connect-mcp.plist
+
+  Notes:
+  - An unpaired install does not crash-loop: serve waits idle, re-checking
+    every 15s, so `whatsapp-connect-mcp setup` can pair while the agent is
+    running.
+  - The single-instance lock means a second copy exits immediately with a
+    clear error rather than corrupting the data directory.
+  - Adjust the binary path if it is installed somewhere other than
+    ~/.local/bin (the install.sh default).
+  - stderr (including the "serve: listening on ..." startup line) lands in
+    ~/Library/Logs/whatsapp-connect-mcp.log.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.idle-sync.whatsapp-connect-mcp</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/USERNAME/.local/bin/whatsapp-connect-mcp</string>
+		<string>serve</string>
+		<string>--http</string>
+		<string>127.0.0.1:2178</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>StandardErrorPath</key>
+	<string>/Users/USERNAME/Library/Logs/whatsapp-connect-mcp.log</string>
+</dict>
+</plist>

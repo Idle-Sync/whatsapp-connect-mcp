@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The http transport's second step is now an explicit step** (#13).
+  Picking http in `setup` leaves clients pointed at a server nothing
+  starts for them, but the README framed the whole product as one step
+  and mentioned `serve --http` only mid-paragraph — so the first thing
+  an http user saw was `ConnectionRefused`. The Install section now
+  carries a "step 2: start the server" callout with the exact command,
+  the headline says which path is one-step, and keeping the server
+  alive is documented for both platforms: the existing systemd user
+  unit is finally referenced, and a launchd agent for macOS ships in
+  `packaging/launchd/` with install commands in its comments.
+
 - **`serve` acknowledges a successful start** (#14). A start that went
   well printed nothing — with http especially, a blank terminal was
   indistinguishable from a hang, and people killed and re-ran a server
