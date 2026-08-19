@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -212,17 +214,18 @@ func runServe(args []string) int {
 			// token file and is never logged.
 			fmt.Fprintf(os.Stderr, "serve: generated HTTP bearer token: %s\n", token)
 		}
-		return runHTTP(ctx, server, *httpAddr, token)
+		return runHTTP(ctx, server, *httpAddr, token, os.Stderr)
 	}
-	return runStdio(ctx, server)
+	return runStdio(ctx, server, os.Stderr)
 }
 
 // runStdio runs server over stdio until ctx is cancelled, the client
 // disconnects (stdin closes), or the parent process goes away. The last of
 // these is the watchdog: a client that crashes without closing the pipe
 // would otherwise leave this process orphaned, still holding the WhatsApp
-// connection.
-func runStdio(ctx context.Context, server *mcp.Server) int {
+// connection. Readiness is acknowledged on errOut (never stdout, which
+// carries the MCP framing) so a hand-started serve is visibly alive.
+func runStdio(ctx context.Context, server *mcp.Server, errOut io.Writer) int {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -234,8 +237,9 @@ func runStdio(ctx context.Context, server *mcp.Server) int {
 		}
 	}()
 
+	_, _ = fmt.Fprintln(errOut, "serve: ready on stdio")
 	if err := server.Run(runCtx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
 		return 1
 	}
 	return 0
@@ -244,21 +248,35 @@ func runStdio(ctx context.Context, server *mcp.Server) int {
 // runHTTP serves server over streamable HTTP on addr until ctx is
 // cancelled, then shuts the HTTP server down gracefully. Every request must
 // carry token and be addressed to a loopback Host; see internal/httpauth.
-func runHTTP(ctx context.Context, server *mcp.Server, addr, token string) int {
+// Startup is acknowledged on errOut once the port is held — a silent start
+// is indistinguishable from a hang (issue #14). errOut is never stdout in
+// production, keeping stdio-transport framing clean.
+func runHTTP(ctx context.Context, server *mcp.Server, addr, token string, errOut io.Writer) int {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	httpServer := &http.Server{
-		Addr:              addr,
 		Handler:           httpauth.Middleware(token, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Bind before announcing anything: a bind failure (port already in
+	// use) surfaces here, synchronously, instead of racing shutdown on
+	// errCh — and "listening" is only ever printed while the port is
+	// actually held. The bound address is announced rather than addr so
+	// an ":0" request reports the real port.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprintf(errOut, "serve: listening on http://%s (streamable HTTP, bearer-token auth) — Ctrl-C to stop\n", ln.Addr())
+
 	errCh := make(chan error, 1)
-	go func() { errCh <- httpServer.ListenAndServe() }()
+	go func() { errCh <- httpServer.Serve(ln) }()
 
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
 			return 1
 		}
 		return 0
@@ -266,7 +284,7 @@ func runHTTP(ctx context.Context, server *mcp.Server, addr, token string) int {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
 			return 1
 		}
 		return 0

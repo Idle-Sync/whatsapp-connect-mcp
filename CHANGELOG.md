@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`serve` acknowledges a successful start** (#14). A start that went
+  well printed nothing — with http especially, a blank terminal was
+  indistinguishable from a hang, and people killed and re-ran a server
+  that was fine. The HTTP listener now binds synchronously and only
+  then announces `serve: listening on http://<addr>` (so the line is
+  truthful, and a port-in-use error can no longer race the shutdown
+  path and be swallowed); stdio prints `serve: ready on stdio`. Both
+  lines go to stderr, so stdio framing on stdout is untouched.
+
 - **`trust --add`/`--remove` apply to a running serve** (#11). The
   persistent trust list was read once at startup, so changing it
   required a restart — inconsistent with `trust --session`, which has
