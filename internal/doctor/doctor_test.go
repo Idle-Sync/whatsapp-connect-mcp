@@ -14,6 +14,7 @@ import (
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 )
 
 func openTestStore(t *testing.T, dir string) *store.Store {
@@ -286,6 +287,51 @@ func TestCheckVersionNon200IsOK(t *testing.T) {
 
 	if got.Status != StatusOK {
 		t.Fatalf("Status = %q, want %q for a non-200 response", got.Status, StatusOK)
+	}
+}
+
+func TestCheckVersionMismatchWarnsNamingBothVersions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+	}))
+	defer srv.Close()
+
+	old := version.Version
+	version.Version = "1.2.3"
+	t.Cleanup(func() { version.Version = old })
+
+	run := checkVersion(srv.Client(), srv.URL)
+	got := run(context.Background(), Env{})
+
+	if got.Status != StatusWarn {
+		t.Fatalf("Status = %q, want %q for an outdated build (finding: %+v)", got.Status, StatusWarn, got)
+	}
+	// The whole point of the warning is the mismatch itself: an agent or
+	// user reading the finding must see which version is running and which
+	// is available, not just "a newer version exists".
+	if !strings.Contains(got.Detail, "1.2.3") || !strings.Contains(got.Detail, "9.9.9") {
+		t.Fatalf("Detail = %q, want it to name both the running and latest versions", got.Detail)
+	}
+	if !strings.Contains(got.Fix, "Updating") {
+		t.Fatalf("Fix = %q, want it to point at the README's Updating section", got.Fix)
+	}
+}
+
+func TestCheckVersionMatchIsOK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.3"}`))
+	}))
+	defer srv.Close()
+
+	old := version.Version
+	version.Version = "1.2.3"
+	t.Cleanup(func() { version.Version = old })
+
+	run := checkVersion(srv.Client(), srv.URL)
+	got := run(context.Background(), Env{})
+
+	if got.Status != StatusOK {
+		t.Fatalf("Status = %q, want %q when running the latest release (finding: %+v)", got.Status, StatusOK, got)
 	}
 }
 

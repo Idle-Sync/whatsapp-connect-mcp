@@ -400,6 +400,40 @@ whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdi
 > your whole network, and if you must, put your own access control (a
 > reverse proxy, a VPN, a firewall rule) in front.
 
+## Updating
+
+Updating replaces the binary and nothing else: pairing, message history,
+the trust list, and injected client configs all live in the data directory
+and survive every update. Use the same method you installed with — each
+puts the new binary at the same path the old one occupied, so client
+configs keep working:
+
+```sh
+# macOS / Linux — the install script always fetches the latest release
+curl -fsSL https://raw.githubusercontent.com/idle-sync/whatsapp-connect-mcp/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/idle-sync/whatsapp-connect-mcp/main/scripts/install.ps1 | iex
+```
+
+```sh
+# npm global install
+npm update -g whatsapp-connect-mcp
+
+# npx without an install — @latest bypasses npx's cached copy
+npx whatsapp-connect-mcp@latest setup
+```
+
+Then restart what runs the binary: stdio clients pick the new version up
+when the MCP client next starts a session (restart the client app); with
+the http transport, restart the `serve` process or its service.
+
+You don't have to watch the releases page — `whatsapp-connect-mcp check`
+and the `doctor` MCP tool compare the running version against the latest
+release on every run, and warn with both versions named when they differ.
+
 ## Uninstall / reset
 
 - **`whatsapp-connect-mcp remove`** deletes the local WhatsApp session

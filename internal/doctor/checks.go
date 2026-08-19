@@ -239,11 +239,13 @@ func checkVersion(client *http.Client, url string) func(ctx context.Context, env
 		if latest == "" || latest == version.Version {
 			return Finding{Check: "version", Status: StatusOK, Detail: "running the latest version"}
 		}
+		// The mismatch itself is the finding: naming both versions lets an
+		// agent relay the exact gap instead of a vague "update available".
 		return Finding{
 			Check:  "version",
 			Status: StatusWarn,
-			Detail: "a newer version has been released",
-			Fix:    "download the latest release from the project's GitHub releases page",
+			Detail: fmt.Sprintf("running %s, but the latest release is %s", version.Version, latest),
+			Fix:    "update with the same method used to install — re-run the install script, `npm update -g whatsapp-connect-mcp`, or the GitHub releases page; see the README's Updating section",
 		}
 	}
 }

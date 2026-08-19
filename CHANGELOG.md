@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The version check names the mismatch.** When a newer release exists,
+  `check` and the `doctor` MCP tool now say which version is running and
+  which is latest — instead of a bare "a newer version has been
+  released" — and the fix line lists the actual update commands. The
+  README gained an Updating section: every install method updates in
+  place, and pairing, history, trust, and client configs are never
+  touched by an update.
+
 ## [0.1.3] - 2026-08-19
 
 ### Fixed
