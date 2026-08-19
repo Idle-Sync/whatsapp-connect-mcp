@@ -24,6 +24,12 @@ const (
 	defaultRatePerSeconds = 12
 )
 
+// DefaultHTTPPort is the port the http transport defaults to everywhere a
+// port is offered or assumed (setup's prompt, service install): outside the
+// common dev-server range, so a shared server on it is unlikely to collide
+// with anything.
+const DefaultHTTPPort = 2178
+
 // Config holds user-editable settings persisted in config.json.
 type Config struct {
 	TrustedJIDs    []string `json:"trusted_jids"`

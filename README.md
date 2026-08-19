@@ -77,9 +77,16 @@ connect at once.
 >
 > It acknowledges with `serve: listening on http://127.0.0.1:2178 …` and
 > stays in the foreground, so it dies with its terminal. To keep it alive
-> across logouts and reboots, use the service definitions in `packaging/`
-> — systemd for Linux, launchd for macOS — each with install commands in
-> its comments.
+> across logouts and reboots instead, install it as a background service
+> (launchd on macOS, a systemd user unit on Linux):
+>
+> ```sh
+> whatsapp-connect-mcp service install
+> ```
+>
+> `service uninstall` removes it; `service restart` restarts it after an
+> update. On a headless Linux box, add `loginctl enable-linger` so the
+> service outlives your login session.
 
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
@@ -387,6 +394,8 @@ whatsapp-connect-mcp status                  # pairing state, row counts, inject
 whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entries
 whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
+whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]
+                                             # manage a background serve --http service (macOS/Linux)
 ```
 
 > **`--http` requires a bearer token and a loopback Host.** On first use it
@@ -427,8 +436,16 @@ npx whatsapp-connect-mcp@latest setup
 ```
 
 Then restart what runs the binary: stdio clients pick the new version up
-when the MCP client next starts a session (restart the client app); with
-the http transport, restart the `serve` process or its service.
+when the MCP client next starts a session (restart the client app). With
+the http transport, restart `serve` — for a service installed with
+`service install`, that is:
+
+```sh
+whatsapp-connect-mcp service restart
+```
+
+A kept-alive service never re-execs on its own, so until it is restarted
+the old version keeps serving.
 
 You don't have to watch the releases page — `whatsapp-connect-mcp check`
 and the `doctor` MCP tool compare the running version against the latest

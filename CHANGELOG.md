@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`service install|uninstall|restart`** (#15). One command installs a
+  background service for the shared http server — a launchd user agent
+  on macOS, a systemd user unit on Linux — starts it, and keeps it
+  across reboots; `restart` picks up an updated binary, `uninstall`
+  removes it cleanly. The definition is rendered from the resolved
+  binary path with an explicit PATH (node's directory included for npm
+  installs), which kills the `env: node: No such file or directory`
+  crash-loop launchd's minimal default PATH causes, and for npm
+  installs the service execs the stable shim rather than the
+  version-suffixed cached binary that changes on every update. The
+  static templates under `packaging/` are gone — the subcommand is the
+  single source of the unit content.
+
 ### Changed
 
 - **The version check names the mismatch.** When a newer release exists,

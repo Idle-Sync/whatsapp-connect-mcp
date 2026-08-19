@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"github.com/mdp/qrterminal/v3"
+
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 )
 
 // ErrAborted is returned by Run whenever the flow ends without configuring
@@ -61,9 +63,8 @@ type Deps struct {
 }
 
 // defaultHTTPPort is the port the http transport prompt offers when the
-// user just presses enter: outside the common dev-server range, so a
-// shared server on it is unlikely to collide with anything.
-const defaultHTTPPort = 2178
+// user just presses enter.
+const defaultHTTPPort = config.DefaultHTTPPort
 
 // transport is the user's connection-mode choice.
 type transport struct {
