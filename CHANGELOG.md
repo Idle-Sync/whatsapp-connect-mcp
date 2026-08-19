@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-19
+
+The shared http server becomes a first-class way to run this: one command
+installs it as a background service that survives reboots and updates, and
+the doctor tells you precisely when you are behind.
 
 ### Added
 
