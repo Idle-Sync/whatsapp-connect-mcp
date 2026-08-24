@@ -3,12 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/mediapath"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
 func testMCPServer() *mcp.Server {
@@ -74,5 +80,29 @@ func TestRunStdioAnnouncesReady(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ready on stdio") {
 		t.Errorf("startup output %q does not announce stdio readiness", out.String())
+	}
+}
+
+// TestConnectWhenPairedCancelledWhileWaiting: an unpaired bridge plus a
+// cancelled context must return context.Canceled without any network
+// dial — the stdio path's clean-shutdown contract.
+func TestConnectWhenPairedCancelledWhileWaiting(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "messages.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	br, err := bridge.Open(ctx, dir, st, mediapath.Roots{})
+	if err != nil {
+		t.Fatalf("bridge.Open: %v", err)
+	}
+	defer func() { _ = br.Close() }()
+
+	cancel()
+	var buf bytes.Buffer
+	if err := connectWhenPaired(ctx, br, &buf); !errors.Is(err, context.Canceled) {
+		t.Fatalf("connectWhenPaired = %v, want context.Canceled", err)
 	}
 }

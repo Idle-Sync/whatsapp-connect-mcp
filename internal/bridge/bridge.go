@@ -365,13 +365,27 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 
 // Connect brings an already-paired client online. The inbound event handler
 // is already registered (Open does that once, up front), so calling
-// Connect more than once cannot cause events to be dispatched twice.
+// Connect more than once cannot cause events to be dispatched twice. An
+// already-connected client is success, not an error: with in-process
+// pairing (the dashboard) and the background pairing wait both able to
+// connect, the second caller must be a harmless no-op.
 func (b *Bridge) Connect(ctx context.Context) error {
 	b.setState(stConnecting)
-	if err := b.wa().ConnectContext(ctx); err != nil {
-		return b.waErr("connect", err)
+	err := b.wa().ConnectContext(ctx)
+	if errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+		b.setState(stConnected) // no Connected event will re-fire for us
+		return nil
 	}
-	return nil
+	return b.connectErr(err)
+}
+
+// connectErr maps a ConnectContext error for Connect and its tests:
+// already-connected is success, anything else classifies through waErr.
+func (b *Bridge) connectErr(err error) error {
+	if err == nil || errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+		return nil
+	}
+	return b.waErr("connect", err)
 }
 
 // Blocklist returns the JIDs the paired account has blocked, fetched live.

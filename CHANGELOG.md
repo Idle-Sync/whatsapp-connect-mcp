@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `status` now shows connection state, last event time, reconnect count,
   and ingest-failure count.
 
+### Changed
+
+- `serve --http` now starts its listener before waiting for pairing, so
+  the server is reachable while unpaired: store-backed read tools serve
+  local data, and live/send tools report "no longer paired" until pairing
+  completes. stdio serve still waits for pairing before starting.
+
 ### Fixed
 
 - A WhatsApp-side logout no longer leaves a running server permanently
