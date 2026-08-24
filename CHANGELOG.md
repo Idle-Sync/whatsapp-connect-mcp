@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- New `backup` command: writes a consistent snapshot of the message
+  database to `<data-dir>/backups/` (or `--dest`), safe to run while the
+  server is up. Message history is the one thing re-pairing cannot
+  recover.
+- `service install|uninstall|restart` now works on Windows, using a Task
+  Scheduler logon task. The server runs as a minimized console window;
+  closing it stops the server. Creating the task may require an
+  Administrator terminal.
+- Connection-health diagnostics: dropped connections, keepalive timeouts,
+  refused connects, temporary bans, and an outdated client now each print
+  one clear line to the server log instead of passing silently.
+- Failed writes of incoming events to the message store are now counted
+  and reported (previously silent).
+- `check` (and the doctor tool) gains an `ingest` finding that fails when
+  incoming events are not reaching the message store, and the session
+  finding now says when the server was logged out by WhatsApp mid-run.
+- `status` now shows connection state, last event time, reconnect count,
+  and ingest-failure count.
+
+### Fixed
+
+- A WhatsApp-side logout no longer leaves a running server permanently
+  broken: the server now says clearly that it was logged out, waits, and
+  reconnects on its own as soon as the device is paired again — no restart
+  needed. Tool calls while unpaired fail with "no longer paired — run
+  setup" instead of a generic connection error.
+- A session-store failure while waiting for pairing (at startup, or after
+  a logout) is no longer mistaken for a clean shutdown: it now prints a
+  diagnostic and exits non-zero at startup, so a service manager restarts
+  the server, and after a logout it says the re-check failed instead of
+  going silent.
+
 ## [0.2.0] - 2026-08-19
 
 The shared http server becomes a first-class way to run this: one command

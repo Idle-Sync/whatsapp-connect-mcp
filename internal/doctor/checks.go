@@ -27,6 +27,7 @@ func registry() []Check {
 	return []Check{
 		{Name: "session", Run: checkSession},
 		{Name: "events", Run: checkEventFlow},
+		{Name: "ingest", Run: checkIngest},
 		{Name: "database", Run: checkDatabase},
 		{Name: "clients", Run: checkClients},
 		{Name: "permissions", Run: checkPermissions},
@@ -43,10 +44,14 @@ func registry() []Check {
 // too.
 func checkSession(_ context.Context, env Env) Finding {
 	if env.NeedsPairing == nil || env.NeedsPairing() {
+		detail := "no paired WhatsApp session found"
+		if env.LastDisconnect != nil && env.LastDisconnect() == "logged_out" {
+			detail = "WhatsApp logged this install out — it is no longer paired"
+		}
 		return Finding{
 			Check:  "session",
 			Status: StatusFail,
-			Detail: "no paired WhatsApp session found",
+			Detail: detail,
 			Fix:    "run `whatsapp-connect-mcp setup` to pair a device",
 		}
 	}
@@ -102,6 +107,25 @@ func checkEventFlow(_ context.Context, env Env) Finding {
 		}
 	}
 	return Finding{Check: "events", Status: StatusOK, Detail: "events are flowing"}
+}
+
+// checkIngest reports whether inbound events are actually landing in the
+// message store. The failure mode it exists for: a full disk or corrupted
+// messages.db makes every write fail while the connection stays green —
+// messages are silently lost with every other check passing.
+func checkIngest(_ context.Context, env Env) Finding {
+	if env.IngestErrors == nil {
+		return Finding{Check: "ingest", Status: StatusOK, Detail: "ingest failures not observable here"}
+	}
+	if n := env.IngestErrors(); n > 0 {
+		return Finding{
+			Check:  "ingest",
+			Status: StatusFail,
+			Detail: fmt.Sprintf("%d incoming events failed to write to the message store since start", n),
+			Fix:    "check free disk space and the database finding below; restart serve after resolving",
+		}
+	}
+	return Finding{Check: "ingest", Status: StatusOK, Detail: "incoming events are writing to the message store"}
 }
 
 // checkDatabase runs the message store's integrity check.

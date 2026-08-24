@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
@@ -67,14 +68,16 @@ func runCheck(args []string) int {
 	}
 
 	env := doctor.Env{
-		DataDir:      dataDir,
-		BinaryPath:   binaryPath,
-		Home:         home,
-		Store:        st,
-		NeedsPairing: br.NeedsPairing,
-		LoggedIn:     br.LoggedIn,
-		LastEventAt:  br.LastEventAt,
-		OpenedAt:     br.OpenedAt,
+		DataDir:        dataDir,
+		BinaryPath:     binaryPath,
+		Home:           home,
+		Store:          st,
+		NeedsPairing:   br.NeedsPairing,
+		LoggedIn:       br.LoggedIn,
+		LastEventAt:    br.LastEventAt,
+		OpenedAt:       br.OpenedAt,
+		IngestErrors:   br.IngestErrors,
+		LastDisconnect: br.LastDisconnect,
 	}
 	findings := doctor.Run(context.Background(), env)
 
@@ -118,6 +121,17 @@ func runStatus(args []string) int {
 	defer func() { _ = br.Close() }()
 
 	fmt.Printf("paired: %v\n", !br.NeedsPairing())
+
+	status := br.Status()
+	fmt.Printf("state: %s (since %s)\n", status.State, status.Since.UTC().Format(time.RFC3339))
+	if !status.LastEventAt.IsZero() {
+		fmt.Printf("last_event: %s\n", status.LastEventAt.UTC().Format(time.RFC3339))
+	}
+	fmt.Printf("reconnects: %d\n", status.Reconnects)
+	fmt.Printf("ingest_errors: %d\n", status.IngestErrors)
+	if status.LastDisconnect != "" {
+		fmt.Printf("last_disconnect: %s\n", status.LastDisconnect)
+	}
 
 	counts, err := st.Counts()
 	if err != nil {

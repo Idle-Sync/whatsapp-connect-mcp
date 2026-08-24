@@ -17,6 +17,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -43,7 +44,6 @@ type Ingest interface {
 // and an Ingest sink for decoded events. Zero value is not usable;
 // construct with Open.
 type Bridge struct {
-	client    *whatsmeow.Client
 	container *sqlstore.Container
 	store     Ingest
 	dataDir   string
@@ -80,13 +80,41 @@ type Bridge struct {
 	// results.
 	diag io.Writer
 
-	handlerOnce sync.Once
-	// handlerRegistrations counts how many times ensureHandlerRegistered
-	// actually registered the event handler (as opposed to how many times
-	// it was called). It exists so tests can prove the registration is a
-	// true no-op on repeat calls, which is what guarantees a second
-	// Connect/PairQR can never double-dispatch events.
+	// openCtx is the context Open was called with — process-scoped by
+	// contract (serve's and setup's signal contexts) — and governs the
+	// pairing-recovery goroutine a logout re-initialization starts.
+	openCtx context.Context
+
+	// pairPoll is how often WaitForPairing re-reads the session store for
+	// an externally completed pairing. A field so tests don't sleep 15s.
+	pairPoll time.Duration
+
+	// clientMu guards client and handlerRegistrations. The client is
+	// swapped exactly twice in a Bridge's life at most: once at Open and
+	// once per logout re-initialization; every other access is a read.
+	clientMu sync.RWMutex
+	client   *whatsmeow.Client
+	// handlerRegistrations counts how many times setClient has built a
+	// client and registered the event handler on it. It exists so tests can
+	// prove every client setClient ever produces gets the handler exactly
+	// once, which is what guarantees no call sequence can double-dispatch
+	// events.
 	handlerRegistrations int
+
+	// Connection-health tracking behind Status(): the lifecycle state (one
+	// of the connState constants), when it was entered, how many times the
+	// session has reconnected after its first Connected, how many inbound
+	// events failed to write to the store, and why the connection was last
+	// lost. All fed by handleEvent; read by Status/IngestErrors/
+	// LastDisconnect.
+	state          atomic.Int32
+	stateSince     atomic.Int64
+	everConnected  atomic.Bool
+	reconnects     atomic.Uint64
+	ingestErrors   atomic.Uint64
+	ingestErrOnce  sync.Once
+	disconnectMu   sync.Mutex
+	lastDisconnect string
 }
 
 // errInvalidRecipient is returned whenever a caller-supplied JID string
@@ -98,6 +126,10 @@ var errInvalidRecipient = errors.New("invalid recipient")
 // <dataDir>/session.db and constructs a Bridge that decodes inbound events
 // into st. It does not connect to WhatsApp; call Connect or PairQR for
 // that.
+//
+// ctx must be process-scoped (serve's and setup's signal context, not a
+// request-scoped one): a mid-run logout starts a recovery goroutine that
+// runs for the rest of ctx's lifetime, waiting for a new pairing.
 //
 // roots confines which local files outbound media sends may read. Callers
 // that never send (setup, status, doctor) should pass the zero value, which
@@ -119,35 +151,78 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 		return nil, fmt.Errorf("load device: %w", err)
 	}
 
-	client := whatsmeow.NewClient(device, waLog.Noop)
 	b := &Bridge{
-		client: client, container: container, store: st, dataDir: dataDir,
+		container: container, store: st, dataDir: dataDir,
 		mediaRoots: roots, openedAt: time.Now(), catchUpGrace: defaultCatchUpGrace,
-		diag: os.Stderr,
+		diag: os.Stderr, openCtx: ctx, pairPoll: pairPollInterval,
 	}
-	// Registered here, once, rather than in Connect: PairQR also needs
-	// inbound events flowing (history sync can start arriving mid-pairing),
-	// and registering in exactly one place removes any chance of a second
-	// Connect call adding a duplicate handler.
-	b.ensureHandlerRegistered()
+	b.setClient(device)
+	if device.ID == nil {
+		b.setState(stUnpaired)
+	} else {
+		b.setState(stOffline)
+	}
 	return b, nil
 }
 
-// ensureHandlerRegistered registers handleEvent with the whatsmeow client.
-// It is safe to call more than once (from Open, Connect, and PairQR): only
-// the first call actually registers anything, so the client's event
-// dispatch can never end up with two copies of the same handler.
-func (b *Bridge) ensureHandlerRegistered() {
-	b.handlerOnce.Do(func() {
-		b.client.AddEventHandler(b.handleEvent)
-		b.handlerRegistrations++
-	})
+// setClient builds a whatsmeow client for device, registers handleEvent on
+// it, and makes it the Bridge's current client. It is the only way a
+// client comes to exist on a Bridge, which is what guarantees every client
+// has the handler registered exactly once — no call sequence of Connect
+// and PairQR can ever double-dispatch events.
+func (b *Bridge) setClient(device *waStore.Device) {
+	c := whatsmeow.NewClient(device, waLog.Noop)
+	c.AddEventHandler(b.handleEvent)
+
+	b.clientMu.Lock()
+	b.client = c
+	b.handlerRegistrations++
+	b.clientMu.Unlock()
+}
+
+// wa returns the current whatsmeow client. Callers use it for one
+// operation and take it fresh next time — retaining it would pin a client
+// a logout re-initialization has already replaced.
+func (b *Bridge) wa() *whatsmeow.Client {
+	b.clientMu.RLock()
+	defer b.clientMu.RUnlock()
+	return b.client
+}
+
+// reinitAfterLogout swaps in a fresh client for the (now empty) device
+// store and starts waiting for a new pairing, so a serve that was logged
+// out heals the moment the user re-pairs — no restart.
+func (b *Bridge) reinitAfterLogout() {
+	device, err := b.container.GetFirstDevice(b.openCtx)
+	if err != nil {
+		_, _ = fmt.Fprintln(b.diag,
+			"whatsapp: could not reset the session after the logout — restart the server, then run `whatsapp-connect-mcp setup`")
+		return
+	}
+	b.setClient(device)
+	b.setState(stUnpaired)
+	go b.recoverPairing()
+}
+
+// recoverPairing waits (for the process lifetime, if need be) for a new
+// pairing to appear, then reconnects. Runs only after a logout re-init.
+func (b *Bridge) recoverPairing() {
+	if err := b.WaitForPairing(b.openCtx); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			_, _ = fmt.Fprintln(b.diag,
+				"whatsapp: could not re-check pairing after the logout — restart the server, then run `whatsapp-connect-mcp setup`")
+		}
+		return
+	}
+	if err := b.Connect(b.openCtx); err != nil {
+		_, _ = fmt.Fprintf(b.diag, "whatsapp: reconnect after re-pairing failed: %v\n", err)
+	}
 }
 
 // Close disconnects the client, if connected, and closes the underlying
 // session database.
 func (b *Bridge) Close() error {
-	b.client.Disconnect()
+	b.wa().Disconnect()
 	if err := b.container.Close(); err != nil {
 		return fmt.Errorf("close session store: %w", err)
 	}
@@ -159,6 +234,10 @@ func (b *Bridge) Close() error {
 // offline queue normally drains (and the marker arrives) within a few
 // seconds of connecting.
 const defaultCatchUpGrace = 15 * time.Second
+
+// pairPollInterval is the default pairPoll: how often WaitForPairing
+// re-reads the session store while waiting for pairing to complete.
+const pairPollInterval = 15 * time.Second
 
 // WaitForCatchUp blocks until the offline queue WhatsApp redelivers after
 // a (re)connect has drained — signalled by OfflineSyncCompleted — so a
@@ -207,13 +286,51 @@ func (b *Bridge) OpenedAt() time.Time {
 // NeedsPairing reports whether the session store has no paired device yet,
 // i.e. PairQR must be run before Connect will do anything useful.
 func (b *Bridge) NeedsPairing() bool {
-	return b.client.Store.ID == nil
+	return b.wa().Store.ID == nil
 }
 
 // LoggedIn reports whether the client is currently connected and
 // authenticated with WhatsApp.
 func (b *Bridge) LoggedIn() bool {
-	return b.client.IsLoggedIn()
+	return b.wa().IsLoggedIn()
+}
+
+// ReloadDevice re-reads the session store's device identity. When a paired
+// device now exists while the current client is unpaired — pairing
+// completed in another process — the bridge swaps to a fresh client for
+// it. A no-op when already paired or still unpaired.
+func (b *Bridge) ReloadDevice(ctx context.Context) error {
+	if !b.NeedsPairing() {
+		return nil
+	}
+	device, err := b.container.GetFirstDevice(ctx)
+	if err != nil {
+		return fmt.Errorf("reload device: %w", err)
+	}
+	if device.ID == nil {
+		return nil
+	}
+	b.setClient(device)
+	b.setState(stOffline)
+	return nil
+}
+
+// WaitForPairing blocks until the session is paired, re-checking the
+// session store every pairPoll — the one pairing-wait mechanism, used by
+// serve at startup and by the logout recovery goroutine. Returns ctx.Err()
+// on cancellation and nil once paired (immediately, if already paired).
+func (b *Bridge) WaitForPairing(ctx context.Context) error {
+	for b.NeedsPairing() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(b.pairPoll):
+		}
+		if err := b.ReloadDevice(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PairQR runs the QR-code pairing flow: it connects the (unpaired) client
@@ -222,14 +339,15 @@ func (b *Bridge) LoggedIn() bool {
 // cancelled. Must be called before Connect, and only when NeedsPairing is
 // true.
 func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
-	b.ensureHandlerRegistered()
+	b.setState(stConnecting)
+	cl := b.wa()
 
-	qrChan, err := b.client.GetQRChannel(ctx)
+	qrChan, err := cl.GetQRChannel(ctx)
 	if err != nil {
-		return waErr("start pairing", err)
+		return b.waErr("start pairing", err)
 	}
-	if err := b.client.ConnectContext(ctx); err != nil {
-		return waErr("connect", err)
+	if err := cl.ConnectContext(ctx); err != nil {
+		return b.waErr("connect", err)
 	}
 
 	for item := range qrChan {
@@ -249,18 +367,18 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 // is already registered (Open does that once, up front), so calling
 // Connect more than once cannot cause events to be dispatched twice.
 func (b *Bridge) Connect(ctx context.Context) error {
-	b.ensureHandlerRegistered()
-	if err := b.client.ConnectContext(ctx); err != nil {
-		return waErr("connect", err)
+	b.setState(stConnecting)
+	if err := b.wa().ConnectContext(ctx); err != nil {
+		return b.waErr("connect", err)
 	}
 	return nil
 }
 
 // Blocklist returns the JIDs the paired account has blocked, fetched live.
 func (b *Bridge) Blocklist(ctx context.Context) ([]string, error) {
-	bl, err := b.client.GetBlocklist(ctx)
+	bl, err := b.wa().GetBlocklist(ctx)
 	if err != nil {
-		return nil, waErr("fetch block list", err)
+		return nil, b.waErr("fetch block list", err)
 	}
 
 	jids := make([]string, len(bl.JIDs))
@@ -284,9 +402,9 @@ func (b *Bridge) GroupInfo(ctx context.Context, groupJID string) (subject, descr
 		return "", "", "", nil, err
 	}
 
-	info, err := b.client.GetGroupInfo(ctx, jid)
+	info, err := b.wa().GetGroupInfo(ctx, jid)
 	if err != nil {
-		return "", "", "", nil, waErr("fetch group info", err)
+		return "", "", "", nil, b.waErr("fetch group info", err)
 	}
 
 	for _, p := range info.Participants {
@@ -305,9 +423,9 @@ func (b *Bridge) GroupParticipants(ctx context.Context, groupJID string) ([]stri
 		return nil, err
 	}
 
-	info, err := b.client.GetGroupInfo(ctx, jid)
+	info, err := b.wa().GetGroupInfo(ctx, jid)
 	if err != nil {
-		return nil, waErr("fetch group participants", err)
+		return nil, b.waErr("fetch group participants", err)
 	}
 
 	participants := make([]string, len(info.Participants))
@@ -347,8 +465,9 @@ func (b *Bridge) RequestOlderMessages(
 		ID:            msgID,
 		Timestamp:     time.Unix(ts, 0),
 	}
-	if _, err := b.client.SendPeerMessage(ctx, b.client.BuildHistorySyncRequest(info, count)); err != nil {
-		return waErr("request older messages", err)
+	cl := b.wa()
+	if _, err := cl.SendPeerMessage(ctx, cl.BuildHistorySyncRequest(info, count)); err != nil {
+		return b.waErr("request older messages", err)
 	}
 	return nil
 }
@@ -375,7 +494,7 @@ func (b *Bridge) DownloadMedia(ctx context.Context, ref []byte, destDir, filenam
 
 	data, err := b.downloadMessage(ctx, &msg)
 	if err != nil {
-		return "", waErr("download media", err)
+		return "", b.waErr("download media", err)
 	}
 
 	if err := os.MkdirAll(destDir, 0o700); err != nil {
@@ -410,19 +529,20 @@ func sanitizeMediaFilename(filename string) (string, error) {
 // requires the specific attachment type rather than the whole message
 // (its deprecated DownloadAny wrapper does this same dispatch internally).
 func (b *Bridge) downloadMessage(ctx context.Context, msg *waE2E.Message) ([]byte, error) {
+	cl := b.wa()
 	switch {
 	case msg.GetImageMessage() != nil:
-		return b.client.Download(ctx, msg.GetImageMessage())
+		return cl.Download(ctx, msg.GetImageMessage())
 	case msg.GetVideoMessage() != nil:
-		return b.client.Download(ctx, msg.GetVideoMessage())
+		return cl.Download(ctx, msg.GetVideoMessage())
 	case msg.GetPtvMessage() != nil:
-		return b.client.Download(ctx, msg.GetPtvMessage())
+		return cl.Download(ctx, msg.GetPtvMessage())
 	case msg.GetAudioMessage() != nil:
-		return b.client.Download(ctx, msg.GetAudioMessage())
+		return cl.Download(ctx, msg.GetAudioMessage())
 	case msg.GetDocumentMessage() != nil:
-		return b.client.Download(ctx, msg.GetDocumentMessage())
+		return cl.Download(ctx, msg.GetDocumentMessage())
 	case msg.GetStickerMessage() != nil:
-		return b.client.Download(ctx, msg.GetStickerMessage())
+		return cl.Download(ctx, msg.GetStickerMessage())
 	default:
 		return nil, whatsmeow.ErrNothingDownloadableFound
 	}
@@ -438,11 +558,22 @@ func parseRecipient(s string) (types.JID, error) {
 	return jid, nil
 }
 
-// waErr classifies an error from a whatsmeow client call into a
+// waErr classifies an error from a whatsmeow call into a category-only
+// message. It upgrades the generic not-connected category to an explicit
+// "no longer paired" one when this bridge has no device identity — the
+// state a mid-run logout leaves behind, where "reconnect" is not the fix.
+func (b *Bridge) waErr(op string, err error) error {
+	if (errors.Is(err, whatsmeow.ErrNotConnected) || errors.Is(err, whatsmeow.ErrNotLoggedIn)) && b.NeedsPairing() {
+		return fmt.Errorf("%s: this install is no longer paired — run `whatsapp-connect-mcp setup` to pair again", op)
+	}
+	return waErrCategory(op, err)
+}
+
+// waErrCategory classifies an error from a whatsmeow client call into a
 // category-only message safe to surface through gate and MCP tool results.
 // The underlying error text is never included: whatsmeow's own error
 // types can embed raw protocol nodes carrying JIDs or message content.
-func waErr(op string, err error) error {
+func waErrCategory(op string, err error) error {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%s: timed out", op)

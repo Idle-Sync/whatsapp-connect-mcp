@@ -60,6 +60,8 @@ func Install(goos string, cfg Config, run Runner, out io.Writer) error {
 		return installDarwin(cfg, run, out)
 	case "linux":
 		return installLinux(cfg, run, out)
+	case "windows":
+		return installWindows(cfg, run, out)
 	default:
 		return unsupported(goos)
 	}
@@ -73,6 +75,8 @@ func Uninstall(goos string, cfg Config, run Runner, out io.Writer) error {
 		return uninstallDarwin(cfg, run, out)
 	case "linux":
 		return uninstallLinux(cfg, run, out)
+	case "windows":
+		return uninstallWindows(cfg, run, out)
 	default:
 		return unsupported(goos)
 	}
@@ -91,6 +95,13 @@ func Restart(goos string, cfg Config, run Runner, out io.Writer) error {
 		return nil
 	case "linux":
 		if err := run("systemctl", "--user", "restart", UnitName); err != nil {
+			return fmt.Errorf("restart service: %w", err)
+		}
+		_, _ = fmt.Fprintln(out, "service restarted")
+		return nil
+	case "windows":
+		_ = run("schtasks", "/End", "/TN", UnitName) // best-effort: may not be running
+		if err := run("schtasks", "/Run", "/TN", UnitName); err != nil {
 			return fmt.Errorf("restart service: %w", err)
 		}
 		_, _ = fmt.Fprintln(out, "service restarted")
@@ -269,6 +280,45 @@ func uninstallLinux(cfg Config, run Runner, out io.Writer) error {
 		return err
 	}
 	_ = run("systemctl", "--user", "daemon-reload")
+	return nil
+}
+
+// --- Windows (Task Scheduler) ---
+//
+// A schtasks ONLOGON task, not a native Windows service: a service runs as
+// LocalSystem (wrong data directory) or needs the user's password, and S4U
+// tasks don't reliably load the user profile os.UserConfigDir depends on.
+// The task launches the server as a MINIMIZED console window in the user's
+// session — visible in the taskbar, honest about running, closable to stop.
+// Known limits, documented in the README: starts at logon (not boot), no
+// automatic restart on crash (serve's unpaired state waits idle rather
+// than exiting, so the common failure mode never exits anyway), and task
+// creation may require an elevated (Administrator) terminal.
+
+func installWindows(cfg Config, run Runner, out io.Writer) error {
+	action := fmt.Sprintf(`cmd /c start "" /min "%s" serve --http %s`, cfg.BinaryPath, cfg.HTTPAddr)
+	if err := run("schtasks", "/Create", "/TN", UnitName, "/TR", action,
+		"/SC", "ONLOGON", "/RL", "LIMITED", "/F"); err != nil {
+		return fmt.Errorf("create scheduled task (if access was denied, re-run from an Administrator terminal): %w", err)
+	}
+	if err := run("schtasks", "/Run", "/TN", UnitName); err != nil {
+		return fmt.Errorf("start scheduled task: %w", err)
+	}
+	_, _ = fmt.Fprintf(out, "scheduled task installed and started: %s\n", UnitName)
+	_, _ = fmt.Fprintln(out, "runs at logon as a minimized console window; closing that window stops the server")
+	return nil
+}
+
+func uninstallWindows(_ Config, run Runner, out io.Writer) error {
+	if err := run("schtasks", "/Query", "/TN", UnitName); err != nil {
+		_, _ = fmt.Fprintln(out, "no service installed")
+		return nil
+	}
+	_ = run("schtasks", "/End", "/TN", UnitName) // best-effort: may not be running
+	if err := run("schtasks", "/Delete", "/TN", UnitName, "/F"); err != nil {
+		return fmt.Errorf("remove scheduled task: %w", err)
+	}
+	_, _ = fmt.Fprintf(out, "scheduled task removed: %s\n", UnitName)
 	return nil
 }
 

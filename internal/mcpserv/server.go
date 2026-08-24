@@ -23,6 +23,13 @@ type DoctorEnv struct {
 	// liveness) check; nil skips it.
 	LastEventAt func() time.Time
 	OpenedAt    func() time.Time
+	// IngestErrors reports how many inbound WhatsApp events failed to
+	// write to the message store since the server started; nil skips the
+	// ingest check. LastDisconnect is the category of the most recent
+	// involuntary disconnect ("" if none); checkSession uses it to name a
+	// mid-run logout. Both are *bridge.Bridge methods of those names.
+	IngestErrors   func() uint64
+	LastDisconnect func() string
 }
 
 // Store is the read query API this package needs. It mirrors *store.Store's

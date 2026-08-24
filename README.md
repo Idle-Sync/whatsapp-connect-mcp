@@ -78,7 +78,8 @@ connect at once.
 > It acknowledges with `serve: listening on http://127.0.0.1:2178 …` and
 > stays in the foreground, so it dies with its terminal. To keep it alive
 > across logouts and reboots instead, install it as a background service
-> (launchd on macOS, a systemd user unit on Linux):
+> (launchd on macOS, a systemd user unit on Linux, or a Task Scheduler logon
+> task on Windows):
 >
 > ```sh
 > whatsapp-connect-mcp service install
@@ -86,7 +87,12 @@ connect at once.
 >
 > `service uninstall` removes it; `service restart` restarts it after an
 > update. On a headless Linux box, add `loginctl enable-linger` so the
-> service outlives your login session.
+> service outlives your login session. On Windows, the service runs as a
+> minimized console window that appears at user logon (not boot); closing the
+> window stops the server. There is no automatic restart on crash (serve's
+> unpaired state waits idle rather than exiting, so the common failure mode
+> never exits anyway). Creating the task may require an elevated
+> (Administrator) terminal.
 
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
@@ -386,6 +392,25 @@ is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
 client's name, never its path on disk.
 
+## Backing up
+
+```sh
+whatsapp-connect-mcp backup [--dest path]
+```
+
+Writes a consistent snapshot of the message database (`messages.db`) to
+`<data-dir>/backups/messages-<timestamp>.db` (or a custom path via `--dest`).
+The backup is a standalone, fully-usable SQLite database — not a copy of
+sessions or settings, just messages. Unlike a phone backup, a `backup`
+snapshot is safe to take while `serve` is running; SQLite's WAL mode and
+busy timeout guarantee consistency.
+
+Message history is the one thing that cannot be recovered any other way — a
+session can be re-paired if needed, but messages fetched from the phone stay
+on the phone only as long as the phone remembers them, which is typically
+a few months. A regular automated backup (via `cron`, a systemd timer, or the
+Task Scheduler on Windows) is the simplest insurance against losing them.
+
 ## Other commands
 
 ```sh
@@ -395,7 +420,7 @@ whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entri
 whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]
-                                             # manage a background serve --http service (macOS/Linux)
+                                             # manage a background serve --http service (macOS/Linux/Windows)
 ```
 
 > **`--http` requires a bearer token and a loopback Host.** On first use it

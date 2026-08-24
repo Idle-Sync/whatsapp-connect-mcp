@@ -99,8 +99,8 @@ func (b *Bridge) deliverBlocklist(ctx context.Context, d gate.Delivery, action e
 	if err != nil {
 		return "", err
 	}
-	if _, err := b.client.UpdateBlocklist(ctx, jid, action); err != nil {
-		return "", waErr("update block list", err)
+	if _, err := b.wa().UpdateBlocklist(ctx, jid, action); err != nil {
+		return "", b.waErr("update block list", err)
 	}
 	return "", nil
 }
@@ -122,10 +122,11 @@ func (b *Bridge) deliverPoll(ctx context.Context, d gate.Delivery) (string, erro
 		selectable = 1
 	}
 
-	msg := b.client.BuildPollCreation(d.Text, d.Options, selectable)
-	resp, err := b.client.SendMessage(ctx, to, msg)
+	cl := b.wa()
+	msg := cl.BuildPollCreation(d.Text, d.Options, selectable)
+	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("create poll", err)
+		return "", b.waErr("create poll", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -144,9 +145,10 @@ func (b *Bridge) deliverEdit(ctx context.Context, d gate.Delivery) (string, erro
 	}
 
 	newContent := &waE2E.Message{Conversation: proto.String(d.Text)}
-	resp, err := b.client.SendMessage(ctx, to, b.client.BuildEdit(to, d.QuotedID, newContent))
+	cl := b.wa()
+	resp, err := cl.SendMessage(ctx, to, cl.BuildEdit(to, d.QuotedID, newContent))
 	if err != nil {
-		return "", waErr("edit message", err)
+		return "", b.waErr("edit message", err)
 	}
 	return resp.ID, nil
 }
@@ -173,9 +175,10 @@ func (b *Bridge) deliverRevoke(ctx context.Context, d gate.Delivery) (string, er
 		}
 	}
 
-	resp, err := b.client.SendMessage(ctx, to, b.client.BuildRevoke(to, sender, d.QuotedID))
+	cl := b.wa()
+	resp, err := cl.SendMessage(ctx, to, cl.BuildRevoke(to, sender, d.QuotedID))
 	if err != nil {
-		return "", waErr("delete message", err)
+		return "", b.waErr("delete message", err)
 	}
 	return resp.ID, nil
 }
@@ -202,9 +205,9 @@ func (b *Bridge) deliverText(ctx context.Context, d gate.Delivery) (string, erro
 		msg.Conversation = proto.String(d.Text)
 	}
 
-	resp, err := b.client.SendMessage(ctx, to, msg)
+	resp, err := b.wa().SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send message", err)
+		return "", b.waErr("send message", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -305,10 +308,11 @@ func (b *Bridge) deliverReaction(ctx context.Context, d gate.Delivery) (string, 
 		return "", err
 	}
 
-	msg := b.client.BuildReaction(to, author, d.QuotedID, d.Text)
-	resp, err := b.client.SendMessage(ctx, to, msg)
+	cl := b.wa()
+	msg := cl.BuildReaction(to, author, d.QuotedID, d.Text)
+	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send reaction", err)
+		return "", b.waErr("send reaction", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -331,8 +335,8 @@ func (b *Bridge) deliverRead(ctx context.Context, d gate.Delivery) (string, erro
 	}
 
 	now := time.Now()
-	if err := b.client.MarkRead(ctx, d.MessageIDs, now, to, sender); err != nil {
-		return "", waErr("mark read", err)
+	if err := b.wa().MarkRead(ctx, d.MessageIDs, now, to, sender); err != nil {
+		return "", b.waErr("mark read", err)
 	}
 	if err := b.store.MarkRead(d.To, d.MessageIDs, now.Unix()); err != nil {
 		return "", fmt.Errorf("update local read state: %w", err)
@@ -351,7 +355,7 @@ func (b *Bridge) deliverRead(ctx context.Context, d gate.Delivery) (string, erro
 // stores nothing.
 func (b *Bridge) recordOutbound(to types.JID, id string, ts time.Time, msg *waE2E.Message) {
 	sender := types.EmptyJID
-	if own := b.client.Store.ID; own != nil {
+	if own := b.wa().Store.ID; own != nil {
 		sender = own.ToNonAD()
 	}
 	b.ingestMessage(&events.Message{
@@ -375,15 +379,16 @@ func (b *Bridge) uploadAndSend(
 	ctx context.Context, to types.JID, mediaType whatsmeow.MediaType, data []byte,
 	build func(whatsmeow.UploadResponse) *waE2E.Message,
 ) (string, error) {
-	up, err := b.client.Upload(ctx, data, mediaType)
+	cl := b.wa()
+	up, err := cl.Upload(ctx, data, mediaType)
 	if err != nil {
-		return "", waErr("upload media", err)
+		return "", b.waErr("upload media", err)
 	}
 
 	msg := build(up)
-	resp, err := b.client.SendMessage(ctx, to, msg)
+	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send media", err)
+		return "", b.waErr("send media", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil

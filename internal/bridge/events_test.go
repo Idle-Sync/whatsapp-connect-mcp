@@ -263,6 +263,10 @@ type fakeIngest struct {
 	reads       []fakeReadCall
 	calls       []fakeCallCall
 	lidMappings []fakeLIDMappingCall
+
+	// failWith, when set, is returned by every Ingest method, simulating a
+	// persistently failing store (disk full, corruption).
+	failWith error
 }
 
 type fakeLIDMappingCall struct {
@@ -294,32 +298,32 @@ type fakeCallCall struct {
 
 func (f *fakeIngest) UpsertChat(jid, name string, isGroup bool, lastMessageAt int64) error {
 	f.chats = append(f.chats, fakeChatCall{jid, name, isGroup, lastMessageAt})
-	return nil
+	return f.failWith
 }
 
 func (f *fakeIngest) UpsertMessage(m store.Message) error {
 	f.messages = append(f.messages, m)
-	return nil
+	return f.failWith
 }
 
 func (f *fakeIngest) UpsertContact(jid, phone, pushName, fullName, businessName string) error {
 	f.contacts = append(f.contacts, fakeContactCall{jid, phone, pushName, fullName, businessName})
-	return nil
+	return f.failWith
 }
 
 func (f *fakeIngest) MarkRead(chatJID string, ids []string, readAt int64) error {
 	f.reads = append(f.reads, fakeReadCall{chatJID, ids, readAt})
-	return nil
+	return f.failWith
 }
 
 func (f *fakeIngest) UpsertLIDMapping(lid, pn string) error {
 	f.lidMappings = append(f.lidMappings, fakeLIDMappingCall{lid, pn})
-	return nil
+	return f.failWith
 }
 
 func (f *fakeIngest) InsertCall(id, peerJID string, ts int64, direction, status string, isVideo bool) error {
 	f.calls = append(f.calls, fakeCallCall{id, peerJID, ts, direction, status, isVideo})
-	return nil
+	return f.failWith
 }
 
 // newTestBridge opens a Bridge against a temp dataDir with fake as the

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
@@ -27,26 +28,26 @@ func TestAnnouncedDeviceIdentity(t *testing.T) {
 	}
 }
 
-// TestEventHandlerRegisteredExactlyOnce proves that no matter how many
-// times ensureHandlerRegistered is called — Open calls it once at
-// construction; Connect and PairQR each call it defensively too, in case
-// either is ever invoked more than once over a Bridge's lifetime — the
-// underlying whatsmeow AddEventHandler call happens exactly once. That's
-// what guarantees a second Connect can't cause every inbound event to be
-// dispatched (and ingested) twice.
-func TestEventHandlerRegisteredExactlyOnce(t *testing.T) {
+// TestClientConstructionRegistersHandlerExactlyOnce proves the handler
+// registration invariant: setClient is the only way a whatsmeow client
+// comes to exist on a Bridge, and each call registers handleEvent exactly
+// once on the client it builds. Connect and PairQR register nothing, so no
+// call sequence can ever double-dispatch events into the store.
+func TestClientConstructionRegistersHandlerExactlyOnce(t *testing.T) {
 	b, _ := newTestBridge(t)
 
 	if b.handlerRegistrations != 1 {
 		t.Fatalf("handlerRegistrations after Open = %d, want 1", b.handlerRegistrations)
 	}
 
-	// Simulate what Connect/PairQR do on every call.
-	b.ensureHandlerRegistered()
-	b.ensureHandlerRegistered()
-	b.ensureHandlerRegistered()
-
-	if b.handlerRegistrations != 1 {
-		t.Fatalf("handlerRegistrations after repeated calls = %d, want 1 (must stay a no-op)", b.handlerRegistrations)
+	// A second client (what a logout re-init does) registers exactly once
+	// more — one registration per client ever constructed.
+	device, err := b.container.GetFirstDevice(context.Background())
+	if err != nil {
+		t.Fatalf("GetFirstDevice: %v", err)
+	}
+	b.setClient(device)
+	if b.handlerRegistrations != 2 {
+		t.Fatalf("handlerRegistrations after second setClient = %d, want 2", b.handlerRegistrations)
 	}
 }
