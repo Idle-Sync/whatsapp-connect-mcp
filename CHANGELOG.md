@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostic and exits non-zero at startup, so a service manager restarts
   the server, and after a logout it says the re-check failed instead of
   going silent.
+- Dashboard: a failed pair start, trust change, schedule cancel, backup,
+  or draft approve/discard now shows a message in that tab instead of
+  failing silently.
+- Dashboard: starting pairing only accepts POST, matching every other
+  mutating dashboard route.
 
 ## [0.2.0] - 2026-08-19
 

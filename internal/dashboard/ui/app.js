@@ -6,8 +6,21 @@
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers: { "X-Requested-With": "dashboard" } }, opts));
   if (r.status === 401) { statusLine("logged out — run: whatsapp-connect-mcp dashboard"); throw new Error("401"); }
-  if (!r.ok) throw new Error("api " + path + " " + r.status);
+  if (!r.ok) {
+    const err = new Error("api " + path + " " + r.status);
+    if (r.headers.get("Content-Type")?.includes("json")) {
+      try { err.body = await r.json(); } catch (e) { /* body not parseable JSON */ }
+    }
+    throw err;
+  }
   return r.headers.get("Content-Type")?.includes("json") ? r.json() : r;
+}
+
+// errorMessage extracts the server's category-only error text from a
+// failed api() call, falling back to a fixed message when the response
+// carried no such body (e.g. a plain-text 401/403/405).
+function errorMessage(err) {
+  return err && err.body && typeof err.body.error === "string" ? err.body.error : "request failed";
 }
 
 function el(tag, text, cls) {
@@ -62,8 +75,14 @@ for (const b of tabs) b.addEventListener("click", () => {
 });
 
 document.getElementById("pair-start").addEventListener("click", async () => {
-  await api("/api/pair/start", { method: "POST" });
-  pollPair();
+  const msg = document.getElementById("pair-msg");
+  try {
+    await api("/api/pair/start", { method: "POST" });
+    msg.textContent = "";
+    pollPair();
+  } catch (e) {
+    msg.textContent = errorMessage(e);
+  }
 });
 
 async function pollPair() {
@@ -130,8 +149,14 @@ async function loadTrust() {
     const li = el("li", j + " ");
     const del = el("button", "remove");
     del.addEventListener("click", async () => {
-      await api("/api/trust/" + encodeURIComponent(j), { method: "DELETE" });
-      loadTrust();
+      const msg = document.getElementById("trust-msg");
+      try {
+        await api("/api/trust/" + encodeURIComponent(j), { method: "DELETE" });
+        msg.textContent = "";
+        loadTrust();
+      } catch (e) {
+        msg.textContent = errorMessage(e);
+      }
     });
     li.appendChild(del);
     ul.appendChild(li);
@@ -140,9 +165,15 @@ async function loadTrust() {
 document.getElementById("trust-add").addEventListener("click", async () => {
   const jid = document.getElementById("trust-jid").value.trim();
   if (!jid) return;
-  await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
-  document.getElementById("trust-jid").value = "";
-  loadTrust();
+  const msg = document.getElementById("trust-msg");
+  try {
+    await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
+    document.getElementById("trust-jid").value = "";
+    msg.textContent = "";
+    loadTrust();
+  } catch (e) {
+    msg.textContent = errorMessage(e);
+  }
 });
 
 async function loadSchedules() {
@@ -153,8 +184,14 @@ async function loadSchedules() {
     const tr = row(t, [s.fire_at, s.preview]);
     const cancel = el("button", "cancel");
     cancel.addEventListener("click", async () => {
-      await api("/api/schedules/" + encodeURIComponent(s.id), { method: "DELETE" });
-      loadSchedules();
+      const msg = document.getElementById("schedules-msg");
+      try {
+        await api("/api/schedules/" + encodeURIComponent(s.id), { method: "DELETE" });
+        msg.textContent = "";
+        loadSchedules();
+      } catch (e) {
+        msg.textContent = errorMessage(e);
+      }
     });
     const td = document.createElement("td");
     td.appendChild(cancel);
@@ -171,13 +208,25 @@ async function loadDrafts() {
     const td = document.createElement("td");
     const ok = el("button", "approve");
     ok.addEventListener("click", async () => {
-      await api("/api/drafts/" + encodeURIComponent(d.token) + "/approve", { method: "POST" });
-      loadDrafts();
+      const msg = document.getElementById("drafts-msg");
+      try {
+        await api("/api/drafts/" + encodeURIComponent(d.token) + "/approve", { method: "POST" });
+        msg.textContent = "";
+        loadDrafts();
+      } catch (e) {
+        msg.textContent = errorMessage(e);
+      }
     });
     const no = el("button", "discard");
     no.addEventListener("click", async () => {
-      await api("/api/drafts/" + encodeURIComponent(d.token), { method: "DELETE" });
-      loadDrafts();
+      const msg = document.getElementById("drafts-msg");
+      try {
+        await api("/api/drafts/" + encodeURIComponent(d.token), { method: "DELETE" });
+        msg.textContent = "";
+        loadDrafts();
+      } catch (e) {
+        msg.textContent = errorMessage(e);
+      }
     });
     td.appendChild(ok);
     td.appendChild(no);
@@ -186,8 +235,13 @@ async function loadDrafts() {
 }
 
 document.getElementById("backup-go").addEventListener("click", async () => {
-  const r = await api("/api/backup", { method: "POST" });
-  document.getElementById("backup-result").textContent = "written: " + r.path + " (" + r.size + " bytes)";
+  const result = document.getElementById("backup-result");
+  try {
+    const r = await api("/api/backup", { method: "POST" });
+    result.textContent = "written: " + r.path + " (" + r.size + " bytes)";
+  } catch (e) {
+    result.textContent = errorMessage(e);
+  }
 });
 
 document.querySelector('nav button[data-tab="trust"]').addEventListener("click", loadTrust);

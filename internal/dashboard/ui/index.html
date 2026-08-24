@@ -45,13 +45,16 @@
     <p>Trusted contacts auto-send without a draft preview. Add only people you'd let an agent message directly.</p>
     <input id="trust-jid" placeholder="15551234567@s.whatsapp.net">
     <button id="trust-add">Trust</button>
+    <p id="trust-msg"></p>
     <ul id="trust-list"></ul>
   </section>
   <section id="tab-schedules" hidden>
+    <p id="schedules-msg"></p>
     <table id="schedules-table"></table>
   </section>
   <section id="tab-drafts" hidden>
     <p>Sends an agent proposed and is waiting on. Approving delivers immediately (rate-limited).</p>
+    <p id="drafts-msg"></p>
     <table id="drafts-table"></table>
   </section>
   <section id="tab-backup" hidden>

@@ -26,7 +26,11 @@ type pairState struct {
 // NeedsPairing check must be one atomic decision, or a request whose
 // NeedsPairing read is stale by the time it acquires the lock can start a
 // second PairQR against an already-paired bridge.
-func (h *Handler) handlePairStart(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handlePairStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	h.pair.mu.Lock()
 	if h.pair.active {
 		h.pair.mu.Unlock()

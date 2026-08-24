@@ -115,8 +115,8 @@ func TestSchedulesListAndCancel(t *testing.T) {
 
 // TestSuffixRoutesRejectWrongMethod guards against the suffix-routed
 // mutating endpoints executing on any method that merely carries the CSRF
-// header — /api/trust/{jid}, /api/schedules/{id}, and /api/backup must
-// each require their one intended method.
+// header — /api/trust/{jid}, /api/schedules/{id}, /api/backup, and
+// /api/pair/start must each require their one intended method.
 func TestSuffixRoutesRejectWrongMethod(t *testing.T) {
 	fs := &fakeStore{}
 	h, cookie := newTestHandler(t, fs, nil)
@@ -134,6 +134,19 @@ func TestSuffixRoutesRejectWrongMethod(t *testing.T) {
 
 	if w := mutate(t, h, cookie, http.MethodGet, "/api/schedules/anyid", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /api/schedules/{id} = %d, want 405", w.Code)
+	}
+
+	fbp := &pairFakeBridge{fakeBridge: fakeBridge{unpaired: true}, release: make(chan struct{})}
+	defer close(fbp.release)
+	hp, cookieP := newTestHandlerWithBridge(t, fbp)
+	if w := mutate(t, hp, cookieP, http.MethodGet, "/api/pair/start", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/pair/start = %d, want 405", w.Code)
+	}
+	fbp.mu.Lock()
+	starts := fbp.starts
+	fbp.mu.Unlock()
+	if starts != 0 {
+		t.Fatalf("GET /api/pair/start started pairing: starts=%d", starts)
 	}
 }
 
