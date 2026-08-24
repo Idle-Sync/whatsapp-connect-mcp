@@ -133,19 +133,19 @@ func (h *Handler) handleMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Join(dir, name)
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); err != nil { // #nosec G703 -- dir and name are traversal-checked by medianame just above
 		if _, err := h.deps.Bridge.DownloadMedia(r.Context(), ref, dir, name); err != nil {
 			h.writeJSON(w, http.StatusBadGateway, map[string]string{"error": "media download failed"})
 			return
 		}
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- same medianame-confined path as the Stat above
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
