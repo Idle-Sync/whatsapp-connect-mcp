@@ -91,6 +91,21 @@ type Bridge struct {
 	// once, which is what guarantees no call sequence can double-dispatch
 	// events.
 	handlerRegistrations int
+
+	// Connection-health tracking behind Status(): the lifecycle state (one
+	// of the connState constants), when it was entered, how many times the
+	// session has reconnected after its first Connected, how many inbound
+	// events failed to write to the store, and why the connection was last
+	// lost. All fed by handleEvent; read by Status/IngestErrors/
+	// LastDisconnect.
+	state          atomic.Int32
+	stateSince     atomic.Int64
+	everConnected  atomic.Bool
+	reconnects     atomic.Uint64
+	ingestErrors   atomic.Uint64
+	ingestErrOnce  sync.Once
+	disconnectMu   sync.Mutex
+	lastDisconnect string
 }
 
 // errInvalidRecipient is returned whenever a caller-supplied JID string
@@ -129,6 +144,11 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 		diag: os.Stderr,
 	}
 	b.setClient(device)
+	if device.ID == nil {
+		b.setState(stUnpaired)
+	} else {
+		b.setState(stOffline)
+	}
 	return b, nil
 }
 
@@ -234,6 +254,7 @@ func (b *Bridge) LoggedIn() bool {
 // cancelled. Must be called before Connect, and only when NeedsPairing is
 // true.
 func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
+	b.setState(stConnecting)
 	cl := b.wa()
 
 	qrChan, err := cl.GetQRChannel(ctx)
@@ -261,6 +282,7 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 // is already registered (Open does that once, up front), so calling
 // Connect more than once cannot cause events to be dispatched twice.
 func (b *Bridge) Connect(ctx context.Context) error {
+	b.setState(stConnecting)
 	if err := b.wa().ConnectContext(ctx); err != nil {
 		return waErr("connect", err)
 	}

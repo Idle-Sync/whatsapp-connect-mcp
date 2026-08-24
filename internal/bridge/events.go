@@ -51,6 +51,10 @@ func (b *Bridge) handleEvent(raw any) {
 		// to redeliver whatever queued while the device was offline.
 		b.connectedAtMs.Store(time.Now().UnixMilli())
 		b.connectedSeq.Store(b.catchUpSeq.Add(1))
+		if !b.everConnected.CompareAndSwap(false, true) {
+			b.reconnects.Add(1)
+		}
+		b.setState(stConnected)
 	case *events.OfflineSyncCompleted:
 		b.offlineSyncSeq.Store(b.catchUpSeq.Add(1))
 	case *events.LoggedOut:
@@ -60,9 +64,33 @@ func (b *Bridge) handleEvent(raw any) {
 		_, _ = fmt.Fprintf(b.diag,
 			"whatsapp: logged out by the server (reason %v, on_connect=%v) — the device store has been cleared and this install is no longer paired; run `whatsapp-connect-mcp setup` to pair again\n",
 			evt.Reason, evt.OnConnect)
+		b.noteDisconnect("logged_out")
+		b.setState(stUnpaired)
 	case *events.StreamReplaced:
 		_, _ = fmt.Fprintln(b.diag,
 			"whatsapp: stream replaced — another process connected with this same session, and this connection is now dead; if this repeats, find and stop the other process")
+		b.noteDisconnect("stream_replaced")
+		b.setState(stOffline)
+	case *events.Disconnected:
+		b.noteDisconnect("disconnected")
+		b.setState(stConnecting)
+		_, _ = fmt.Fprintln(b.diag, "whatsapp: connection lost — reconnecting automatically")
+	case *events.KeepAliveTimeout:
+		b.noteDisconnect("keepalive_timeout")
+		b.setState(stConnecting)
+		_, _ = fmt.Fprintln(b.diag, "whatsapp: server stopped answering keepalives — reconnecting")
+	case *events.ConnectFailure:
+		b.noteDisconnect("connect_failure")
+		b.setState(stOffline)
+		_, _ = fmt.Fprintf(b.diag, "whatsapp: connection refused (reason %v) — not retried automatically; restart serve once the cause is resolved\n", evt.Reason)
+	case *events.TemporaryBan:
+		b.noteDisconnect("temporary_ban")
+		b.setState(stOffline)
+		_, _ = fmt.Fprintf(b.diag, "whatsapp: account temporarily banned (code %v, expires in %v) — see the README's ban-risk section\n", evt.Code, evt.Expire)
+	case *events.ClientOutdated:
+		b.noteDisconnect("client_outdated")
+		b.setState(stOffline)
+		_, _ = fmt.Fprintln(b.diag, "whatsapp: WhatsApp rejected this client version — update the binary (see the README's Updating section)")
 	}
 }
 
@@ -79,8 +107,8 @@ func (b *Bridge) handleEvent(raw any) {
 func (b *Bridge) ingestMessage(evt *events.Message) {
 	m, chatName, isGroup := decodeMessage(evt)
 
-	_ = b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS)
-	_ = b.store.UpsertMessage(m)
+	b.noteIngest(b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS))
+	b.noteIngest(b.store.UpsertMessage(m))
 
 	// A message that carries both of the sender's addresses (privacy LID
 	// and phone JID, in either order) teaches the store the pairing, which
@@ -89,19 +117,19 @@ func (b *Bridge) ingestMessage(evt *events.Message) {
 	// (a device-qualified JID), since sender_jid joins against it verbatim.
 	lidExact, lidCanon, pn := lidPairing(evt.Info.MessageSource)
 	if pn != "" {
-		_ = b.store.UpsertLIDMapping(lidExact, pn)
+		b.noteIngest(b.store.UpsertLIDMapping(lidExact, pn))
 		if lidCanon != lidExact {
-			_ = b.store.UpsertLIDMapping(lidCanon, pn)
+			b.noteIngest(b.store.UpsertLIDMapping(lidCanon, pn))
 		}
 	}
 
 	if !m.FromMe && evt.Info.PushName != "" {
-		_ = b.store.UpsertContact(m.SenderJID, phoneFromJID(m.SenderJID), evt.Info.PushName, "", "")
+		b.noteIngest(b.store.UpsertContact(m.SenderJID, phoneFromJID(m.SenderJID), evt.Info.PushName, "", ""))
 		// Name the phone-number identity as well: that is the one the
 		// app-state contact sync and search_contacts know, and the LID row
 		// alone would leave it nameless.
 		if pn != "" && pn != m.SenderJID {
-			_ = b.store.UpsertContact(pn, phoneFromJID(pn), evt.Info.PushName, "", "")
+			b.noteIngest(b.store.UpsertContact(pn, phoneFromJID(pn), evt.Info.PushName, "", ""))
 		}
 	}
 }
@@ -129,11 +157,11 @@ func (b *Bridge) ingestReceipt(evt *events.Receipt) {
 	if !ok {
 		return
 	}
-	_ = b.store.MarkRead(chatJID, ids, readAt)
+	b.noteIngest(b.store.MarkRead(chatJID, ids, readAt))
 }
 
 func (b *Bridge) ingestCall(id, peerJID string, ts int64, direction, status string, isVideo bool) {
-	_ = b.store.InsertCall(id, peerJID, ts, direction, status, isVideo)
+	b.noteIngest(b.store.InsertCall(id, peerJID, ts, direction, status, isVideo))
 }
 
 // ingestHistorySync writes the conversations and messages carried in a
@@ -149,7 +177,7 @@ func (b *Bridge) ingestHistorySync(evt *events.HistorySync) {
 		if !ok {
 			continue
 		}
-		_ = b.store.UpsertChat(jid, name, isGroup, int64(conv.GetConversationTimestamp())) // #nosec G115 -- WhatsApp timestamps fit int64 for the foreseeable future
+		b.noteIngest(b.store.UpsertChat(jid, name, isGroup, int64(conv.GetConversationTimestamp()))) // #nosec G115 -- WhatsApp timestamps fit int64 for the foreseeable future
 
 		chatJID, err := types.ParseJID(jid)
 		if err != nil {
@@ -174,7 +202,7 @@ func (b *Bridge) ingestContact(evt *events.Contact) {
 	if !ok {
 		return
 	}
-	_ = b.store.UpsertContact(jid, phoneFromJID(jid), "", fullName, "")
+	b.noteIngest(b.store.UpsertContact(jid, phoneFromJID(jid), "", fullName, ""))
 }
 
 func (b *Bridge) ingestPushName(evt *events.PushName) {
@@ -182,7 +210,7 @@ func (b *Bridge) ingestPushName(evt *events.PushName) {
 	if pushName == "" {
 		return
 	}
-	_ = b.store.UpsertContact(jid, phoneFromJID(jid), pushName, "", "")
+	b.noteIngest(b.store.UpsertContact(jid, phoneFromJID(jid), pushName, "", ""))
 }
 
 func (b *Bridge) ingestGroupInfoName(evt *events.GroupInfo) {
@@ -190,7 +218,7 @@ func (b *Bridge) ingestGroupInfoName(evt *events.GroupInfo) {
 	if !ok {
 		return
 	}
-	_ = b.store.UpsertChat(jid, name, true, evt.Timestamp.Unix())
+	b.noteIngest(b.store.UpsertChat(jid, name, true, evt.Timestamp.Unix()))
 }
 
 // decodeMessage is pure: it turns a whatsmeow message event into the

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Connection-health diagnostics: dropped connections, keepalive timeouts,
+  refused connects, temporary bans, and an outdated client now each print
+  one clear line to the server log instead of passing silently.
+- Failed writes of incoming events to the message store are now counted
+  and reported (previously silent).
+
 ## [0.2.0] - 2026-08-19
 
 The shared http server becomes a first-class way to run this: one command
