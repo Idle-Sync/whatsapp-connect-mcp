@@ -88,9 +88,11 @@ connect at once.
 > `service uninstall` removes it; `service restart` restarts it after an
 > update. On a headless Linux box, add `loginctl enable-linger` so the
 > service outlives your login session. On Windows, the service runs as a
-> minimized console window that appears at logon; closing the window stops
-> the server. Creating the task may require an elevated (Administrator)
-> terminal.
+> minimized console window that appears at user logon (not boot); closing the
+> window stops the server. There is no automatic restart on crash (serve's
+> unpaired state waits idle rather than exiting, so the common failure mode
+> never exits anyway). Creating the task may require an elevated
+> (Administrator) terminal.
 
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
