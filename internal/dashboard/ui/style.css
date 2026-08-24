@@ -310,12 +310,21 @@ input.mono { font-family: var(--mono); font-size: 0.8rem; }
 
 .chat-header {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   padding: 0.65rem 1rem;
   font-size: 0.9rem;
   font-weight: 600;
 }
+
+.pane-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin: 0.2rem 0 0.8rem; }
+.pane-head h2 { margin: 0; }
+
+button.refresh { flex: none; font-size: 0.95rem; line-height: 1; padding: 0.3rem 0.55rem; }
 
 .messages-list {
   flex: 1;

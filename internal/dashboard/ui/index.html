@@ -60,7 +60,10 @@
     </section>
 
     <section id="tab-chats" hidden>
-      <h2>Chats</h2>
+      <div class="pane-head">
+        <h2>Chats</h2>
+        <button id="chats-refresh" class="refresh" title="Refresh chat list">&#8635;</button>
+      </div>
       <div class="searchbar">
         <input id="search-box" placeholder="Search all messages">
         <button id="search-go">Search</button>
@@ -68,7 +71,10 @@
       <div class="chats-layout">
         <div id="chats-list" class="chats-list"></div>
         <div class="messages-pane">
-          <div id="messages-title" class="chat-header" hidden></div>
+          <div id="messages-head" class="chat-header" hidden>
+            <span id="messages-title"></span>
+            <button id="messages-refresh" class="refresh" hidden title="Check for new messages">&#8635;</button>
+          </div>
           <div id="messages-list" class="messages-list"></div>
         </div>
       </div>

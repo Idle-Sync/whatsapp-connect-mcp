@@ -33,7 +33,8 @@ var uiFS embed.FS
 type Store interface {
 	Counts() (store.Counts, error)
 	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
-	Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]store.MessageRow, error)
+	TailRowID(chatJID string, includeOwn bool, n int) (int64, error)
+	MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error)
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 	BackupTo(path string) error
 }
