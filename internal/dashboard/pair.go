@@ -21,15 +21,21 @@ type pairState struct {
 	lastErr string
 }
 
+// handlePairStart decides whether to join an in-flight pairing or start a
+// new one entirely under h.pair.mu: the active-join check and the
+// NeedsPairing check must be one atomic decision, or a request whose
+// NeedsPairing read is stale by the time it acquires the lock can start a
+// second PairQR against an already-paired bridge.
 func (h *Handler) handlePairStart(w http.ResponseWriter, _ *http.Request) {
-	if !h.deps.Bridge.NeedsPairing() {
-		h.writeJSON(w, http.StatusConflict, map[string]string{"error": "already paired"})
-		return
-	}
 	h.pair.mu.Lock()
 	if h.pair.active {
 		h.pair.mu.Unlock()
 		h.writeJSON(w, http.StatusOK, map[string]string{"status": "pairing already in progress"})
+		return
+	}
+	if !h.deps.Bridge.NeedsPairing() {
+		h.pair.mu.Unlock()
+		h.writeJSON(w, http.StatusConflict, map[string]string{"error": "already paired"})
 		return
 	}
 	h.pair.active = true

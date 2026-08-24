@@ -88,6 +88,99 @@ func TestPairStartWhenPairedIs409(t *testing.T) {
 	}
 }
 
+// toctouBridge proves handlePairStart decides active-join and
+// NeedsPairing atomically: NeedsPairing blocks until released, and each
+// call is announced on called so the test can show that no second call
+// arrives while the first is still pending — which is only true if both
+// checks run under the same lock.
+type toctouBridge struct {
+	fakeBridge
+	mu         sync.Mutex
+	needsCalls int
+	starts     int
+	called     chan struct{}
+	proceed    chan struct{}
+	release    chan struct{}
+}
+
+func (b *toctouBridge) NeedsPairing() bool {
+	b.mu.Lock()
+	b.needsCalls++
+	b.mu.Unlock()
+	b.called <- struct{}{}
+	<-b.proceed
+	return true
+}
+
+func (b *toctouBridge) PairQR(ctx context.Context, _ func(string)) error {
+	b.mu.Lock()
+	b.starts++
+	b.mu.Unlock()
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func TestPairStartDecidesActiveAndNeedsPairingAtomically(t *testing.T) {
+	fb := &toctouBridge{called: make(chan struct{}), proceed: make(chan struct{}), release: make(chan struct{})}
+	defer close(fb.release)
+	h, cookie := newTestHandlerWithBridge(t, fb)
+
+	doneA := make(chan *httptest.ResponseRecorder, 1)
+	go func() { doneA <- postPairStart(t, h, cookie) }()
+
+	select {
+	case <-fb.called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("NeedsPairing was never called")
+	}
+
+	// The first request's decision is still in flight (blocked inside
+	// NeedsPairing). A second start must not be able to reach its own
+	// NeedsPairing call in the meantime — if it can, the active-join
+	// check and the NeedsPairing check are not one critical section.
+	doneC := make(chan *httptest.ResponseRecorder, 1)
+	go func() { doneC <- postPairStart(t, h, cookie) }()
+
+	select {
+	case <-fb.called:
+		t.Fatal("second start observed NeedsPairing while the first request's decision was still pending")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fb.proceed)
+
+	wA := <-doneA
+	wC := <-doneC
+	if wA.Code != http.StatusOK || wC.Code != http.StatusOK {
+		t.Fatalf("start = %d, join = %d, want both 200", wA.Code, wC.Code)
+	}
+
+	// runPairing dispatches PairQR from a goroutine spawned after the
+	// response is written; wait for it to land before counting starts.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		fb.mu.Lock()
+		starts := fb.starts
+		fb.mu.Unlock()
+		if starts > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	if fb.needsCalls != 1 {
+		t.Fatalf("NeedsPairing called %d times, want 1 (decided once, under the pairing lock)", fb.needsCalls)
+	}
+	if fb.starts != 1 {
+		t.Fatalf("PairQR started %d times, want 1", fb.starts)
+	}
+}
+
 func TestPairQRWithoutActivePairingIs404(t *testing.T) {
 	h, cookie := newTestHandler(t, nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/api/pair/qr.png", nil)
