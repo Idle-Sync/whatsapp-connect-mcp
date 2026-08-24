@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it under Linked devices), keeping local messages and settings, and reset
   to unpaired so a new QR pairing can start immediately. `remove` remains
   the local-only variant that never contacts WhatsApp.
+- Chats with no stored name now resolve a display name through the
+  contacts table and lid mapping — in the dashboard, in `list_chats`/
+  `get_chat`, and in send previews — and the dashboard falls back to a
+  readable "+number" instead of a raw JID. Empty-bodied messages (system
+  events, removed reactions) render as dim kind placeholders instead of
+  blank bubbles, and a signed-out dashboard now says so in its header
+  instead of freezing on the last live state.
 - The dashboard now shows designed signed-out and not-found pages that say
   how to get back in (run `whatsapp-connect-mcp dashboard` for a fresh
   login link), unknown API paths answer with a JSON 404, and a browser

@@ -1142,3 +1142,51 @@ func TestTailRowID(t *testing.T) {
 		t.Fatalf("tail(50) rows = %d, want all 5", len(rows))
 	}
 }
+
+// TestChatNameResolvesThroughContacts: a DM chat with no stored name reads
+// back with the peer's contact name — same chain message senders use — and
+// a lid-addressed chat resolves through lid_map to the phone contact.
+func TestChatNameResolvesThroughContacts(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.UpsertChat("15551234567@s.whatsapp.net", "", false, 100); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
+	}
+	if err := s.UpsertContact("15551234567@s.whatsapp.net", "15551234567", "Alice", "", ""); err != nil {
+		t.Fatalf("UpsertContact: %v", err)
+	}
+
+	if err := s.UpsertChat("9999@lid", "", false, 200); err != nil {
+		t.Fatalf("UpsertChat lid: %v", err)
+	}
+	if err := s.UpsertLIDMapping("9999@lid", "15557654321@s.whatsapp.net"); err != nil {
+		t.Fatalf("UpsertLIDMapping: %v", err)
+	}
+	if err := s.UpsertContact("15557654321@s.whatsapp.net", "15557654321", "Bob", "", ""); err != nil {
+		t.Fatalf("UpsertContact pn: %v", err)
+	}
+
+	chats, err := s.Chats("", false, 10)
+	if err != nil {
+		t.Fatalf("Chats: %v", err)
+	}
+	got := map[string]string{}
+	for _, c := range chats {
+		got[c.JID] = c.Name
+	}
+	if got["15551234567@s.whatsapp.net"] != "Alice" {
+		t.Fatalf("DM name = %q, want Alice", got["15551234567@s.whatsapp.net"])
+	}
+	if got["9999@lid"] != "Bob" {
+		t.Fatalf("lid chat name = %q, want Bob via lid_map", got["9999@lid"])
+	}
+
+	// A stored name always wins, and Chat() resolves identically.
+	if err := s.UpsertChat("15551234567@s.whatsapp.net", "Alice Custom", false, 100); err != nil {
+		t.Fatalf("UpsertChat rename: %v", err)
+	}
+	one, ok, err := s.Chat("15551234567@s.whatsapp.net")
+	if err != nil || !ok || one.Name != "Alice Custom" {
+		t.Fatalf("Chat() = %+v ok=%v err=%v, want stored name to win", one, ok, err)
+	}
+}

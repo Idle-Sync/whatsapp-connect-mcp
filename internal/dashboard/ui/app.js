@@ -7,9 +7,18 @@
 
 /* ---------- plumbing ---------- */
 
+// signedOut flips the header to an honest signed-out state so stale data
+// left on screen can't masquerade as a live connection.
+function signedOut() {
+  statusLine("signed out — run: whatsapp-connect-mcp dashboard for a new login link");
+  document.getElementById("state-name").textContent = "signed out";
+  document.getElementById("state").className = "badge offline";
+  document.getElementById("pulse").className = "pulse offline";
+}
+
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers: { "X-Requested-With": "dashboard" } }, opts));
-  if (r.status === 401) { statusLine("logged out — run: whatsapp-connect-mcp dashboard"); throw new Error("401"); }
+  if (r.status === 401) { signedOut(); throw new Error("401"); }
   if (!r.ok) {
     const err = new Error("api " + path + " " + r.status);
     if (r.headers.get("Content-Type")?.includes("json")) {
@@ -132,6 +141,17 @@ function hueFor(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return Math.abs(h) % 360;
+}
+
+// prettyLabel makes a raw JID readable when nothing on record supplied a
+// name: phone JIDs read as the phone number, privacy LIDs as a short
+// stand-in. Anything that isn't a bare JID passes through untouched.
+function prettyLabel(name) {
+  let m = /^(\d+)@s\.whatsapp\.net$/.exec(name);
+  if (m) return "+" + m[1];
+  m = /^(\d+)@lid$/.exec(name);
+  if (m) return "user …" + m[1].slice(-5);
+  return name;
 }
 
 /* ---------- header + pulse ---------- */
@@ -286,8 +306,13 @@ function messageText(m) {
     const label = "[" + m.kind + "]";
     return m.text ? label + " " + m.text : label;
   }
+  // A message with no body — a system event, a removed reaction, a poll
+  // vote — renders as a dim kind placeholder instead of an empty bubble.
+  if (!m.text) return "[" + m.kind + "]";
   return m.text;
 }
+
+function isPlaceholder(m) { return m.has_media || !m.text; }
 
 // renderMessages fills the message pane WhatsApp-style: day dividers,
 // incoming bubbles left, own bubbles right, time inside the bubble, and —
@@ -310,16 +335,18 @@ function renderMessages(title, msgs, showSenders, scrollBottom) {
     }
     const box = el("div", undefined, m.from_me ? "msg me" : "msg");
     if (showSenders && !m.from_me) {
-      const who = el("span", m.sender, "sender");
+      const who = el("span", prettyLabel(m.sender), "sender");
       who.style.color = "hsl(" + hueFor(m.sender) + " 55% 65%)";
       box.appendChild(who);
     }
-    const body = el("span", messageText(m), m.has_media ? "body media" : "body");
+    const body = el("span", messageText(m), isPlaceholder(m) ? "body media" : "body");
     box.appendChild(body);
     box.appendChild(el("span", clock(m.ts), "time"));
     list.appendChild(box);
   }
-  list.scrollTop = scrollBottom ? list.scrollHeight : 0;
+  const pin = () => { list.scrollTop = scrollBottom ? list.scrollHeight : 0; };
+  pin();
+  requestAnimationFrame(pin); // re-pin after entrance animations settle layout
 }
 
 async function loadChats() {
@@ -330,9 +357,9 @@ async function loadChats() {
   list.replaceChildren();
   if (chats.length === 0) { empty(list, "No chats stored yet. Once paired, history lands here."); return; }
   for (const c of chats) {
-    const name = c.name || c.jid;
+    const name = prettyLabel(c.name || c.jid);
     const b = el("button", undefined, "chat-row");
-    b.appendChild(el("span", Array.from(name)[0].toUpperCase(), "avatar"));
+    b.appendChild(el("span", Array.from(name.replace(/^\+|^user …/, "") || name)[0].toUpperCase(), "avatar"));
     const label = el("span", name, "chat-name");
     if (c.is_group) label.appendChild(el("span", "group", "tag"));
     b.appendChild(label);

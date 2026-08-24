@@ -93,27 +93,46 @@ type querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// messageSelect is the shared column list and join every message-row query
-// builds on: it resolves sender_name via contacts and leaves the caller to
-// append its own WHERE/ORDER/LIMIT.
+// Display-name resolution order for a JID that may be a LID: a contact on
+// the JID itself (a push name ingested live), then the contact on the
+// phone JID the lid_map pairs it with, then the bare phone JID (still far
+// more useful than an opaque LID), and only then the fallback. The NULLs a
+// missed LEFT JOIN produces fall through each CASE arm naturally (a NULL
+// compared against the empty string is not true).
 //
-// Resolution order for a sender stored as a LID: a contact on the LID
-// itself (a push name ingested live), then the contact on the phone JID
-// the lid_map pairs it with, then the bare phone JID (still far more
-// useful than an opaque LID), and only then the raw sender value. The
-// NULLs a missed LEFT JOIN produces fall through each CASE arm naturally
-// (a NULL compared against the empty string is not true).
-const messageColumns = `m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
-       CASE
-         WHEN c.full_name <> '' THEN c.full_name
-         WHEN c.push_name <> '' THEN c.push_name
-         WHEN c.business_name <> '' THEN c.business_name
-         WHEN cp.full_name <> '' THEN cp.full_name
-         WHEN cp.push_name <> '' THEN cp.push_name
-         WHEN cp.business_name <> '' THEN cp.business_name
-         WHEN lm.pn IS NOT NULL THEN lm.pn
-         ELSE m.sender_jid
+// contactNameCase renders that chain as a CASE expression over a contact
+// alias, the phone-contact alias its lid_map row points at, the lid_map
+// alias, and a fallback SQL expression — the ONE place the resolution
+// order lives, shared by the message queries and the chat queries.
+func contactNameCase(contact, phoneContact, lidMap, fallback string) string {
+	return `CASE
+         WHEN ` + contact + `.full_name <> '' THEN ` + contact + `.full_name
+         WHEN ` + contact + `.push_name <> '' THEN ` + contact + `.push_name
+         WHEN ` + contact + `.business_name <> '' THEN ` + contact + `.business_name
+         WHEN ` + phoneContact + `.full_name <> '' THEN ` + phoneContact + `.full_name
+         WHEN ` + phoneContact + `.push_name <> '' THEN ` + phoneContact + `.push_name
+         WHEN ` + phoneContact + `.business_name <> '' THEN ` + phoneContact + `.business_name
+         WHEN ` + lidMap + `.pn IS NOT NULL THEN ` + lidMap + `.pn
+         ELSE ` + fallback + `
        END`
+}
+
+var messageColumns = `m.chat_jid, m.id, m.sender_jid, m.from_me, m.ts, m.kind, m.text, m.quoted_id, m.media_ref IS NOT NULL,
+       ` + contactNameCase("c", "cp", "lm", "m.sender_jid")
+
+// chatSelect resolves a chat's display name the same way: the stored chat
+// name wins (groups, and DMs whose peer name arrived on a message), and an
+// empty one falls back through the contact chain keyed on the chat's own
+// JID — so a DM or lid-addressed chat reads back with a person's name
+// whenever anything on record can supply one.
+var chatSelect = `
+SELECT ch.jid,
+       CASE WHEN ch.name <> '' THEN ch.name ELSE ` + contactNameCase("c", "cp", "lm", "''") + ` END,
+       ch.is_group, ch.archived, ch.last_message_at
+FROM chats ch
+LEFT JOIN contacts c ON c.jid = ch.jid
+LEFT JOIN lid_map lm ON lm.lid = ch.jid
+LEFT JOIN contacts cp ON cp.jid = lm.pn`
 
 const messageFrom = `
 FROM messages m
@@ -121,7 +140,7 @@ LEFT JOIN contacts c ON c.jid = m.sender_jid
 LEFT JOIN lid_map lm ON lm.lid = m.sender_jid
 LEFT JOIN contacts cp ON cp.jid = lm.pn`
 
-const messageSelect = `
+var messageSelect = `
 SELECT ` + messageColumns + messageFrom
 
 func scanMessageRow(row scanner) (MessageRow, error) {
@@ -161,16 +180,17 @@ func (s *Store) Chats(query string, includeArchived bool, limit int) ([]ChatRow,
 	limit = ClampLimit(limit)
 
 	var b strings.Builder
-	b.WriteString(`SELECT jid, name, is_group, archived, last_message_at FROM chats WHERE 1 = 1`)
+	b.WriteString(chatSelect)
+	b.WriteString(` WHERE 1 = 1`)
 	var args []any
 	if query != "" {
-		b.WriteString(` AND name LIKE '%' || ? || '%'`)
+		b.WriteString(` AND ch.name LIKE '%' || ? || '%'`)
 		args = append(args, query)
 	}
 	if !includeArchived {
-		b.WriteString(` AND archived = 0`)
+		b.WriteString(` AND ch.archived = 0`)
 	}
-	b.WriteString(` ORDER BY last_message_at DESC LIMIT ?`)
+	b.WriteString(` ORDER BY ch.last_message_at DESC LIMIT ?`)
 	args = append(args, limit)
 
 	rows, err := s.db.Query(b.String(), args...)
@@ -195,7 +215,7 @@ func (s *Store) Chats(query string, includeArchived bool, limit int) ([]ChatRow,
 
 // Chat looks up a single chat by jid. ok is false when no such chat exists.
 func (s *Store) Chat(jid string) (ChatRow, bool, error) {
-	row := s.db.QueryRow(`SELECT jid, name, is_group, archived, last_message_at FROM chats WHERE jid = ?`, jid)
+	row := s.db.QueryRow(chatSelect+` WHERE ch.jid = ?`, jid)
 	c, err := scanChatRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChatRow{}, false, nil
