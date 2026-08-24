@@ -54,6 +54,34 @@ async function refreshDoctor() {
   } catch (e) { /* header already shows logged-out state */ }
 }
 
+const tabs = document.querySelectorAll("nav button");
+for (const b of tabs) b.addEventListener("click", () => {
+  for (const t of tabs) t.classList.toggle("active", t === b);
+  for (const s of document.querySelectorAll("main > section"))
+    s.hidden = s.id !== "tab-" + b.dataset.tab;
+});
+
+document.getElementById("pair-start").addEventListener("click", async () => {
+  await api("/api/pair/start", { method: "POST" });
+  pollPair();
+});
+
+async function pollPair() {
+  const info = await api("/api/pair");
+  const img = document.getElementById("pair-qr");
+  const msg = document.getElementById("pair-msg");
+  if (info.error) { msg.textContent = "pairing failed: " + info.error; img.hidden = true; return; }
+  if (!info.pairing) {
+    const s = await refreshStatus();
+    msg.textContent = s && !s.needs_pairing ? "Paired." : "Not pairing.";
+    img.hidden = true;
+    return;
+  }
+  msg.textContent = "Scan with WhatsApp > Linked devices > Link a device";
+  if (info.has_code) { img.src = "/api/pair/qr.png?t=" + Date.now(); img.hidden = false; }
+  setTimeout(pollPair, 1000);
+}
+
 refreshStatus();
 refreshDoctor();
 setInterval(refreshStatus, 5000);

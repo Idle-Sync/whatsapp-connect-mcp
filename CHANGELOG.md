@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows connection health, store counts, and doctor findings; pairing and
   management arrive in following changes. Localhost-only, protected by
   the same bearer token as the HTTP transport.
+- QR pairing from the dashboard: when the session is unpaired, the Pair
+  tab shows the QR code in the browser — no terminal needed, including
+  re-pairing after a WhatsApp-side logout.
 
 ### Changed
 

@@ -38,6 +38,7 @@ type Store interface {
 type Bridge interface {
 	Status() bridge.Status
 	NeedsPairing() bool
+	PairQR(ctx context.Context, show func(code string)) error
 }
 
 // Deps wires the dashboard into serve's already-constructed pieces. Ctx is
@@ -59,6 +60,7 @@ type Handler struct {
 	deps    Deps
 	session string // per-process session cookie value; browser logs in again after a restart
 	mux     *http.ServeMux
+	pair    pairState
 }
 
 // New builds the dashboard handler. It panics only on entropy failure at
@@ -75,6 +77,9 @@ func New(deps Deps) *Handler {
 	h.mux.Handle("/ui/", h.authed(http.StripPrefix("/ui/", http.FileServer(http.FS(static))).ServeHTTP))
 	h.mux.HandleFunc("/api/status", h.authed(h.handleStatus))
 	h.mux.HandleFunc("/api/doctor", h.authed(h.handleDoctor))
+	h.mux.HandleFunc("/api/pair/start", h.authed(h.mutating(h.handlePairStart)))
+	h.mux.HandleFunc("/api/pair", h.authed(h.handlePairInfo))
+	h.mux.HandleFunc("/api/pair/qr.png", h.authed(h.handlePairQR))
 	return h
 }
 

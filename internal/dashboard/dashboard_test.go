@@ -29,6 +29,13 @@ type fakeBridge struct {
 func (f *fakeBridge) Status() bridge.Status { return f.status }
 func (f *fakeBridge) NeedsPairing() bool    { return f.unpaired }
 
+// fakeBridge's default PairQR blocks until cancelled — the base fake
+// never pairs; pairFakeBridge overrides it with scripted behavior.
+func (f *fakeBridge) PairQR(ctx context.Context, _ func(string)) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // newTestHandlerWith is the general constructor: sane default Deps, then
@@ -77,6 +84,11 @@ func newTestHandler(t *testing.T, fs *fakeStore, fb *fakeBridge) (*Handler, *htt
 			d.Bridge = fb
 		}
 	})
+}
+
+func newTestHandlerWithBridge(t *testing.T, fb Bridge) (*Handler, *http.Cookie) {
+	t.Helper()
+	return newTestHandlerWith(t, func(d *Deps) { d.Bridge = fb })
 }
 
 func TestLoginRejectsBadToken(t *testing.T) {

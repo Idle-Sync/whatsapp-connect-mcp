@@ -410,6 +410,11 @@ and the page is unreachable from any other machine. Log back in with the
 `dashboard` command any time the session expires (a server restart, most
 often) — the printed token is never written to a server log.
 
+When the session is unpaired, the dashboard's Pair tab shows the QR code
+right in the browser — start pairing there and scan it with WhatsApp >
+Linked devices > Link a device, no terminal needed. This also covers
+re-pairing after a WhatsApp-side logout.
+
 ## Backing up
 
 ```sh
