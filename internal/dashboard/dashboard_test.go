@@ -20,7 +20,12 @@ type fakeStore struct {
 	counts     store.Counts
 	chats      []store.ChatRow
 	msgs       []store.MessageRow
+	tailRowID  int64
+	nextRowID  int64
 	gotLimit   int
+	gotAfter   int64
+	gotOwn     bool
+	tailCalled bool
 	backupPath string
 }
 
@@ -31,9 +36,18 @@ func (f *fakeStore) Chats(_ string, _ bool, limit int) ([]store.ChatRow, error) 
 	return f.chats, nil
 }
 
-func (f *fakeStore) Messages(_ string, _, _ int64, limit int) ([]store.MessageRow, error) {
+func (f *fakeStore) TailRowID(_ string, includeOwn bool, n int) (int64, error) {
+	f.tailCalled = true
+	f.gotOwn = includeOwn
+	f.gotLimit = n
+	return f.tailRowID, nil
+}
+
+func (f *fakeStore) MessagesAfterRowID(_ string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error) {
+	f.gotAfter = afterRowID
+	f.gotOwn = includeOwn
 	f.gotLimit = limit
-	return f.msgs, nil
+	return f.msgs, f.nextRowID, nil
 }
 
 func (f *fakeStore) SearchMessages(_, _ string, limit int) ([]store.MessageRow, error) {

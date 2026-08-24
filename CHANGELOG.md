@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Refresh buttons on the dashboard's chat screen: one fetches only the
+  messages that arrived since the pane was loaded (appending them in
+  place, following the scroll only if you were already at the bottom)
+  and one reloads the chat list. No background polling — updates load
+  on demand.
+
 ## [0.3.1] - 2026-08-24
 
 ### Fixed

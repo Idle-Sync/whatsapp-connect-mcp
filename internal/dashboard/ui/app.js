@@ -330,19 +330,15 @@ function messageText(m) {
 
 function isPlaceholder(m) { return m.has_media || !m.text; }
 
-// renderMessages fills the message pane WhatsApp-style: day dividers,
-// incoming bubbles left, own bubbles right, time inside the bubble, and —
-// when senders vary — a colored sender label. scrollBottom pins the view
-// to the newest message (a chat); search results stay scrolled to top.
-function renderMessages(title, msgs, showSenders, scrollBottom) {
-  const head = document.getElementById("messages-title");
-  head.hidden = false;
-  head.textContent = title;
-  const list = document.getElementById("messages-list");
-  list.replaceChildren();
-  if (msgs.length === 0) { empty(list, "No messages stored for this chat yet."); return; }
+// currentChat is the open chat's refresh state — jid, display bits, the
+// server's replay-safe rowid cursor, and the last day divider rendered.
+// null while the pane shows search results, which have nothing to refresh.
+let currentChat = null;
 
-  let lastDay = "";
+// appendMessages adds bubbles (and day dividers as the day rolls over) to
+// the pane without touching what's already there. Returns the new lastDay
+// so a later append continues the divider sequence.
+function appendMessages(list, msgs, showSenders, lastDay) {
   for (const m of msgs) {
     const day = dayOf(m.ts);
     if (day !== lastDay) {
@@ -360,9 +356,30 @@ function renderMessages(title, msgs, showSenders, scrollBottom) {
     box.appendChild(el("span", clock(m.ts), "time"));
     list.appendChild(box);
   }
-  const pin = () => { list.scrollTop = scrollBottom ? list.scrollHeight : 0; };
+  return lastDay;
+}
+
+function pinList(list, toBottom) {
+  const pin = () => { list.scrollTop = toBottom ? list.scrollHeight : 0; };
   pin();
   requestAnimationFrame(pin); // re-pin after entrance animations settle layout
+}
+
+// renderMessages fills the message pane WhatsApp-style: day dividers,
+// incoming bubbles left, own bubbles right, time inside the bubble, and —
+// when senders vary — a colored sender label. scrollBottom pins the view
+// to the newest message (a chat); search results stay scrolled to top.
+// The refresh control shows only for a chat (currentChat set by caller).
+function renderMessages(title, msgs, showSenders, scrollBottom) {
+  document.getElementById("messages-head").hidden = false;
+  document.getElementById("messages-title").textContent = title;
+  document.getElementById("messages-refresh").hidden = !currentChat;
+  const list = document.getElementById("messages-list");
+  list.replaceChildren();
+  if (msgs.length === 0) { empty(list, "No messages stored for this chat yet."); return ""; }
+  const lastDay = appendMessages(list, msgs, showSenders, "");
+  pinList(list, scrollBottom);
+  return lastDay;
 }
 
 async function loadChats() {
@@ -380,14 +397,17 @@ async function loadChats() {
     if (c.is_group) label.appendChild(el("span", "group", "tag"));
     b.appendChild(label);
     b.appendChild(el("span", ago(c.last_message_at), "chat-when"));
+    if (currentChat && currentChat.jid === c.jid) b.classList.add("active");
     b.addEventListener("click", async () => {
       for (const other of list.children) other.classList.remove("active");
       b.classList.add("active");
       skeleton(document.getElementById("messages-list"), 6, "2.6rem");
       try {
-        const msgs = await api("/api/messages?chat=" + encodeURIComponent(c.jid) + "&limit=50");
-        renderMessages(name, msgs.reverse(), c.is_group, true);
+        const page = await api("/api/messages?chat=" + encodeURIComponent(c.jid) + "&limit=50");
+        currentChat = { jid: c.jid, name, isGroup: c.is_group, cursor: page.cursor, lastDay: "" };
+        currentChat.lastDay = renderMessages(name, page.messages, c.is_group, true);
       } catch (e) {
+        currentChat = null;
         empty(document.getElementById("messages-list"), "Couldn't load messages.");
       }
     });
@@ -396,10 +416,34 @@ async function loadChats() {
   stagger(list);
 }
 
+// refreshMessages fetches only what landed after the open chat's cursor
+// and appends it; the view follows only if it was already pinned to the
+// bottom. A response landing after the user switched chats is dropped.
+document.getElementById("messages-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const chat = currentChat;
+  if (!chat) return;
+  let page;
+  try {
+    page = await api("/api/messages?chat=" + encodeURIComponent(chat.jid) + "&after=" + chat.cursor + "&limit=50");
+  } catch (e) { return; }
+  if (currentChat !== chat) return;
+  chat.cursor = page.cursor;
+  if (page.messages.length === 0) return;
+  const list = document.getElementById("messages-list");
+  const wasEmpty = list.firstElementChild && list.firstElementChild.classList.contains("empty");
+  if (wasEmpty) list.replaceChildren();
+  const pinned = wasEmpty || list.scrollTop + list.clientHeight >= list.scrollHeight - 40;
+  chat.lastDay = appendMessages(list, page.messages, chat.isGroup, chat.lastDay);
+  if (pinned) pinList(list, true);
+}));
+
+document.getElementById("chats-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, loadChats));
+
 document.getElementById("search-go").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   const q = document.getElementById("search-box").value.trim();
   if (!q) return;
   skeleton(document.getElementById("messages-list"), 6, "2.6rem");
+  currentChat = null;
   try {
     const msgs = await api("/api/search?q=" + encodeURIComponent(q) + "&limit=50");
     renderMessages("search: " + q, msgs, true, false);

@@ -49,20 +49,33 @@ func messageRows(msgs []store.MessageRow) []map[string]any {
 	return rows
 }
 
+// handleMessages serves both faces of the chat pane through one rowid
+// cursor (poll_new_messages' machinery): without ?after= it tails the
+// newest page, with ?after= it returns only what landed past the caller's
+// cursor. Either way the response carries the next cursor, so a refresh
+// can neither skip nor duplicate a message.
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	chat := r.URL.Query().Get("chat")
 	if chat == "" {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "chat is required"})
 		return
 	}
-	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	limit := queryLimit(r)
 	h.deps.Bridge.WaitForCatchUp(r.Context())
-	msgs, err := h.deps.Store.Messages(chat, before, 0, queryLimit(r))
+
+	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	if !r.URL.Query().Has("after") || err != nil {
+		if after, err = h.deps.Store.TailRowID(chat, true, limit); err != nil {
+			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
+			return
+		}
+	}
+	msgs, cursor, err := h.deps.Store.MessagesAfterRowID(chat, after, true, limit)
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
 		return
 	}
-	h.writeJSON(w, http.StatusOK, messageRows(msgs))
+	h.writeJSON(w, http.StatusOK, map[string]any{"messages": messageRows(msgs), "cursor": cursor})
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
