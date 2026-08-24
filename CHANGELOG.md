@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-24
+
+The personal-robustness release: the server heals itself after a
+WhatsApp-side logout, Windows gets service support, messages get a backup
+command — and a local web dashboard arrives, with QR pairing in the
+browser, WhatsApp-style chat browsing, trust/schedule/draft management,
+and one-click unlink.
 
 ### Added
 
