@@ -277,7 +277,7 @@ them is behavior.
 registers. whatsmeow's defaults announce an OS string of `whatsmeow` with an
 unknown platform type, which is distinguishable from an official client by
 reading the pairing payload alone. This project overrides that and announces
-a Chrome browser identity instead (`internal/bridge/bridge.go`), which is
+a Chrome browser identity instead (`internal/bridge/clientinfo.go`), which is
 also what your phone shows for this device under Linked Devices.
 
 Do not mistake that override for a fix. It defeats the most trivial version
