@@ -49,6 +49,7 @@ type Bridge interface {
 	Logout(ctx context.Context) error
 	WaitForCatchUp(ctx context.Context)
 	DownloadMedia(ctx context.Context, ref []byte, destDir, filename string) (string, error)
+	ProfilePicture(ctx context.Context, jid string) ([]byte, error)
 }
 
 // Deps wires the dashboard into serve's already-constructed pieces. Ctx is
@@ -71,6 +72,7 @@ type Handler struct {
 	session string // per-process session cookie value; browser logs in again after a restart
 	mux     *http.ServeMux
 	pair    pairState
+	avatars *avatarCache
 }
 
 // New builds the dashboard handler. It panics only on entropy failure at
@@ -80,7 +82,7 @@ func New(deps Deps) *Handler {
 	if _, err := rand.Read(buf); err != nil {
 		panic("dashboard: session entropy unavailable: " + err.Error())
 	}
-	h := &Handler{deps: deps, session: hex.EncodeToString(buf), mux: http.NewServeMux()}
+	h := &Handler{deps: deps, session: hex.EncodeToString(buf), mux: http.NewServeMux(), avatars: newAvatarCache()}
 
 	h.mux.HandleFunc("/ui/login", h.handleLogin)
 	h.mux.Handle("/ui/", h.authed(h.serveStatic))
@@ -99,6 +101,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/messages", h.authed(h.handleMessages))
 	h.mux.HandleFunc("/api/search", h.authed(h.handleSearch))
 	h.mux.HandleFunc("/api/media", h.authed(h.handleMedia))
+	h.mux.HandleFunc("/api/avatar", h.authed(h.handleAvatar))
 	h.mux.HandleFunc("/api/trust", h.authed(h.handleTrust))
 	h.mux.HandleFunc("/api/trust/", h.authed(h.mutating(h.handleTrustRemove)))
 	h.mux.HandleFunc("/api/schedules", h.authed(h.handleSchedules))

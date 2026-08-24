@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   place, following the scroll only if you were already at the bottom)
   and one reloads the chat list. No background polling — updates load
   on demand.
+- Profile pictures in the dashboard's chat list, served through the
+  server itself (the page still makes no external requests). Lookups are
+  cached for a day — including the "no picture" answer — and live
+  fetches are rate-capped, so rendering the list never turns into a
+  burst of WhatsApp queries. The initial-letter avatar remains the
+  fallback whenever no picture is available.
 - Media in the dashboard's chat screen: images and stickers preview
   inline (lazily, so only what scrolls into view is fetched), and every
   other attachment gets a download link. Files are served from the same
