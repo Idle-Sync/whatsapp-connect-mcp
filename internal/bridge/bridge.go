@@ -208,7 +208,11 @@ func (b *Bridge) reinitAfterLogout() {
 // pairing to appear, then reconnects. Runs only after a logout re-init.
 func (b *Bridge) recoverPairing() {
 	if err := b.WaitForPairing(b.openCtx); err != nil {
-		return // process shutting down
+		if !errors.Is(err, context.Canceled) {
+			_, _ = fmt.Fprintln(b.diag,
+				"whatsapp: could not re-check pairing after the logout — restart the server, then run `whatsapp-connect-mcp setup`")
+		}
+		return
 	}
 	if err := b.Connect(b.openCtx); err != nil {
 		_, _ = fmt.Fprintf(b.diag, "whatsapp: reconnect after re-pairing failed: %v\n", err)

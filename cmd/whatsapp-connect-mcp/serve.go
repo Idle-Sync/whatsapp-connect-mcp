@@ -111,7 +111,11 @@ func runServe(args []string) int {
 		fmt.Fprintln(os.Stderr, "not paired — run: whatsapp-connect-mcp setup")
 		fmt.Fprintln(os.Stderr, "serve: waiting for pairing (re-checking every 15s) instead of exiting, so a service manager does not restart-loop")
 		if err := br.WaitForPairing(ctx); err != nil {
-			return 0 // shutdown signal while waiting — a clean stop
+			if errors.Is(err, context.Canceled) {
+				return 0 // shutdown signal while waiting — a clean stop
+			}
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			return 1
 		}
 		fmt.Fprintln(os.Stderr, "serve: pairing detected — starting")
 	}

@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconnects on its own as soon as the device is paired again — no restart
   needed. Tool calls while unpaired fail with "no longer paired — run
   setup" instead of a generic connection error.
+- A session-store failure while waiting for pairing (at startup, or after
+  a logout) is no longer mistaken for a clean shutdown: it now prints a
+  diagnostic and exits non-zero at startup, so a service manager restarts
+  the server, and after a logout it says the re-check failed instead of
+  going silent.
 
 ## [0.2.0] - 2026-08-19
 

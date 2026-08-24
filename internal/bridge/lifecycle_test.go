@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -103,6 +104,51 @@ func TestWaitForPairingSeesExternalPairing(t *testing.T) {
 	}
 	if got := b.Status().State; got != "offline" {
 		t.Fatalf("state after external pairing = %q, want offline (paired, not connected)", got)
+	}
+}
+
+// TestRecoverPairingReportsReloadFailure: a real ReloadDevice error during
+// the post-logout pairing wait (e.g. an unreadable session store) must
+// surface a diagnostic — it is not a shutdown signal, and nothing else will
+// tell the operator the recovery goroutine died.
+func TestRecoverPairingReportsReloadFailure(t *testing.T) {
+	b, _ := newTestBridge(t)
+	b.pairPoll = 10 * time.Millisecond
+	var buf bytes.Buffer
+	b.diag = &buf
+
+	if err := b.container.Close(); err != nil {
+		t.Fatalf("close container: %v", err)
+	}
+
+	b.recoverPairing()
+
+	if !strings.Contains(buf.String(), "restart the server") {
+		t.Fatalf("diag = %q, want a re-check-failed diagnostic", buf.String())
+	}
+}
+
+// TestRecoverPairingStaysSilentOnCancellation: process shutdown during the
+// pairing wait is a clean stop, not a failure — recoverPairing must not
+// write a diagnostic for it.
+func TestRecoverPairingStaysSilentOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fake := &fakeIngest{}
+	b, err := Open(ctx, t.TempDir(), fake, mediapath.Roots{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	b.pairPoll = time.Hour // never fires before cancellation
+
+	var buf bytes.Buffer
+	b.diag = &buf
+	cancel()
+
+	b.recoverPairing()
+
+	if buf.Len() != 0 {
+		t.Fatalf("diag = %q, want silence on context cancellation", buf.String())
 	}
 }
 
