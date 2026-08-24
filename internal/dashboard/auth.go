@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 )
@@ -29,6 +30,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // authed admits a request that carries the session cookie or the bearer
 // token (curl convenience — same token, same constant-time check as MCP).
+// A browser page request that fails gets the designed signed-out screen,
+// which says how to log back in; API paths keep the terse 401 the
+// dashboard's own JS (and curl users) key off.
 func (h *Handler) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookie); err == nil &&
@@ -38,6 +42,10 @@ func (h *Handler) authed(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if httpauth.TokenMatches(h.deps.Token, r.Header.Get("Authorization")) {
 			next(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/ui/") {
+			h.servePage(w, http.StatusUnauthorized, "unauthorized.html")
 			return
 		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

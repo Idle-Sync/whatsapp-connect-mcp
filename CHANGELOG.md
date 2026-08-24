@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it under Linked devices), keeping local messages and settings, and reset
   to unpaired so a new QR pairing can start immediately. `remove` remains
   the local-only variant that never contacts WhatsApp.
+- The dashboard now shows designed signed-out and not-found pages that say
+  how to get back in (run `whatsapp-connect-mcp dashboard` for a fresh
+  login link), unknown API paths answer with a JSON 404, and a browser
+  opening the bare server address is redirected to the dashboard.
 - The dashboard's chat window now looks and scrolls like WhatsApp Web's
   dark theme: independently scrolling chat list and message pane, message
   bubbles with in-bubble times, day dividers, and per-sender colors in

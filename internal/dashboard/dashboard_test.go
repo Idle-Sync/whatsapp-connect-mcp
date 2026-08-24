@@ -237,3 +237,49 @@ func TestUIRequiresSession(t *testing.T) {
 		t.Fatalf("authed /ui/ = %d, want the page", w.Code)
 	}
 }
+
+// TestSignedOutPageForBrowserPaths: an unauthenticated /ui/ request gets
+// the designed signed-out page (with the way back in), while /api keeps
+// the terse 401 the dashboard's JS keys off.
+func TestSignedOutPageForBrowserPaths(t *testing.T) {
+	h, _ := newTestHandler(t, nil, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("/ui/ unauth = %d %q, want 401 html", w.Code, w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Body.String(), "whatsapp-connect-mcp dashboard") {
+		t.Fatal("signed-out page must say how to log back in")
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized || strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("/api unauth = %d %q, want terse 401", w.Code, w.Header().Get("Content-Type"))
+	}
+}
+
+func TestDesignedNotFoundForMissingStatic(t *testing.T) {
+	h, cookie := newTestHandler(t, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/ui/nope.css", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "/ui/") {
+		t.Fatalf("missing static = %d, want designed 404 pointing at /ui/", w.Code)
+	}
+}
+
+func TestUnknownAPIPathIsJSON404(t *testing.T) {
+	h, cookie := newTestHandler(t, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/definitely-not-a-thing", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Header().Get("Content-Type"), "json") {
+		t.Fatalf("unknown api = %d %q, want JSON 404", w.Code, w.Header().Get("Content-Type"))
+	}
+}

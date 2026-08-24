@@ -13,8 +13,9 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"io/fs"
 	"net/http"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
@@ -78,9 +79,13 @@ func New(deps Deps) *Handler {
 	}
 	h := &Handler{deps: deps, session: hex.EncodeToString(buf), mux: http.NewServeMux()}
 
-	static, _ := fs.Sub(uiFS, "ui")
 	h.mux.HandleFunc("/ui/login", h.handleLogin)
-	h.mux.Handle("/ui/", h.authed(http.StripPrefix("/ui/", http.FileServer(http.FS(static))).ServeHTTP))
+	h.mux.Handle("/ui/", h.authed(h.serveStatic))
+	// Unknown /api/ paths get a JSON 404 rather than net/http's plain-text
+	// default; specific routes below win by pattern length.
+	h.mux.HandleFunc("/api/", h.authed(func(w http.ResponseWriter, _ *http.Request) {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such endpoint"})
+	}))
 	h.mux.HandleFunc("/api/status", h.authed(h.handleStatus))
 	h.mux.HandleFunc("/api/doctor", h.authed(h.handleDoctor))
 	h.mux.HandleFunc("/api/pair/start", h.authed(h.mutating(h.handlePairStart)))
@@ -101,6 +106,45 @@ func New(deps Deps) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+
+// staticTypes maps the embedded UI's file extensions to content types —
+// the whole surface is three extensions, so a table beats mime lookups.
+var staticTypes = map[string]string{
+	".html": "text/html; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".js":   "text/javascript; charset=utf-8",
+}
+
+// serveStatic serves the embedded UI files under /ui/, with the designed
+// not-found page (styled, and pointing back at /ui/) instead of a bare
+// 404 line for paths that don't exist.
+func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/ui/")
+	if name == "" {
+		name = "index.html"
+	}
+	data, err := uiFS.ReadFile("ui/" + name)
+	ct, known := staticTypes[path.Ext(name)]
+	if err != nil || !known {
+		h.servePage(w, http.StatusNotFound, "notfound.html")
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	_, _ = w.Write(data)
+}
+
+// servePage writes one of the embedded standalone pages (the designed
+// signed-out and not-found screens) with the given status.
+func (h *Handler) servePage(w http.ResponseWriter, code int, name string) {
+	data, err := uiFS.ReadFile("ui/" + name)
+	if err != nil {
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write(data)
+}
 
 // writeJSON writes v with the right header; encoding failures are a
 // programming error surfaced as 500 with a fixed body.

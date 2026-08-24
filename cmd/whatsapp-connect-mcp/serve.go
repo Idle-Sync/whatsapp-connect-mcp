@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -270,6 +271,22 @@ func runStdio(ctx context.Context, server *mcp.Server, errOut io.Writer) int {
 // Startup is acknowledged on errOut once the port is held — a silent start
 // is indistinguishable from a hang (issue #14). errOut is never stdout in
 // production, keeping stdio-transport framing clean.
+// browserToDashboard redirects an unauthenticated browser page request on
+// the bare root to /ui/. The match is deliberately narrow — GET /, no
+// Authorization header, Accept mentioning text/html — so no MCP client
+// request shape can ever hit it.
+func browserToDashboard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && r.Method == http.MethodGet &&
+			r.Header.Get("Authorization") == "" &&
+			strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/ui/", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, token string, errOut io.Writer) int {
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 
@@ -277,8 +294,11 @@ func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, t
 	mux.Handle("/ui/", dash)
 	mux.Handle("/api/", dash)
 	// Every other path is the MCP transport, bearer-authed exactly as
-	// before — injected client configs keep pointing at the root URL.
-	mux.Handle("/", httpauth.Middleware(token, mcpHandler))
+	// before — injected client configs keep pointing at the root URL. The
+	// one carve-out is a person's browser landing on the bare root: an
+	// unauthenticated GET asking for HTML is not an MCP client, so it is
+	// pointed at the dashboard instead of the transport's raw 401.
+	mux.Handle("/", browserToDashboard(httpauth.Middleware(token, mcpHandler)))
 
 	httpServer := &http.Server{
 		Handler:           httpauth.HostGuard(mux),
