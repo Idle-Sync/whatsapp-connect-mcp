@@ -292,6 +292,8 @@ input.mono { font-family: var(--mono); font-size: 0.8rem; }
 
 .avatar {
   flex: none;
+  position: relative;
+  overflow: hidden;
   width: 2.3rem; height: 2.3rem;
   border-radius: 50%;
   background: #6a7175;
@@ -301,6 +303,8 @@ input.mono { font-family: var(--mono); font-size: 0.8rem; }
   font-size: 0.95rem;
   font-weight: 600;
 }
+
+.avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; flex: 1; }
 .tag { font-size: 0.62rem; font-family: var(--mono); color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; margin-left: 0.4rem; vertical-align: 1px; }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,11 @@ type Bridge struct {
 	// an externally completed pairing. A field so tests don't sleep 15s.
 	pairPoll time.Duration
 
+	// avatarHTTP fetches profile-picture bytes from the URL whatsmeow
+	// resolves. A field (defaulted in Open) rather than a package global,
+	// and so tests can point it at a local server.
+	avatarHTTP *http.Client
+
 	// clientMu guards client and handlerRegistrations. The client is
 	// swapped exactly twice in a Bridge's life at most: once at Open and
 	// once per logout re-initialization; every other access is a read.
@@ -155,6 +161,7 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 		container: container, store: st, dataDir: dataDir,
 		mediaRoots: roots, openedAt: time.Now(), catchUpGrace: defaultCatchUpGrace,
 		diag: os.Stderr, openCtx: ctx, pairPoll: pairPollInterval,
+		avatarHTTP: &http.Client{Timeout: avatarFetchTimeout},
 	}
 	b.setClient(device)
 	if device.ID == nil {

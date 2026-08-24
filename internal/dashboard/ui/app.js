@@ -415,7 +415,19 @@ async function loadChats() {
   for (const c of chats) {
     const name = prettyLabel(c.name || c.jid);
     const b = el("button", undefined, "chat-row");
-    b.appendChild(el("span", Array.from(name.replace(/^\+|^user …/, "") || name)[0].toUpperCase(), "avatar"));
+    // The letter avatar stays underneath as the fallback; the picture
+    // (served by this server, never a remote URL) lazily covers it, and a
+    // 404 (no picture), 429 (rate cap), or failed load just removes the
+    // image again.
+    const avatar = el("span", Array.from(name.replace(/^\+|^user …/, "") || name)[0].toUpperCase(), "avatar");
+    const pic = document.createElement("img");
+    pic.className = "avatar-img";
+    pic.loading = "lazy";
+    pic.alt = "";
+    pic.addEventListener("error", () => pic.remove());
+    pic.src = "/api/avatar?jid=" + encodeURIComponent(c.jid);
+    avatar.appendChild(pic);
+    b.appendChild(avatar);
     const label = el("span", name, "chat-name");
     if (c.is_group) label.appendChild(el("span", "group", "tag"));
     b.appendChild(label);

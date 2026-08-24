@@ -82,6 +82,18 @@ type fakeBridge struct {
 
 	downloadData   []byte // bytes DownloadMedia writes to the requested path
 	downloadedName string // filename of the last DownloadMedia call
+
+	avatarData  []byte
+	avatarErr   error
+	avatarCalls int
+}
+
+func (f *fakeBridge) ProfilePicture(context.Context, string) ([]byte, error) {
+	f.avatarCalls++
+	if f.avatarErr != nil {
+		return nil, f.avatarErr
+	}
+	return f.avatarData, nil
 }
 
 func (f *fakeBridge) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
