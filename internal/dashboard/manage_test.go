@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -133,5 +134,80 @@ func TestSuffixRoutesRejectWrongMethod(t *testing.T) {
 
 	if w := mutate(t, h, cookie, http.MethodGet, "/api/schedules/anyid", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /api/schedules/{id} = %d, want 405", w.Code)
+	}
+}
+
+type nullDeliverer struct{ n int }
+
+func (d *nullDeliverer) Deliver(context.Context, gate.Delivery) (string, error) {
+	d.n++
+	return "MSG1", nil
+}
+func (d *nullDeliverer) Validate(gate.Delivery) error { return nil }
+
+func TestDraftApproveEndpoint(t *testing.T) {
+	del := &nullDeliverer{}
+	g := gate.New(del, func(string) bool { return false }, 3, 5, time.Now)
+	res, err := g.Submit(context.Background(), gate.Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hi"}, "", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Gate = g })
+
+	w := authedGet(t, h, cookie, "/api/drafts")
+	var rows []map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&rows)
+	if len(rows) != 1 || rows[0]["token"] != res.DraftToken {
+		t.Fatalf("drafts = %v", rows)
+	}
+
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/drafts/"+res.DraftToken+"/approve", ""); w.Code != http.StatusOK {
+		t.Fatalf("approve = %d: %s", w.Code, w.Body.String())
+	}
+	if del.n != 1 {
+		t.Fatalf("deliveries = %d, want 1", del.n)
+	}
+}
+
+func TestDraftDiscardEndpoint(t *testing.T) {
+	del := &nullDeliverer{}
+	g := gate.New(del, func(string) bool { return false }, 3, 5, time.Now)
+	res, err := g.Submit(context.Background(), gate.Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hi"}, "", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Gate = g })
+
+	if w := mutate(t, h, cookie, http.MethodDelete, "/api/drafts/"+res.DraftToken, ""); w.Code != http.StatusOK {
+		t.Fatalf("discard = %d: %s", w.Code, w.Body.String())
+	}
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/drafts/"+res.DraftToken+"/approve", ""); w.Code != http.StatusConflict {
+		t.Fatalf("approve after discard = %d, want 409", w.Code)
+	}
+	if del.n != 0 {
+		t.Fatalf("deliveries = %d, want 0", del.n)
+	}
+}
+
+// TestDraftActionRejectsWrongMethod extends the suffix-route method-check
+// coverage to the drafts endpoint: only POST .../approve and DELETE are
+// wired, everything else must 405 without touching the gate.
+func TestDraftActionRejectsWrongMethod(t *testing.T) {
+	del := &nullDeliverer{}
+	g := gate.New(del, func(string) bool { return false }, 3, 5, time.Now)
+	res, err := g.Submit(context.Background(), gate.Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hi"}, "", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Gate = g })
+
+	if w := mutate(t, h, cookie, http.MethodGet, "/api/drafts/"+res.DraftToken+"/approve", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET .../approve = %d, want 405", w.Code)
+	}
+	if w := mutate(t, h, cookie, http.MethodPut, "/api/drafts/"+res.DraftToken, ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT /api/drafts/{token} = %d, want 405", w.Code)
+	}
+	if del.n != 0 {
+		t.Fatalf("deliveries = %d, want 0", del.n)
 	}
 }

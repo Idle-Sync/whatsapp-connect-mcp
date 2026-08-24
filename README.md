@@ -418,8 +418,12 @@ re-pairing after a WhatsApp-side logout.
 The Trust tab lists and edits the trusted-contact list — the same
 config.json the `trust` command manages, so a change there takes effect
 immediately in a running server. The Schedules tab lists pending scheduled
-sends and lets you cancel one. The Backup tab writes a snapshot with one
-click, exactly like the `backup` command below.
+sends and lets you cancel one. The Drafts tab lists sends an agent has
+proposed and is waiting on; approving delivers the exact content shown
+(rate-limited as always), and discarding drops it. A draft can be
+committed at most once no matter whether the dashboard or the agent's own
+retry gets there first. The Backup tab writes a snapshot with one click,
+exactly like the `backup` command below.
 
 ## Backing up
 

@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   show as placeholders; the dashboard never fetches media.
 - Dashboard: trust-list management (applies to a running server
   immediately), scheduled-send list/cancel, and a one-click backup.
+- Dashboard: pending send drafts can be reviewed, approved, or discarded.
+  Approving delivers the exact content the agent drafted (rate-limited as
+  always); a draft can be committed at most once no matter how the
+  dashboard and the agent race.
 
 ### Changed
 

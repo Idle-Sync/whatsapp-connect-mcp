@@ -93,6 +93,8 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/schedules", h.authed(h.handleSchedules))
 	h.mux.HandleFunc("/api/schedules/", h.authed(h.mutating(h.handleScheduleCancel)))
 	h.mux.HandleFunc("/api/backup", h.authed(h.mutating(h.handleBackup)))
+	h.mux.HandleFunc("/api/drafts", h.authed(h.handleDrafts))
+	h.mux.HandleFunc("/api/drafts/", h.authed(h.mutating(h.handleDraftAction)))
 	return h
 }
 

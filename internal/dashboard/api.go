@@ -191,6 +191,46 @@ func (h *Handler) handleScheduleCancel(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"cancelled": id})
 }
 
+func (h *Handler) handleDrafts(w http.ResponseWriter, _ *http.Request) {
+	if h.deps.Gate == nil {
+		h.writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	drafts := h.deps.Gate.Drafts()
+	rows := make([]map[string]any, len(drafts))
+	for i, d := range drafts {
+		rows[i] = map[string]any{"token": d.Token, "preview": d.Preview, "expires": d.Expires.UTC().Format(time.RFC3339)}
+	}
+	h.writeJSON(w, http.StatusOK, rows)
+}
+
+func (h *Handler) handleDraftAction(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/drafts/")
+	if h.deps.Gate == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if !h.deps.Gate.Discard(rest) {
+			http.NotFound(w, r)
+			return
+		}
+		h.writeJSON(w, http.StatusOK, map[string]string{"discarded": rest})
+		return
+	}
+	token, ok := strings.CutSuffix(rest, "/approve")
+	if !ok || r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := h.deps.Gate.Approve(r.Context(), token)
+	if err != nil {
+		h.writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()}) // gate errors are category-only
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{"sent": res.Sent, "message_id": res.MessageID})
+}
+
 func (h *Handler) handleBackup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

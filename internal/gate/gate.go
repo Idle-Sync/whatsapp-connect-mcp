@@ -79,6 +79,7 @@ type Result struct {
 
 type draftEntry struct {
 	delivery Delivery
+	preview  string
 	expires  time.Time
 }
 
@@ -181,7 +182,7 @@ func (g *Gate) createDraft(d Delivery, preview string) (Result, error) {
 
 	now := g.now()
 	g.mu.Lock()
-	g.storeDraftLocked(now, token, d)
+	g.storeDraftLocked(now, token, d, preview)
 	g.mu.Unlock()
 
 	return Result{Sent: false, DraftToken: token, Preview: preview}, nil
@@ -262,14 +263,83 @@ func (g *Gate) DeliverScheduled(ctx context.Context, d Delivery) (Result, error)
 	return g.deliverNow(ctx, d, buildPreview("", d))
 }
 
+// DraftInfo is one pending draft as shown to the dashboard: the human
+// reads Preview and decides. Preview is WhatsApp-derived content — the
+// UI renders it under its textContent-only rule.
+type DraftInfo struct {
+	Token   string
+	Preview string
+	Expires time.Time
+}
+
+// Drafts lists pending drafts, oldest first, pruning expired ones.
+func (g *Gate) Drafts() []DraftInfo {
+	now := g.now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pruneExpiredLocked(now)
+	out := make([]DraftInfo, 0, len(g.order))
+	for _, token := range g.order {
+		e := g.drafts[token]
+		out = append(out, DraftInfo{Token: token, Preview: e.preview, Expires: e.expires})
+	}
+	return out
+}
+
+// Approve commits a pending draft on the human's direct say-so: the
+// stored preview is exactly what they read, so no content re-match is
+// needed. Same critical section as commit — claim the draft, take a
+// rate-limit token, delete, deliver — so the draft can be committed at
+// most once no matter how Approve races the model's own re-submit, and a
+// rate-limited attempt leaves the draft intact for retry.
+func (g *Gate) Approve(ctx context.Context, token string) (Result, error) {
+	now := g.now()
+	g.mu.Lock()
+	entry, ok := g.drafts[token]
+	if ok && !entry.expires.After(now) {
+		ok = false
+	}
+	if !ok {
+		g.mu.Unlock()
+		return Result{}, errDraftInvalid
+	}
+	if !g.limiter.AllowN(now, 1) {
+		g.mu.Unlock()
+		return Result{}, g.rateLimitError()
+	}
+	d, preview := entry.delivery, entry.preview
+	delete(g.drafts, token)
+	g.mu.Unlock()
+
+	id, err := g.deliver.Deliver(ctx, d)
+	if err != nil {
+		// Ambiguous: the send may have partially happened. Keep the draft
+		// consumed rather than risk a duplicate delivery on retry.
+		return Result{}, fmt.Errorf("deliver message: %w", err)
+	}
+	return Result{Sent: true, MessageID: id, Preview: preview}, nil
+}
+
+// Discard removes a pending draft. Discarding is always allowed — it
+// only ever prevents a send.
+func (g *Gate) Discard(token string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, ok := g.drafts[token]; !ok {
+		return false
+	}
+	delete(g.drafts, token)
+	return true
+}
+
 // storeDraftLocked prunes expired drafts, evicts the oldest one if the
 // store is at capacity, then inserts token. Callers must hold g.mu.
-func (g *Gate) storeDraftLocked(now time.Time, token string, d Delivery) {
+func (g *Gate) storeDraftLocked(now time.Time, token string, d Delivery, preview string) {
 	g.pruneExpiredLocked(now)
 	if len(g.order) >= draftCap {
 		g.evictOldestLocked()
 	}
-	g.drafts[token] = &draftEntry{delivery: d, expires: now.Add(draftTTL)}
+	g.drafts[token] = &draftEntry{delivery: d, preview: preview, expires: now.Add(draftTTL)}
 	g.order = append(g.order, token)
 }
 

@@ -162,6 +162,29 @@ async function loadSchedules() {
   }
 }
 
+async function loadDrafts() {
+  const rows = await api("/api/drafts");
+  const t = document.getElementById("drafts-table");
+  t.replaceChildren();
+  for (const d of rows) {
+    const tr = row(t, [d.preview, "expires " + d.expires]);
+    const td = document.createElement("td");
+    const ok = el("button", "approve");
+    ok.addEventListener("click", async () => {
+      await api("/api/drafts/" + encodeURIComponent(d.token) + "/approve", { method: "POST" });
+      loadDrafts();
+    });
+    const no = el("button", "discard");
+    no.addEventListener("click", async () => {
+      await api("/api/drafts/" + encodeURIComponent(d.token), { method: "DELETE" });
+      loadDrafts();
+    });
+    td.appendChild(ok);
+    td.appendChild(no);
+    tr.appendChild(td);
+  }
+}
+
 document.getElementById("backup-go").addEventListener("click", async () => {
   const r = await api("/api/backup", { method: "POST" });
   document.getElementById("backup-result").textContent = "written: " + r.path + " (" + r.size + " bytes)";
@@ -169,6 +192,7 @@ document.getElementById("backup-go").addEventListener("click", async () => {
 
 document.querySelector('nav button[data-tab="trust"]').addEventListener("click", loadTrust);
 document.querySelector('nav button[data-tab="schedules"]').addEventListener("click", loadSchedules);
+document.querySelector('nav button[data-tab="drafts"]').addEventListener("click", loadDrafts);
 
 refreshStatus();
 refreshDoctor();

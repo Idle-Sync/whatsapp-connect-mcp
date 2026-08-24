@@ -797,3 +797,104 @@ func TestDeliverScheduledStillValidates(t *testing.T) {
 		t.Fatalf("deliverer called %d times, want 0", deliverer.count())
 	}
 }
+
+// TestDraftsListsPendingWithPreview proves Drafts() is what the dashboard's
+// Drafts tab renders: the same token and preview Submit already handed the
+// caller, plus an expiry.
+func TestDraftsListsPendingWithPreview(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	res, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hello"}, "", nil)
+	if err != nil || res.Sent {
+		t.Fatalf("draft submit: %+v %v", res, err)
+	}
+	drafts := g.Drafts()
+	if len(drafts) != 1 || drafts[0].Token != res.DraftToken || drafts[0].Preview != res.Preview {
+		t.Fatalf("Drafts() = %+v, want the pending draft with its preview", drafts)
+	}
+	if !drafts[0].Expires.After(clock.Now()) {
+		t.Fatalf("expiry not populated: %v", drafts[0].Expires)
+	}
+}
+
+// TestApproveDeliversExactlyOnce proves Approve shares commit's single-use
+// guarantee: once it has delivered, neither the model's own re-submit of
+// the same token nor a second Approve can deliver again.
+func TestApproveDeliversExactlyOnce(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	res, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hello"}, "", nil)
+	if err != nil || res.Sent {
+		t.Fatalf("draft submit: %+v %v", res, err)
+	}
+
+	out, err := g.Approve(context.Background(), res.DraftToken)
+	if err != nil || !out.Sent {
+		t.Fatalf("Approve: %+v %v", out, err)
+	}
+	if deliverer.count() != 1 {
+		t.Fatalf("deliveries = %d, want 1", deliverer.count())
+	}
+
+	// The model's re-submit with the same token must now fail — the
+	// double-send guard.
+	if _, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hello"}, res.DraftToken, nil); err == nil {
+		t.Fatal("commit after Approve succeeded — double send possible")
+	}
+	// And a second Approve must fail too.
+	if _, err := g.Approve(context.Background(), res.DraftToken); err == nil {
+		t.Fatal("second Approve succeeded")
+	}
+}
+
+// TestApproveRateLimitedKeepsDraft proves a rate-limited Approve leaves the
+// draft intact for retry, mirroring commit's own rate-limit behavior.
+func TestApproveRateLimitedKeepsDraft(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 1, 12, clock.Now)
+
+	// Burn the single burst token on an (immediate, untrusted) read so the
+	// limiter is exhausted before Approve is attempted.
+	consume := Delivery{Kind: "read", To: "999@s.whatsapp.net", MessageIDs: []string{"x"}}
+	if _, err := g.Submit(context.Background(), consume, "", resolveNoName); err != nil {
+		t.Fatalf("consume Submit() error: %v", err)
+	}
+
+	res, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hello"}, "", nil)
+	if err != nil {
+		t.Fatalf("draft submit: %v", err)
+	}
+	if _, err := g.Approve(context.Background(), res.DraftToken); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Approve under rate limit = %v, want ErrRateLimited", err)
+	}
+	if len(g.Drafts()) != 1 {
+		t.Fatal("rate-limited Approve consumed the draft")
+	}
+}
+
+// TestDiscard proves discarding a draft is single-use and permanently
+// forecloses its Approve.
+func TestDiscard(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	res, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "hello"}, "", nil)
+	if err != nil {
+		t.Fatalf("draft submit: %v", err)
+	}
+	if !g.Discard(res.DraftToken) {
+		t.Fatal("Discard of a live draft returned false")
+	}
+	if g.Discard(res.DraftToken) {
+		t.Fatal("second Discard returned true")
+	}
+	if _, err := g.Approve(context.Background(), res.DraftToken); err == nil {
+		t.Fatal("Approve after Discard succeeded")
+	}
+}

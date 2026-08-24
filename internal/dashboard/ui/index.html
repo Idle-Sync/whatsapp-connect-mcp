@@ -20,6 +20,7 @@
   <button data-tab="chats">Chats</button>
   <button data-tab="trust">Trust</button>
   <button data-tab="schedules">Schedules</button>
+  <button data-tab="drafts">Drafts</button>
   <button data-tab="backup">Backup</button>
 </nav>
 <main>
@@ -48,6 +49,10 @@
   </section>
   <section id="tab-schedules" hidden>
     <table id="schedules-table"></table>
+  </section>
+  <section id="tab-drafts" hidden>
+    <p>Sends an agent proposed and is waiting on. Approving delivers immediately (rate-limited).</p>
+    <table id="drafts-table"></table>
   </section>
   <section id="tab-backup" hidden>
     <button id="backup-go">Back up messages now</button>
