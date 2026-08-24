@@ -140,7 +140,7 @@ func (h *Handler) handleMedia(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	f, err := os.Open(path) // #nosec G304 -- same medianame-confined path as the Stat above
+	f, err := os.Open(path) // #nosec G304 G703 -- same medianame-confined path as the Stat above
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
 		return
