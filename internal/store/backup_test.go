@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,27 +98,12 @@ func TestBackupToErrorsOmitPath(t *testing.T) {
 	// Destination in a nonexistent directory triggers VACUUM error.
 	// (The database write fails because the parent directory doesn't exist.)
 	dest := filepath.Join(dir, "nonexistent", "backup.db")
-	if err := st.BackupTo(dest); err != nil {
-		errStr := err.Error()
-		if contains(errStr, dir) || contains(errStr, dest) {
-			t.Fatalf("BackupTo error must not contain path; got: %v", err)
-		}
+	err = st.BackupTo(dest)
+	if err == nil {
+		t.Fatal("BackupTo into a nonexistent directory should fail")
 	}
-}
-
-// contains reports whether a string contains a substring (case-sensitive).
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
+	errStr := err.Error()
+	if strings.Contains(errStr, dir) || strings.Contains(errStr, dest) {
+		t.Fatalf("BackupTo error must not contain path; got: %v", err)
 	}
-	return false
 }
