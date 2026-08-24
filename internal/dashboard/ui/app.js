@@ -156,9 +156,15 @@ function prettyLabel(name) {
 
 /* ---------- header + pulse ---------- */
 
+// lastStatus remembers the most recent good status so tab switches render
+// the right panel instantly instead of waiting on (or mis-guessing from) a
+// fetch in flight.
+let lastStatus = null;
+
 async function refreshStatus() {
   try {
     const s = await api("/api/status");
+    lastStatus = s;
     document.getElementById("state-name").textContent = s.state;
     document.getElementById("state").className = "badge " + s.state;
     document.getElementById("pulse").className = "pulse " + s.state;
@@ -210,7 +216,7 @@ for (const b of tabs) b.addEventListener("click", () => {
   }
   const load = loaders[b.dataset.tab];
   if (load) load();
-  if (b.dataset.tab === "pair") pollPair();
+  if (b.dataset.tab === "pair") { renderPair(lastStatus); pollPair(); }
 });
 
 skeletonRows(document.getElementById("status-table"), 5);
@@ -272,6 +278,11 @@ document.getElementById("unlink").addEventListener("click", (ev) => {
   });
 });
 
+// watchedPairing tracks whether this page actually displayed an active
+// pairing attempt, so "Paired." announces a completion the user watched —
+// not every visit to the tab of an already-linked server.
+let watchedPairing = false;
+
 async function pollPair() {
   let info;
   try { info = await api("/api/pair"); } catch (e) { return; }
@@ -280,17 +291,22 @@ async function pollPair() {
   const hint = document.getElementById("pair-hint");
 
   if (info.error) {
+    watchedPairing = false;
     say("pair-msg", "pairing failed: " + info.error, "bad");
     frame.hidden = true;
     return;
   }
   if (!info.pairing) {
     frame.hidden = true;
-    const s = await refreshStatus();
+    const s = lastStatus && !watchedPairing ? lastStatus : await refreshStatus();
     renderPair(s);
-    if (s && !s.needs_pairing) say("pair-msg", "Paired. This server is linked to your WhatsApp.", "ok");
+    if (watchedPairing && s && !s.needs_pairing) {
+      watchedPairing = false;
+      say("pair-msg", "Paired. This server is linked to your WhatsApp.", "ok");
+    }
     return;
   }
+  watchedPairing = true;
   hint.textContent = "Scan with WhatsApp > Linked devices > Link a device";
   if (info.has_code) {
     img.src = "/api/pair/qr.png?t=" + Date.now();

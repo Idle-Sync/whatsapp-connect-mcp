@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The dashboard UI is no longer cached by the browser: after an upgrade,
+  a previously opened dashboard could keep showing the old interface
+  (e.g. the pairing controls while already paired) until a hard refresh.
+  The Pair tab also renders the correct linked/unpaired panel instantly
+  from the last known state, and "Paired." only announces a pairing you
+  actually watched complete.
+
 ## [0.3.0] - 2026-08-24
 
 The personal-robustness release: the server heals itself after a

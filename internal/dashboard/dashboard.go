@@ -162,6 +162,9 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", f.contentType)
+	// Never cached: with no validators, browsers heuristically cache these
+	// and keep serving a previous version's UI after an upgrade.
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(f.data)
 }
 
