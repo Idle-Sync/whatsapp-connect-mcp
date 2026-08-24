@@ -86,11 +86,11 @@ type fakeBridge struct {
 
 func (f *fakeBridge) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
 	f.downloadedName = filename
-	if err := os.MkdirAll(destDir, 0o700); err != nil {
+	if err := os.MkdirAll(destDir, 0o700); err != nil { // #nosec G703 -- test fake writing under t.TempDir
 		return "", err
 	}
 	path := filepath.Join(destDir, filename)
-	if err := os.WriteFile(path, f.downloadData, 0o600); err != nil {
+	if err := os.WriteFile(path, f.downloadData, 0o600); err != nil { // #nosec G703 -- test fake writing under t.TempDir
 		return "", err
 	}
 	return path, nil
