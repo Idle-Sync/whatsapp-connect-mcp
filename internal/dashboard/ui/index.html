@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whatsapp-connect-mcp</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="wordmark">whatsapp-connect-mcp</span>
+    <span id="version" class="version"></span>
+  </div>
+  <div class="health">
+    <span id="state" class="badge"><span class="dot"></span><span id="state-name">…</span></span>
+    <span id="health-detail" class="health-detail"></span>
+  </div>
+</header>
+<div id="pulse" class="pulse"></div>
+
+<div class="frame">
+  <nav aria-label="Sections">
+    <button data-tab="status" class="active">status</button>
+    <button data-tab="pair">pair</button>
+    <button data-tab="chats">chats</button>
+    <button data-tab="trust">trust</button>
+    <button data-tab="schedules">schedules</button>
+    <button data-tab="drafts">drafts<span id="drafts-count" class="count" hidden></span></button>
+    <button data-tab="backup">backup</button>
+  </nav>
+
+  <main>
+    <section id="tab-status">
+      <h2>Connection</h2>
+      <table id="status-table" class="kv"></table>
+      <h2>Doctor</h2>
+      <table id="doctor-table" class="findings"></table>
+    </section>
+
+    <section id="tab-pair" hidden>
+      <h2>Link this server to WhatsApp</h2>
+      <p id="pair-msg" class="chip" hidden></p>
+      <div id="pair-linked" hidden>
+        <p class="dim">This server is linked to your WhatsApp. Unlinking signs
+          it out on WhatsApp's servers — the same as removing it from Linked
+          devices on your phone — and brings the QR code back to pair again.</p>
+        <button id="unlink" class="danger">Unlink from WhatsApp</button>
+      </div>
+      <div id="pair-stage" class="pair-stage" hidden>
+        <div id="pair-frame" class="viewfinder" hidden>
+          <img id="pair-qr" alt="Pairing QR code">
+          <div class="corner-b"></div>
+        </div>
+        <p id="pair-hint" class="dim">Pairing shows a QR code here. Scan it from
+          WhatsApp &gt; Linked devices &gt; Link a device.</p>
+        <button id="pair-start" class="primary">Start pairing</button>
+      </div>
+    </section>
+
+    <section id="tab-chats" hidden>
+      <h2>Chats</h2>
+      <div class="searchbar">
+        <input id="search-box" placeholder="Search all messages">
+        <button id="search-go">Search</button>
+      </div>
+      <div class="chats-layout">
+        <div id="chats-list" class="chats-list"></div>
+        <div class="messages-pane">
+          <div id="messages-title" class="chat-header" hidden></div>
+          <div id="messages-list" class="messages-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-trust" hidden>
+      <h2>Trusted contacts</h2>
+      <p class="dim">Trusted contacts auto-send without a draft preview. Add only
+        people you'd let an agent message directly.</p>
+      <p id="trust-msg" class="chip" hidden></p>
+      <div class="searchbar">
+        <input id="trust-jid" placeholder="15551234567@s.whatsapp.net" class="mono">
+        <button id="trust-add" class="primary">Trust</button>
+      </div>
+      <ul id="trust-list" class="rows"></ul>
+    </section>
+
+    <section id="tab-schedules" hidden>
+      <h2>Scheduled sends</h2>
+      <p id="schedules-msg" class="chip" hidden></p>
+      <table id="schedules-table" class="rows-table"></table>
+    </section>
+
+    <section id="tab-drafts" hidden>
+      <h2>Waiting on you</h2>
+      <p class="dim">Sends an agent proposed. Approving delivers immediately,
+        rate-limited like every send.</p>
+      <p id="drafts-msg" class="chip" hidden></p>
+      <table id="drafts-table" class="rows-table"></table>
+    </section>
+
+    <section id="tab-backup" hidden>
+      <h2>Backup</h2>
+      <p class="dim">Copies the message database — the one thing re-pairing
+        can't recover. Safe while the server is running.</p>
+      <button id="backup-go" class="primary">Back up messages now</button>
+      <p id="backup-result" class="chip" hidden></p>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

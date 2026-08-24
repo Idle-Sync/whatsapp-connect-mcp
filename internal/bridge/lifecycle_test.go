@@ -174,3 +174,17 @@ func TestWaErrDistinguishesUnpairedFromDisconnected(t *testing.T) {
 		t.Fatal("category error must not wrap the raw whatsmeow error")
 	}
 }
+
+// TestConnectAlreadyConnectedIsSuccess: with the dashboard pairing
+// in-process while a background WaitForPairing→Connect goroutine runs,
+// the second Connect on an already-connected client must be a no-op, not
+// a category error printed as a failure.
+func TestConnectAlreadyConnectedIsSuccess(t *testing.T) {
+	b, _ := newTestBridge(t)
+	if err := b.connectErr(whatsmeow.ErrAlreadyConnected); err != nil {
+		t.Fatalf("ErrAlreadyConnected mapped to %v, want nil", err)
+	}
+	if err := b.connectErr(whatsmeow.ErrNotLoggedIn); err == nil {
+		t.Fatal("a real connect error must still surface")
+	}
+}

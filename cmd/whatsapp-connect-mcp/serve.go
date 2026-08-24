@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/dashboard"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/instancelock"
@@ -26,6 +29,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/schedule"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/watchdog"
 )
 
@@ -102,39 +106,6 @@ func runServe(args []string) int {
 	}
 	defer func() { _ = br.Close() }()
 
-	// Unpaired is a waiting state, not a fatal one: exiting 1 makes a
-	// service manager with Restart=always hammer the binary in a crash
-	// loop (issue #12). WaitForPairing re-reads the session store in place
-	// — setup runs in its own process and writes the device identity into
-	// session.db — so the same Bridge continues once pairing lands.
-	if br.NeedsPairing() {
-		fmt.Fprintln(os.Stderr, "not paired — run: whatsapp-connect-mcp setup")
-		fmt.Fprintln(os.Stderr, "serve: waiting for pairing (re-checking every 15s) instead of exiting, so a service manager does not restart-loop")
-		if err := br.WaitForPairing(ctx); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return 0 // shutdown signal while waiting — a clean stop
-			}
-			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-			return 1
-		}
-		fmt.Fprintln(os.Stderr, "serve: pairing detected — starting")
-	}
-
-	// Best-effort, and deliberately before Connect so the login payload
-	// carries it: a stale version still connects, so a failed lookup is
-	// reported and ignored rather than held against startup.
-	if err := bridge.RefreshWAVersion(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "serve: %v (continuing with the built-in version)\n", err)
-	}
-
-	// ctx is long-lived (cancelled only by the shutdown signal), not
-	// request-scoped: it governs the WhatsApp connection for the life of
-	// the process.
-	if err := br.Connect(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-		return 1
-	}
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: resolve home directory: %v\n", err)
@@ -208,9 +179,62 @@ func runServe(args []string) int {
 			// token file and is never logged.
 			fmt.Fprintf(os.Stderr, "serve: generated HTTP bearer token: %s\n", token)
 		}
-		return runHTTP(ctx, server, *httpAddr, token, os.Stderr)
+		// The listener comes up BEFORE pairing so the dashboard's QR page
+		// is reachable exactly when the user needs it. Store-backed read
+		// tools serve local data meanwhile; live/send tools fail with the
+		// "no longer paired" category error until the connect lands.
+		go func() {
+			if err := connectWhenPaired(ctx, br, os.Stderr); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintf(os.Stderr, "serve: %v — the server stays up (dashboard and local reads still work); restart after fixing this\n", err)
+			}
+		}()
+
+		dash := dashboard.New(dashboard.Deps{
+			Ctx: ctx, Store: st, Bridge: br, Gate: g, Sched: schedStore,
+			DataDir: dataDir, Token: token, Version: version.String(),
+			Doctor: func(dctx context.Context) []doctor.Finding {
+				return doctor.Run(dctx, doctor.Env{
+					DataDir: dataDir, BinaryPath: binaryPath, Home: home, Store: st,
+					NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
+					LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
+					IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
+				})
+			},
+		})
+		return runHTTP(ctx, server, dash, *httpAddr, token, os.Stderr)
+	}
+
+	// stdio keeps the blocking behavior: one client, no dashboard, no
+	// reason to accept traffic before the session is usable.
+	if err := connectWhenPaired(ctx, br, os.Stderr); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return 0 // shutdown signal while waiting — a clean stop
+		}
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
 	}
 	return runStdio(ctx, server, os.Stderr)
+}
+
+// connectWhenPaired waits for a pairing if none exists (announcing the
+// wait, so an operator watching the log knows why nothing is happening),
+// refreshes the announced WhatsApp Web version best-effort, then connects.
+// In stdio mode runServe calls it synchronously before the transport; in
+// http mode it runs in the background so the listener — and the
+// dashboard's QR page — are reachable while unpaired.
+func connectWhenPaired(ctx context.Context, br *bridge.Bridge, errOut io.Writer) error {
+	if br.NeedsPairing() {
+		_, _ = fmt.Fprintln(errOut, "not paired — run: whatsapp-connect-mcp setup")
+		_, _ = fmt.Fprintln(errOut, "serve: waiting for pairing (re-checking every 15s) instead of exiting, so a service manager does not restart-loop")
+		if err := br.WaitForPairing(ctx); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(errOut, "serve: pairing detected — starting")
+	}
+	if err := bridge.RefreshWAVersion(ctx); err != nil {
+		_, _ = fmt.Fprintf(errOut, "serve: %v (continuing with the built-in version)\n", err)
+	}
+	return br.Connect(ctx)
 }
 
 // runStdio runs server over stdio until ctx is cancelled, the client
@@ -240,15 +264,44 @@ func runStdio(ctx context.Context, server *mcp.Server, errOut io.Writer) int {
 }
 
 // runHTTP serves server over streamable HTTP on addr until ctx is
-// cancelled, then shuts the HTTP server down gracefully. Every request must
-// carry token and be addressed to a loopback Host; see internal/httpauth.
+// cancelled, then shuts the HTTP server down gracefully. dash mounts at
+// /ui/ and /api/ (cookie- or bearer-authed, see internal/dashboard); every
+// other path stays the MCP transport, requiring both the loopback Host and
+// the bearer token as before, so injected client configs are unaffected.
 // Startup is acknowledged on errOut once the port is held — a silent start
 // is indistinguishable from a hang (issue #14). errOut is never stdout in
 // production, keeping stdio-transport framing clean.
-func runHTTP(ctx context.Context, server *mcp.Server, addr, token string, errOut io.Writer) int {
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+// browserToDashboard redirects an unauthenticated browser page request on
+// the bare root to /ui/. The match is deliberately narrow — GET /, no
+// Authorization header, Accept mentioning text/html — so no MCP client
+// request shape can ever hit it.
+func browserToDashboard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && r.Method == http.MethodGet &&
+			r.Header.Get("Authorization") == "" &&
+			strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/ui/", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, token string, errOut io.Writer) int {
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ui/", dash)
+	mux.Handle("/api/", dash)
+	// Every other path is the MCP transport, bearer-authed exactly as
+	// before — injected client configs keep pointing at the root URL. The
+	// one carve-out is a person's browser landing on the bare root: an
+	// unauthenticated GET asking for HTML is not an MCP client, so it is
+	// pointed at the dashboard instead of the transport's raw 401.
+	mux.Handle("/", browserToDashboard(httpauth.Middleware(token, mcpHandler)))
+
 	httpServer := &http.Server{
-		Handler:           httpauth.Middleware(token, handler),
+		Handler:           httpauth.HostGuard(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -263,6 +316,7 @@ func runHTTP(ctx context.Context, server *mcp.Server, addr, token string, errOut
 		return 1
 	}
 	_, _ = fmt.Fprintf(errOut, "serve: listening on http://%s (streamable HTTP, bearer-token auth) — Ctrl-C to stop\n", ln.Addr())
+	_, _ = fmt.Fprintf(errOut, "serve: dashboard at http://%s/ui/ — run `whatsapp-connect-mcp dashboard` for a login link\n", ln.Addr())
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(ln) }()

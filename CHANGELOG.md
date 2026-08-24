@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `logout` command and an Unlink button on the dashboard's Pair tab:
+  both sign this device out on WhatsApp's servers (the phone stops listing
+  it under Linked devices), keeping local messages and settings, and reset
+  to unpaired so a new QR pairing can start immediately. `remove` remains
+  the local-only variant that never contacts WhatsApp.
+- Chats with no stored name now resolve a display name through the
+  contacts table and lid mapping — in the dashboard, in `list_chats`/
+  `get_chat`, and in send previews — and the dashboard falls back to a
+  readable "+number" instead of a raw JID. Empty-bodied messages (system
+  events, removed reactions) render as dim kind placeholders instead of
+  blank bubbles, and a signed-out dashboard now says so in its header
+  instead of freezing on the last live state.
+- The dashboard now shows designed signed-out and not-found pages that say
+  how to get back in (run `whatsapp-connect-mcp dashboard` for a fresh
+  login link), unknown API paths answer with a JSON 404, and a browser
+  opening the bare server address is redirected to the dashboard.
+- The dashboard's chat window now looks and scrolls like WhatsApp Web's
+  dark theme: independently scrolling chat list and message pane, message
+  bubbles with in-bubble times, day dividers, and per-sender colors in
+  groups. The whole dashboard adopts WhatsApp's dark palette, with
+  loading skeletons and clearer action feedback throughout.
 - New `backup` command: writes a consistent snapshot of the message
   database to `<data-dir>/backups/` (or `--dest`), safe to run while the
   server is up. Message history is the one thing re-pairing cannot
@@ -27,6 +48,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finding now says when the server was logged out by WhatsApp mid-run.
 - `status` now shows connection state, last event time, reconnect count,
   and ingest-failure count.
+- A local web dashboard on the shared HTTP server: open it with the new
+  `dashboard` command (prints a one-time login link). This first slice
+  shows connection health, store counts, and doctor findings; pairing and
+  management arrive in following changes. Localhost-only, protected by
+  the same bearer token as the HTTP transport.
+- QR pairing from the dashboard: when the session is unpaired, the Pair
+  tab shows the QR code in the browser — no terminal needed, including
+  re-pairing after a WhatsApp-side logout.
+- Dashboard: read-only chat browsing and full-text search. Media messages
+  show as placeholders; the dashboard never fetches media.
+- Dashboard: trust-list management (applies to a running server
+  immediately), scheduled-send list/cancel, and a one-click backup.
+- Dashboard: pending send drafts can be reviewed, approved, or discarded.
+  Approving delivers the exact content the agent drafted (rate-limited as
+  always); a draft can be committed at most once no matter how the
+  dashboard and the agent race.
+
+### Changed
+
+- `serve --http` now starts its listener before waiting for pairing, so
+  the server is reachable while unpaired: store-backed read tools serve
+  local data, and live/send tools report "no longer paired" until pairing
+  completes. stdio serve still waits for pairing before starting.
 
 ### Fixed
 
@@ -40,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostic and exits non-zero at startup, so a service manager restarts
   the server, and after a logout it says the re-check failed instead of
   going silent.
+- Dashboard: a failed pair start, trust change, schedule cancel, backup,
+  or draft approve/discard now shows a message in that tab instead of
+  failing silently.
+- Dashboard: starting pairing only accepts POST, matching every other
+  mutating dashboard route.
 
 ## [0.2.0] - 2026-08-19
 

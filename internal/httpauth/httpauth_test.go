@@ -134,10 +134,30 @@ func TestBearerPrefixIsCaseInsensitive(t *testing.T) {
 func TestTokenIsNotAPrefixMatch(t *testing.T) {
 	// A token that is a prefix of the real one must not pass: constant-time
 	// compare also enforces equal length.
-	if tokenMatches("secret", "Bearer secr") {
+	if TokenMatches("secret", "Bearer secr") {
 		t.Error("a prefix of the token was accepted")
 	}
 	if !strings.HasPrefix("secret", "secr") {
 		t.Fatal("fixture assumption broken")
+	}
+}
+
+func TestHostGuardOnlyChecksHost(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h := HostGuard(next)
+
+	r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:2178/ui/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusTeapot {
+		t.Fatalf("loopback host blocked: %d", w.Code)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "http://evil.example/ui/", nil)
+	r.Host = "evil.example"
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("public host allowed: %d", w.Code)
 	}
 }

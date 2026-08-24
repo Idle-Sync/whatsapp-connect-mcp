@@ -277,7 +277,7 @@ them is behavior.
 registers. whatsmeow's defaults announce an OS string of `whatsmeow` with an
 unknown platform type, which is distinguishable from an official client by
 reading the pairing payload alone. This project overrides that and announces
-a Chrome browser identity instead (`internal/bridge/bridge.go`), which is
+a Chrome browser identity instead (`internal/bridge/clientinfo.go`), which is
 also what your phone shows for this device under Linked Devices.
 
 Do not mistake that override for a fix. It defeats the most trivial version
@@ -391,6 +391,43 @@ directory permissions (POSIX), and the version check above. Every finding
 is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
 client's name, never its path on disk.
+
+## Dashboard
+
+```sh
+whatsapp-connect-mcp dashboard [--port n]
+```
+
+Prints (and tries to open) a one-time login link for a small web dashboard
+served alongside `serve --http` — it shows connection health, store row
+counts, and the same doctor findings `check` prints, refreshed every few
+seconds. The link exchanges the HTTP transport's existing bearer token for
+a session cookie, so nothing new needs to be configured or trusted.
+
+The dashboard only ever listens on loopback, exactly like the HTTP
+transport it shares a port with: `serve --http` must already be running,
+and the page is unreachable from any other machine. Log back in with the
+`dashboard` command any time the session expires (a server restart, most
+often) — the printed token is never written to a server log.
+
+When the session is unpaired, the dashboard's Pair tab shows the QR code
+right in the browser — start pairing there and scan it with WhatsApp >
+Linked devices > Link a device, no terminal needed. This also covers
+re-pairing after a WhatsApp-side logout. When the session is paired, the
+same tab offers Unlink: it signs the server out on WhatsApp's servers
+(the phone stops listing it under Linked devices) and brings the QR back.
+The `logout` command does the same from the terminal — unlike `remove`,
+which only deletes the local session and never tells WhatsApp.
+
+The Trust tab lists and edits the trusted-contact list — the same
+config.json the `trust` command manages, so a change there takes effect
+immediately in a running server. The Schedules tab lists pending scheduled
+sends and lets you cancel one. The Drafts tab lists sends an agent has
+proposed and is waiting on; approving delivers the exact content shown
+(rate-limited as always), and discarding drops it. A draft can be
+committed at most once no matter whether the dashboard or the agent's own
+retry gets there first. The Backup tab writes a snapshot with one click,
+exactly like the `backup` command below.
 
 ## Backing up
 

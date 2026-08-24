@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signed out — whatsapp-connect-mcp</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #111b21; color: #e9edef;
+    font-family: system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 15px; line-height: 1.6;
+  }
+  .card {
+    max-width: 26rem; margin: 1rem;
+    background: #202c33; border: 1px solid #2f3b43; border-radius: 12px;
+    border-top: 2px solid #f5b84f;
+    padding: 1.6rem 1.8rem;
+    animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+  }
+  .mark { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .8rem; color: #8696a0; margin-bottom: 1rem; }
+  h1 { font-size: 1.15rem; margin: 0 0 .5rem; }
+  p { margin: .4rem 0; color: #cfd6da; font-size: .9rem; }
+  .why { color: #8696a0; font-size: .82rem; }
+  code {
+    display: block; margin: 1rem 0 .4rem;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .85rem;
+    background: #111b21; border: 1px solid #2f3b43; border-radius: 8px;
+    padding: .6rem .8rem; color: #06cf9c;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .hint { font-size: .78rem; color: #8696a0; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">whatsapp-connect-mcp</div>
+    <h1>Signed out</h1>
+    <p>This dashboard needs a fresh login link.</p>
+    <p class="why">Sessions end when the server restarts — the login cookie
+      only lives as long as the server process, so nothing sensitive
+      survives on disk.</p>
+    <code>whatsapp-connect-mcp dashboard</code>
+    <p class="hint">Run that in a terminal: it prints a one-time login link
+      and opens it in your browser. MCP clients are unaffected — they
+      authenticate separately.</p>
+  </div>
+</body>
+</html>
