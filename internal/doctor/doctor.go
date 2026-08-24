@@ -69,6 +69,13 @@ type Env struct {
 	// nil skips that check.
 	LastEventAt func() time.Time
 	OpenedAt    func() time.Time
+	// IngestErrors reports how many inbound WhatsApp events failed to
+	// write to the message store since the server started; nil skips the
+	// ingest check. LastDisconnect is the category of the most recent
+	// involuntary disconnect ("" if none); checkSession uses it to name a
+	// mid-run logout. Both are *bridge.Bridge methods of those names.
+	IngestErrors   func() uint64
+	LastDisconnect func() string
 }
 
 // Check is one named diagnostic.

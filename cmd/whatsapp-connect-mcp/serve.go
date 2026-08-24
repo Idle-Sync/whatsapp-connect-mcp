@@ -188,6 +188,7 @@ func runServe(args []string) int {
 		Home: home, BinaryPath: binaryPath,
 		NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
 		LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
+		IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
 	}
 	server := mcpserv.New(st, br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, dataDir, doc)
 

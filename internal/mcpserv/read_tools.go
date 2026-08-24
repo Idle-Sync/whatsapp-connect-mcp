@@ -921,14 +921,16 @@ func notifyPollProgress(ctx context.Context, req *mcp.CallToolRequest, remaining
 
 func (d *toolDeps) doctor(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 	env := doctor.Env{
-		DataDir:      d.dataDir,
-		BinaryPath:   d.doctorEnv.BinaryPath,
-		Home:         d.doctorEnv.Home,
-		Store:        d.st,
-		NeedsPairing: d.doctorEnv.NeedsPairing,
-		LoggedIn:     d.doctorEnv.LoggedIn,
-		LastEventAt:  d.doctorEnv.LastEventAt,
-		OpenedAt:     d.doctorEnv.OpenedAt,
+		DataDir:        d.dataDir,
+		BinaryPath:     d.doctorEnv.BinaryPath,
+		Home:           d.doctorEnv.Home,
+		Store:          d.st,
+		NeedsPairing:   d.doctorEnv.NeedsPairing,
+		LoggedIn:       d.doctorEnv.LoggedIn,
+		LastEventAt:    d.doctorEnv.LastEventAt,
+		OpenedAt:       d.doctorEnv.OpenedAt,
+		IngestErrors:   d.doctorEnv.IngestErrors,
+		LastDisconnect: d.doctorEnv.LastDisconnect,
 	}
 	findings := doctor.Run(ctx, env)
 	// Findings are this program's own diagnostic data, not WhatsApp

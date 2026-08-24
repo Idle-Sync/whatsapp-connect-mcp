@@ -470,6 +470,42 @@ func TestCheckEventFlow(t *testing.T) {
 	}
 }
 
+// --- ingest check ---
+
+func TestCheckIngest(t *testing.T) {
+	cases := []struct {
+		name       string
+		errs       func() uint64
+		wantStatus string
+	}{
+		{"not observable", nil, StatusOK},
+		{"clean", func() uint64 { return 0 }, StatusOK},
+		{"failing", func() uint64 { return 7 }, StatusFail},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := checkIngest(context.Background(), Env{IngestErrors: tc.errs})
+			if f.Status != tc.wantStatus {
+				t.Fatalf("status = %s, want %s (finding: %+v)", f.Status, tc.wantStatus, f)
+			}
+			if tc.wantStatus == StatusFail && !strings.Contains(f.Detail, "7") {
+				t.Fatalf("fail detail should carry the count, got %q", f.Detail)
+			}
+		})
+	}
+}
+
+func TestCheckSessionNamesMidRunLogout(t *testing.T) {
+	env := Env{
+		NeedsPairing:   func() bool { return true },
+		LastDisconnect: func() string { return "logged_out" },
+	}
+	f := checkSession(context.Background(), env)
+	if f.Status != StatusFail || !strings.Contains(f.Detail, "logged this install out") {
+		t.Fatalf("finding = %+v, want fail naming the mid-run logout", f)
+	}
+}
+
 // An http-transport entry names no binary at all — it points at a shared
 // server URL — so the binary-path validation must not flag it as broken.
 func TestCheckClientsAcceptsHTTPEntry(t *testing.T) {

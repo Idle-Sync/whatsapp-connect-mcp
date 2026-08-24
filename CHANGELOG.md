@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one clear line to the server log instead of passing silently.
 - Failed writes of incoming events to the message store are now counted
   and reported (previously silent).
+- `check` (and the doctor tool) gains an `ingest` finding that fails when
+  incoming events are not reaching the message store, and the session
+  finding now says when the server was logged out by WhatsApp mid-run.
+- `status` now shows connection state, last event time, reconnect count,
+  and ingest-failure count.
 
 ### Fixed
 
