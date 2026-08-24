@@ -83,3 +83,41 @@ func TestBackupToWhileSecondConnectionWrites(t *testing.T) {
 		t.Fatalf("backup failed integrity check: %v", err)
 	}
 }
+
+// TestBackupToErrorsOmitPath verifies that BackupTo errors never embed the
+// destination path, which could leak filesystem structure in error messages.
+func TestBackupToErrorsOmitPath(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(filepath.Join(dir, "messages.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// Destination in a nonexistent directory triggers VACUUM error.
+	// (The database write fails because the parent directory doesn't exist.)
+	dest := filepath.Join(dir, "nonexistent", "backup.db")
+	if err := st.BackupTo(dest); err != nil {
+		errStr := err.Error()
+		if contains(errStr, dir) || contains(errStr, dest) {
+			t.Fatalf("BackupTo error must not contain path; got: %v", err)
+		}
+	}
+}
+
+// contains reports whether a string contains a substring (case-sensitive).
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}

@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"os"
 )
 
@@ -18,10 +17,10 @@ func (s *Store) BackupTo(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return errors.New("backup destination already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("check backup destination: %w", err)
+		return errors.New("backup destination could not be checked")
 	}
 	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
-		return fmt.Errorf("back up database: %w", err)
+		return errors.New("back up database: write failed — check free disk space and that the destination directory exists")
 	}
 	return nil
 }
