@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `logout` command and an Unlink button on the dashboard's Pair tab:
+  both sign this device out on WhatsApp's servers (the phone stops listing
+  it under Linked devices), keeping local messages and settings, and reset
+  to unpaired so a new QR pairing can start immediately. `remove` remains
+  the local-only variant that never contacts WhatsApp.
+- The dashboard's chat window now looks and scrolls like WhatsApp Web's
+  dark theme: independently scrolling chat list and message pane, message
+  bubbles with in-bubble times, day dividers, and per-sender colors in
+  groups. The whole dashboard adopts WhatsApp's dark palette, with
+  loading skeletons and clearer action feedback throughout.
 - New `backup` command: writes a consistent snapshot of the message
   database to `<data-dir>/backups/` (or `--dest`), safe to run while the
   server is up. Message history is the one thing re-pairing cannot

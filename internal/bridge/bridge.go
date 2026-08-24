@@ -388,6 +388,26 @@ func (b *Bridge) connectErr(err error) error {
 	return b.waErr("connect", err)
 }
 
+// Logout unlinks this device from the account on WhatsApp's servers — the
+// same operation as removing it under Linked devices on the phone — then
+// resets to a fresh unpaired client ready to pair again, exactly like a
+// server-initiated logout does. This is the counterpart to the local-only
+// `remove` command, which deletes the session without telling WhatsApp.
+func (b *Bridge) Logout(ctx context.Context) error {
+	if b.NeedsPairing() {
+		return errors.New("log out: this install is not paired")
+	}
+	if err := b.wa().Logout(ctx); err != nil {
+		return b.waErr("log out", err)
+	}
+	// whatsmeow has deleted the device store; rebuild on a fresh unpaired
+	// client so the same *Bridge can pair again without a restart.
+	b.noteDisconnect("logged_out")
+	b.setState(stUnpaired)
+	b.reinitAfterLogout()
+	return nil
+}
+
 // Blocklist returns the JIDs the paired account has blocked, fetched live.
 func (b *Bridge) Blocklist(ctx context.Context) ([]string, error) {
 	bl, err := b.wa().GetBlocklist(ctx)

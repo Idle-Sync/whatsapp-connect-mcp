@@ -413,7 +413,11 @@ often) — the printed token is never written to a server log.
 When the session is unpaired, the dashboard's Pair tab shows the QR code
 right in the browser — start pairing there and scan it with WhatsApp >
 Linked devices > Link a device, no terminal needed. This also covers
-re-pairing after a WhatsApp-side logout.
+re-pairing after a WhatsApp-side logout. When the session is paired, the
+same tab offers Unlink: it signs the server out on WhatsApp's servers
+(the phone stops listing it under Linked devices) and brings the QR back.
+The `logout` command does the same from the terminal — unlike `remove`,
+which only deletes the local session and never tells WhatsApp.
 
 The Trust tab lists and edits the trusted-contact list — the same
 config.json the `trust` command manages, so a change there takes effect

@@ -191,3 +191,44 @@ func TestPairQRWithoutActivePairingIs404(t *testing.T) {
 		t.Fatalf("qr.png with no pairing = %d, want 404", w.Code)
 	}
 }
+
+// TestPairLogout covers the unlink endpoint: method-guarded, refused when
+// unpaired, and delegating to Bridge.Logout when linked.
+func TestPairLogout(t *testing.T) {
+	fb := &pairFakeBridge{fakeBridge: fakeBridge{unpaired: false}}
+	h, cookie := newTestHandlerWithBridge(t, fb)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/pair/logout", nil)
+	r.AddCookie(cookie)
+	r.Header.Set("X-Requested-With", "dashboard")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET logout = %d, want 405", w.Code)
+	}
+	if fb.loggedOut {
+		t.Fatal("GET must not log out")
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "/api/pair/logout", nil)
+	r.AddCookie(cookie)
+	r.Header.Set("X-Requested-With", "dashboard")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !fb.loggedOut {
+		t.Fatalf("POST logout = %d loggedOut=%v, want 200/true", w.Code, fb.loggedOut)
+	}
+}
+
+func TestPairLogoutWhenUnpairedIs409(t *testing.T) {
+	fb := &pairFakeBridge{fakeBridge: fakeBridge{unpaired: true}}
+	h, cookie := newTestHandlerWithBridge(t, fb)
+	r := httptest.NewRequest(http.MethodPost, "/api/pair/logout", nil)
+	r.AddCookie(cookie)
+	r.Header.Set("X-Requested-With", "dashboard")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusConflict || fb.loggedOut {
+		t.Fatalf("logout while unpaired = %d loggedOut=%v, want 409/false", w.Code, fb.loggedOut)
+	}
+}

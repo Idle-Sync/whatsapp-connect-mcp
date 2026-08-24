@@ -43,6 +43,7 @@ type Bridge interface {
 	Status() bridge.Status
 	NeedsPairing() bool
 	PairQR(ctx context.Context, show func(code string)) error
+	Logout(ctx context.Context) error
 	WaitForCatchUp(ctx context.Context)
 }
 
@@ -83,6 +84,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/status", h.authed(h.handleStatus))
 	h.mux.HandleFunc("/api/doctor", h.authed(h.handleDoctor))
 	h.mux.HandleFunc("/api/pair/start", h.authed(h.mutating(h.handlePairStart)))
+	h.mux.HandleFunc("/api/pair/logout", h.authed(h.mutating(h.handlePairLogout)))
 	h.mux.HandleFunc("/api/pair", h.authed(h.handlePairInfo))
 	h.mux.HandleFunc("/api/pair/qr.png", h.authed(h.handlePairQR))
 	h.mux.HandleFunc("/api/chats", h.authed(h.handleChats))

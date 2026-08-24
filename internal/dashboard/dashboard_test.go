@@ -47,9 +47,11 @@ func (f *fakeStore) BackupTo(path string) error {
 }
 
 type fakeBridge struct {
-	status   bridge.Status
-	unpaired bool
-	caughtUp bool
+	status    bridge.Status
+	unpaired  bool
+	caughtUp  bool
+	loggedOut bool
+	logoutErr error
 }
 
 func (f *fakeBridge) Status() bridge.Status          { return f.status }
@@ -61,6 +63,14 @@ func (f *fakeBridge) WaitForCatchUp(context.Context) { f.caughtUp = true }
 func (f *fakeBridge) PairQR(ctx context.Context, _ func(string)) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// Logout records the unlink and flips the fake to unpaired, mirroring the
+// real bridge's post-logout state.
+func (f *fakeBridge) Logout(context.Context) error {
+	f.loggedOut = true
+	f.unpaired = true
+	return f.logoutErr
 }
 
 const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
