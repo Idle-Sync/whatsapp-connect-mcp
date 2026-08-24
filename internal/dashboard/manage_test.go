@@ -111,3 +111,27 @@ func TestSchedulesListAndCancel(t *testing.T) {
 		t.Fatalf("second cancel = %d, want 404", w.Code)
 	}
 }
+
+// TestSuffixRoutesRejectWrongMethod guards against the suffix-routed
+// mutating endpoints executing on any method that merely carries the CSRF
+// header — /api/trust/{jid}, /api/schedules/{id}, and /api/backup must
+// each require their one intended method.
+func TestSuffixRoutesRejectWrongMethod(t *testing.T) {
+	fs := &fakeStore{}
+	h, cookie := newTestHandler(t, fs, nil)
+
+	if w := mutate(t, h, cookie, http.MethodGet, "/api/backup", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/backup = %d, want 405", w.Code)
+	}
+	if fs.backupPath != "" {
+		t.Fatalf("GET /api/backup executed a backup: path=%q", fs.backupPath)
+	}
+
+	if w := mutate(t, h, cookie, http.MethodGet, "/api/trust/15551234567@s.whatsapp.net", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/trust/{jid} = %d, want 405", w.Code)
+	}
+
+	if w := mutate(t, h, cookie, http.MethodGet, "/api/schedules/anyid", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/schedules/{id} = %d, want 405", w.Code)
+	}
+}

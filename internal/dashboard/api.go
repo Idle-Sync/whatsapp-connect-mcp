@@ -129,6 +129,10 @@ func (h *Handler) handleTrustAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleTrustRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	jid := strings.TrimPrefix(r.URL.Path, "/api/trust/")
 	cfg, err := config.Load(h.deps.DataDir)
 	if err != nil {
@@ -166,6 +170,10 @@ func (h *Handler) handleSchedules(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) handleScheduleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/schedules/")
 	if h.deps.Sched == nil {
 		http.NotFound(w, r)
@@ -183,7 +191,11 @@ func (h *Handler) handleScheduleCancel(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"cancelled": id})
 }
 
-func (h *Handler) handleBackup(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	path := store.DefaultBackupPath(h.deps.DataDir, time.Now())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create backups directory"})
