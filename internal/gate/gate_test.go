@@ -898,3 +898,60 @@ func TestDiscard(t *testing.T) {
 		t.Fatal("Approve after Discard succeeded")
 	}
 }
+
+// TestDraftsSkipsConsumedMidOrderTokens is a regression test: Discard and
+// Approve delete a token from g.drafts but leave it in g.order (only
+// pruneExpiredLocked's front-prefix trim removes order entries), so a
+// consumed token that is not at the front of g.order leaves a stale entry
+// behind. Drafts() must skip it rather than dereference the now-missing
+// map entry.
+func TestDraftsSkipsConsumedMidOrderTokens(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	older, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "older"}, "", nil)
+	if err != nil {
+		t.Fatalf("older draft submit: %v", err)
+	}
+	newer, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "newer"}, "", nil)
+	if err != nil {
+		t.Fatalf("newer draft submit: %v", err)
+	}
+
+	if !g.Discard(newer.DraftToken) {
+		t.Fatal("Discard of the newer draft returned false")
+	}
+
+	drafts := g.Drafts()
+	if len(drafts) != 1 || drafts[0].Token != older.DraftToken {
+		t.Fatalf("Drafts() = %+v, want only the older draft", drafts)
+	}
+}
+
+// TestDraftsSkipsApprovedMidOrderToken is the Approve-side twin of
+// TestDraftsSkipsConsumedMidOrderTokens: an Approve mid-order must not
+// leave Drafts() dereferencing a stale g.order entry either.
+func TestDraftsSkipsApprovedMidOrderToken(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	deliverer := &fakeDeliverer{}
+	g := New(deliverer, trustNone, 3, 12, clock.Now)
+
+	older, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "older"}, "", nil)
+	if err != nil {
+		t.Fatalf("older draft submit: %v", err)
+	}
+	newer, err := g.Submit(context.Background(), Delivery{Kind: "text", To: "x@s.whatsapp.net", Text: "newer"}, "", nil)
+	if err != nil {
+		t.Fatalf("newer draft submit: %v", err)
+	}
+
+	if _, err := g.Approve(context.Background(), newer.DraftToken); err != nil {
+		t.Fatalf("Approve of the newer draft: %v", err)
+	}
+
+	drafts := g.Drafts()
+	if len(drafts) != 1 || drafts[0].Token != older.DraftToken {
+		t.Fatalf("Drafts() = %+v, want only the older draft", drafts)
+	}
+}

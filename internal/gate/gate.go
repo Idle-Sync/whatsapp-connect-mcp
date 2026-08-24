@@ -272,7 +272,12 @@ type DraftInfo struct {
 	Expires time.Time
 }
 
-// Drafts lists pending drafts, oldest first, pruning expired ones.
+// Drafts lists pending drafts, oldest first, pruning expired ones. commit,
+// Approve, and Discard delete a committed or discarded token from g.drafts
+// but deliberately leave it in g.order — only pruneExpiredLocked's
+// front-prefix trim removes order entries, so a mid-order token can be
+// stale (present in g.order, absent from g.drafts) between drafting and
+// eventual eviction or expiry. Such tokens are skipped, not zero-valued.
 func (g *Gate) Drafts() []DraftInfo {
 	now := g.now()
 	g.mu.Lock()
@@ -280,7 +285,10 @@ func (g *Gate) Drafts() []DraftInfo {
 	g.pruneExpiredLocked(now)
 	out := make([]DraftInfo, 0, len(g.order))
 	for _, token := range g.order {
-		e := g.drafts[token]
+		e, ok := g.drafts[token]
+		if !ok {
+			continue
+		}
 		out = append(out, DraftInfo{Token: token, Preview: e.preview, Expires: e.expires})
 	}
 	return out
