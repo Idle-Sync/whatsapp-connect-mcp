@@ -1,0 +1,13 @@
+:root { font-family: system-ui, sans-serif; color: #1a1a1a; background: #fafafa; }
+body { margin: 0 auto; max-width: 60rem; padding: 1rem; }
+header { display: flex; justify-content: space-between; align-items: baseline; }
+.badge { padding: .15rem .6rem; border-radius: 1rem; background: #ddd; }
+.badge.connected { background: #b7e4c7; }
+.badge.unpaired, .badge.offline { background: #ffd6a5; }
+.badge.connecting { background: #fdffb6; }
+nav button { margin-right: .5rem; padding: .3rem .8rem; }
+nav button.active { font-weight: bold; }
+table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; }
+td, th { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #e5e5e5; }
+section[hidden] { display: none; }
+.ok { color: #2d6a4f; } .warn { color: #b25e00; } .fail { color: #b00020; }

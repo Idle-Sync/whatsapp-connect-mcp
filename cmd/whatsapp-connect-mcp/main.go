@@ -41,6 +41,8 @@ func run(args []string) int {
 			return runReset(args[1:])
 		case "backup":
 			return runBackup(args[1:])
+		case "dashboard":
+			return runDashboard(args[1:])
 		}
 	}
 
@@ -56,5 +58,6 @@ func run(args []string) int {
 	fmt.Fprintln(os.Stderr, "  remove                 delete the local session (unpair)")
 	fmt.Fprintln(os.Stderr, "  reset                  remove, plus delete messages, media, and settings")
 	fmt.Fprintln(os.Stderr, "  backup [--dest path]   snapshot messages.db into a backup file (safe while serve runs)")
+	fmt.Fprintln(os.Stderr, "  dashboard [--port n]   print/open a login link for the local web dashboard")
 	return 2
 }

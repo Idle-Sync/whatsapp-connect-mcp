@@ -1,0 +1,190 @@
+package dashboard
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
+)
+
+// fakeStore satisfies dashboard.Store; fields configure behavior, later
+// task tests extend it alongside the interface.
+type fakeStore struct {
+	counts store.Counts
+}
+
+func (f *fakeStore) Counts() (store.Counts, error) { return f.counts, nil }
+
+type fakeBridge struct {
+	status   bridge.Status
+	unpaired bool
+}
+
+func (f *fakeBridge) Status() bridge.Status { return f.status }
+func (f *fakeBridge) NeedsPairing() bool    { return f.unpaired }
+
+const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// newTestHandlerWith is the general constructor: sane default Deps, then
+// mod tweaks them, then New + the login flow. Every other constructor in
+// this package's tests is a one-line delegation to it.
+func newTestHandlerWith(t *testing.T, mod func(*Deps)) (*Handler, *http.Cookie) {
+	t.Helper()
+	deps := Deps{
+		Ctx:     context.Background(),
+		Store:   &fakeStore{},
+		Bridge:  &fakeBridge{status: bridge.Status{State: "connected"}},
+		DataDir: t.TempDir(), Token: testToken, Version: "test",
+		Doctor: func(context.Context) []doctor.Finding { return nil },
+	}
+	if mod != nil {
+		mod(&deps)
+	}
+	h := New(deps)
+
+	r := httptest.NewRequest(http.MethodGet, "/ui/login?token="+testToken, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusFound {
+		t.Fatalf("login = %d, want 302", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "wcm_session" {
+			if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+				t.Fatalf("session cookie not HttpOnly+SameSite=Strict: %+v", c)
+			}
+			return h, c
+		}
+	}
+	t.Fatal("no session cookie set on login")
+	return nil, nil
+}
+
+// newTestHandler keeps the common two-fake call sites short.
+func newTestHandler(t *testing.T, fs *fakeStore, fb *fakeBridge) (*Handler, *http.Cookie) {
+	t.Helper()
+	return newTestHandlerWith(t, func(d *Deps) {
+		if fs != nil {
+			d.Store = fs
+		}
+		if fb != nil {
+			d.Bridge = fb
+		}
+	})
+}
+
+func TestLoginRejectsBadToken(t *testing.T) {
+	h, _ := newTestHandler(t, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/ui/login?token=wrong", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token login = %d, want 401", w.Code)
+	}
+	if len(w.Result().Cookies()) != 0 {
+		t.Fatal("cookie set on failed login")
+	}
+}
+
+func TestAPIRequiresCookieOrBearer(t *testing.T) {
+	h, cookie := newTestHandler(t, &fakeStore{counts: store.Counts{Messages: 7}}, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /api/status = %d, want 401", w.Code)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cookie-authed /api/status = %d, want 200", w.Code)
+	}
+	var got struct {
+		State    string `json:"state"`
+		Messages int    `json:"messages"`
+		Version  string `json:"version"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.State != "connected" || got.Messages != 7 || got.Version != "test" {
+		t.Fatalf("status payload = %+v", got)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bearer-authed /api/status = %d, want 200", w.Code)
+	}
+}
+
+func TestMutatingRequiresCSRFHeader(t *testing.T) {
+	h, cookie := newTestHandler(t, nil, nil)
+	// /api/backup is Task 5; the CSRF gate is generic, so use any POST
+	// route through h.mutating — Task 2 registers a POST-only probe is NOT
+	// added; instead assert via the pair endpoint once Task 3 lands. For
+	// Task 2 the gate is unit-tested directly:
+	called := false
+	inner := h.mutating(func(http.ResponseWriter, *http.Request) { called = true })
+
+	r := httptest.NewRequest(http.MethodPost, "/api/anything", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	inner(w, r)
+	if called || w.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF header: called=%v code=%d, want blocked 403", called, w.Code)
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "/api/anything", nil)
+	r.AddCookie(cookie)
+	r.Header.Set("X-Requested-With", "dashboard")
+	w = httptest.NewRecorder()
+	inner(w, r)
+	if !called {
+		t.Fatal("valid CSRF header still blocked")
+	}
+}
+
+// TestEmbeddedJSHasNoHTMLSinks enforces the XSS invariant mechanically:
+// WhatsApp-originated strings may only reach the DOM via textContent, so
+// the HTML-parsing sinks must never appear in the embedded JS.
+func TestEmbeddedJSHasNoHTMLSinks(t *testing.T) {
+	data, err := uiFS.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatalf("read embedded app.js: %v", err)
+	}
+	for _, sink := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
+		if strings.Contains(string(data), sink) {
+			t.Fatalf("embedded JS contains forbidden sink %q", sink)
+		}
+	}
+}
+
+func TestUIRequiresSession(t *testing.T) {
+	h, cookie := newTestHandler(t, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /ui/ = %d, want 401", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<title>") {
+		t.Fatalf("authed /ui/ = %d, want the page", w.Code)
+	}
+}

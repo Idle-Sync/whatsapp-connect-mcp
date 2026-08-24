@@ -68,20 +68,31 @@ func LoadOrCreateToken(dir string) (token string, created bool, err error) {
 }
 
 // Middleware wraps next so that every request must both be addressed to a
-// loopback Host and carry the bearer token. A request failing either is
-// answered before it reaches next, so an unauthenticated caller cannot so
-// much as start a tool call.
+// loopback Host and carry the bearer token. Composition of HostGuard and
+// the bearer check; behavior is identical to the original single-piece
+// middleware.
 func Middleware(token string, next http.Handler) http.Handler {
+	return HostGuard(bearerOnly(token, next))
+}
+
+// HostGuard refuses any request whose Host header does not name the
+// loopback interface — the DNS-rebinding defense. Exported alone so the
+// dashboard routes (cookie-authed, not bearer-authed) still sit behind it.
+func HostGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The Host check comes first, and deliberately so: it is what
-		// defends against a browser being tricked into sending the token to
-		// a rebind of the operator's own site. It costs nothing and its
-		// failure is not about credentials, so it need not be constant-time.
+		// The Host check costs nothing and its failure is not about
+		// credentials, so it need not be constant-time.
 		if !isLoopbackHost(r.Host) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if !tokenMatches(token, r.Header.Get("Authorization")) {
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerOnly(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !TokenMatches(token, r.Header.Get("Authorization")) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -109,10 +120,10 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// tokenMatches reports whether authHeader is a Bearer credential equal to
-// want. The comparison is constant-time so that a caller cannot learn the
-// token a byte at a time from response timing.
-func tokenMatches(want, authHeader string) bool {
+// TokenMatches reports whether authHeader is a Bearer credential equal to
+// want, in constant time. Exported for the dashboard's bearer fallback so
+// the comparison exists in exactly one place.
+func TokenMatches(want, authHeader string) bool {
 	const prefix = "Bearer "
 	if len(authHeader) <= len(prefix) || !strings.EqualFold(authHeader[:len(prefix)], prefix) {
 		return false

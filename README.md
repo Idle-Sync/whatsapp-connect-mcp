@@ -392,6 +392,24 @@ is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
 client's name, never its path on disk.
 
+## Dashboard
+
+```sh
+whatsapp-connect-mcp dashboard [--port n]
+```
+
+Prints (and tries to open) a one-time login link for a small web dashboard
+served alongside `serve --http` — it shows connection health, store row
+counts, and the same doctor findings `check` prints, refreshed every few
+seconds. The link exchanges the HTTP transport's existing bearer token for
+a session cookie, so nothing new needs to be configured or trusted.
+
+The dashboard only ever listens on loopback, exactly like the HTTP
+transport it shares a port with: `serve --http` must already be running,
+and the page is unreachable from any other machine. Log back in with the
+`dashboard` command any time the session expires (a server restart, most
+often) — the printed token is never written to a server log.
+
 ## Backing up
 
 ```sh

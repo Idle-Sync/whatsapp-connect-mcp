@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finding now says when the server was logged out by WhatsApp mid-run.
 - `status` now shows connection state, last event time, reconnect count,
   and ingest-failure count.
+- A local web dashboard on the shared HTTP server: open it with the new
+  `dashboard` command (prints a one-time login link). This first slice
+  shows connection health, store counts, and doctor findings; pairing and
+  management arrive in following changes. Localhost-only, protected by
+  the same bearer token as the HTTP transport.
 
 ### Changed
 

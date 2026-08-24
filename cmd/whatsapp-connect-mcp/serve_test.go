@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func cancelledCtx() context.Context {
 
 func TestRunHTTPAnnouncesListeningOnceBound(t *testing.T) {
 	var out bytes.Buffer
-	code := runHTTP(cancelledCtx(), testMCPServer(), "127.0.0.1:0", "token", &out)
+	code := runHTTP(cancelledCtx(), testMCPServer(), http.NotFoundHandler(), "127.0.0.1:0", "token", &out)
 	if code != 0 {
 		t.Fatalf("runHTTP returned %d on clean shutdown, want 0; output: %q", code, out.String())
 	}
@@ -56,7 +57,7 @@ func TestRunHTTPReportsBindFailureWithoutAnnouncing(t *testing.T) {
 	// The context is already cancelled: the bind error must still win,
 	// not be masked by the shutdown path.
 	var out bytes.Buffer
-	code := runHTTP(cancelledCtx(), testMCPServer(), ln.Addr().String(), "token", &out)
+	code := runHTTP(cancelledCtx(), testMCPServer(), http.NotFoundHandler(), ln.Addr().String(), "token", &out)
 	if code != 1 {
 		t.Errorf("runHTTP returned %d on a bind failure, want 1; output: %q", code, out.String())
 	}

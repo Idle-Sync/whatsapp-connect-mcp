@@ -18,6 +18,8 @@ import (
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/dashboard"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/gate"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/httpauth"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/instancelock"
@@ -26,6 +28,7 @@ import (
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/schedule"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/sessiontrust"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/watchdog"
 )
 
@@ -184,7 +187,20 @@ func runServe(args []string) int {
 				fmt.Fprintf(os.Stderr, "serve: %v — the server stays up (dashboard and local reads still work); restart after fixing this\n", err)
 			}
 		}()
-		return runHTTP(ctx, server, *httpAddr, token, os.Stderr)
+
+		dash := dashboard.New(dashboard.Deps{
+			Ctx: ctx, Store: st, Bridge: br, Gate: g, Sched: schedStore,
+			DataDir: dataDir, Token: token, Version: version.String(),
+			Doctor: func(dctx context.Context) []doctor.Finding {
+				return doctor.Run(dctx, doctor.Env{
+					DataDir: dataDir, BinaryPath: binaryPath, Home: home, Store: st,
+					NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
+					LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
+					IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
+				})
+			},
+		})
+		return runHTTP(ctx, server, dash, *httpAddr, token, os.Stderr)
 	}
 
 	// stdio keeps the blocking behavior: one client, no dashboard, no
@@ -247,15 +263,25 @@ func runStdio(ctx context.Context, server *mcp.Server, errOut io.Writer) int {
 }
 
 // runHTTP serves server over streamable HTTP on addr until ctx is
-// cancelled, then shuts the HTTP server down gracefully. Every request must
-// carry token and be addressed to a loopback Host; see internal/httpauth.
+// cancelled, then shuts the HTTP server down gracefully. dash mounts at
+// /ui/ and /api/ (cookie- or bearer-authed, see internal/dashboard); every
+// other path stays the MCP transport, requiring both the loopback Host and
+// the bearer token as before, so injected client configs are unaffected.
 // Startup is acknowledged on errOut once the port is held — a silent start
 // is indistinguishable from a hang (issue #14). errOut is never stdout in
 // production, keeping stdio-transport framing clean.
-func runHTTP(ctx context.Context, server *mcp.Server, addr, token string, errOut io.Writer) int {
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, token string, errOut io.Writer) int {
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ui/", dash)
+	mux.Handle("/api/", dash)
+	// Every other path is the MCP transport, bearer-authed exactly as
+	// before — injected client configs keep pointing at the root URL.
+	mux.Handle("/", httpauth.Middleware(token, mcpHandler))
+
 	httpServer := &http.Server{
-		Handler:           httpauth.Middleware(token, handler),
+		Handler:           httpauth.HostGuard(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -270,6 +296,7 @@ func runHTTP(ctx context.Context, server *mcp.Server, addr, token string, errOut
 		return 1
 	}
 	_, _ = fmt.Fprintf(errOut, "serve: listening on http://%s (streamable HTTP, bearer-token auth) — Ctrl-C to stop\n", ln.Addr())
+	_, _ = fmt.Fprintf(errOut, "serve: dashboard at http://%s/ui/ — run `whatsapp-connect-mcp dashboard` for a login link\n", ln.Addr())
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(ln) }()
