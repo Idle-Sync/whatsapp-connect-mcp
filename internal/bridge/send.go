@@ -100,7 +100,7 @@ func (b *Bridge) deliverBlocklist(ctx context.Context, d gate.Delivery, action e
 		return "", err
 	}
 	if _, err := b.wa().UpdateBlocklist(ctx, jid, action); err != nil {
-		return "", waErr("update block list", err)
+		return "", b.waErr("update block list", err)
 	}
 	return "", nil
 }
@@ -126,7 +126,7 @@ func (b *Bridge) deliverPoll(ctx context.Context, d gate.Delivery) (string, erro
 	msg := cl.BuildPollCreation(d.Text, d.Options, selectable)
 	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("create poll", err)
+		return "", b.waErr("create poll", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -148,7 +148,7 @@ func (b *Bridge) deliverEdit(ctx context.Context, d gate.Delivery) (string, erro
 	cl := b.wa()
 	resp, err := cl.SendMessage(ctx, to, cl.BuildEdit(to, d.QuotedID, newContent))
 	if err != nil {
-		return "", waErr("edit message", err)
+		return "", b.waErr("edit message", err)
 	}
 	return resp.ID, nil
 }
@@ -178,7 +178,7 @@ func (b *Bridge) deliverRevoke(ctx context.Context, d gate.Delivery) (string, er
 	cl := b.wa()
 	resp, err := cl.SendMessage(ctx, to, cl.BuildRevoke(to, sender, d.QuotedID))
 	if err != nil {
-		return "", waErr("delete message", err)
+		return "", b.waErr("delete message", err)
 	}
 	return resp.ID, nil
 }
@@ -207,7 +207,7 @@ func (b *Bridge) deliverText(ctx context.Context, d gate.Delivery) (string, erro
 
 	resp, err := b.wa().SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send message", err)
+		return "", b.waErr("send message", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -312,7 +312,7 @@ func (b *Bridge) deliverReaction(ctx context.Context, d gate.Delivery) (string, 
 	msg := cl.BuildReaction(to, author, d.QuotedID, d.Text)
 	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send reaction", err)
+		return "", b.waErr("send reaction", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil
@@ -336,7 +336,7 @@ func (b *Bridge) deliverRead(ctx context.Context, d gate.Delivery) (string, erro
 
 	now := time.Now()
 	if err := b.wa().MarkRead(ctx, d.MessageIDs, now, to, sender); err != nil {
-		return "", waErr("mark read", err)
+		return "", b.waErr("mark read", err)
 	}
 	if err := b.store.MarkRead(d.To, d.MessageIDs, now.Unix()); err != nil {
 		return "", fmt.Errorf("update local read state: %w", err)
@@ -382,13 +382,13 @@ func (b *Bridge) uploadAndSend(
 	cl := b.wa()
 	up, err := cl.Upload(ctx, data, mediaType)
 	if err != nil {
-		return "", waErr("upload media", err)
+		return "", b.waErr("upload media", err)
 	}
 
 	msg := build(up)
 	resp, err := cl.SendMessage(ctx, to, msg)
 	if err != nil {
-		return "", waErr("send media", err)
+		return "", b.waErr("send media", err)
 	}
 	b.recordOutbound(to, resp.ID, resp.Timestamp, msg)
 	return resp.ID, nil

@@ -104,25 +104,14 @@ func runServe(args []string) int {
 
 	// Unpaired is a waiting state, not a fatal one: exiting 1 makes a
 	// service manager with Restart=always hammer the binary in a crash
-	// loop (issue #12). Instead, idle and re-check — setup runs in its own
-	// process and writes the device identity into session.db, so each
-	// check re-opens the bridge to see it. The instance lock stays held
-	// while waiting; setup never takes it.
+	// loop (issue #12). WaitForPairing re-reads the session store in place
+	// — setup runs in its own process and writes the device identity into
+	// session.db — so the same Bridge continues once pairing lands.
 	if br.NeedsPairing() {
 		fmt.Fprintln(os.Stderr, "not paired — run: whatsapp-connect-mcp setup")
 		fmt.Fprintln(os.Stderr, "serve: waiting for pairing (re-checking every 15s) instead of exiting, so a service manager does not restart-loop")
-		for br.NeedsPairing() {
-			select {
-			case <-ctx.Done():
-				return 0
-			case <-time.After(15 * time.Second):
-			}
-			_ = br.Close()
-			br, err = bridge.Open(ctx, dataDir, st, mediaRoots)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-				return 1
-			}
+		if err := br.WaitForPairing(ctx); err != nil {
+			return 0 // shutdown signal while waiting — a clean stop
 		}
 		fmt.Fprintln(os.Stderr, "serve: pairing detected — starting")
 	}

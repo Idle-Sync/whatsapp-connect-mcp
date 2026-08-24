@@ -66,6 +66,10 @@ func (b *Bridge) handleEvent(raw any) {
 			evt.Reason, evt.OnConnect)
 		b.noteDisconnect("logged_out")
 		b.setState(stUnpaired)
+		// whatsmeow has already deleted the device; rebuild on a fresh
+		// unpaired one so this same Bridge (the pointer mcpserv and gate
+		// hold) can pair and reconnect without a process restart.
+		b.reinitAfterLogout()
 	case *events.StreamReplaced:
 		_, _ = fmt.Fprintln(b.diag,
 			"whatsapp: stream replaced — another process connected with this same session, and this connection is now dead; if this repeats, find and stop the other process")

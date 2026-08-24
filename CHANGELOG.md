@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failed writes of incoming events to the message store are now counted
   and reported (previously silent).
 
+### Fixed
+
+- A WhatsApp-side logout no longer leaves a running server permanently
+  broken: the server now says clearly that it was logged out, waits, and
+  reconnects on its own as soon as the device is paired again — no restart
+  needed. Tool calls while unpaired fail with "no longer paired — run
+  setup" instead of a generic connection error.
+
 ## [0.2.0] - 2026-08-19
 
 The shared http server becomes a first-class way to run this: one command
