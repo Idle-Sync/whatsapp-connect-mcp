@@ -18,6 +18,9 @@
   <button data-tab="status" class="active">Status</button>
   <button data-tab="pair">Pair</button>
   <button data-tab="chats">Chats</button>
+  <button data-tab="trust">Trust</button>
+  <button data-tab="schedules">Schedules</button>
+  <button data-tab="backup">Backup</button>
 </nav>
 <main>
   <section id="tab-status">
@@ -36,6 +39,19 @@
     <div id="chats-list"></div>
     <h2 id="messages-title" hidden></h2>
     <table id="messages-table"></table>
+  </section>
+  <section id="tab-trust" hidden>
+    <p>Trusted contacts auto-send without a draft preview. Add only people you'd let an agent message directly.</p>
+    <input id="trust-jid" placeholder="15551234567@s.whatsapp.net">
+    <button id="trust-add">Trust</button>
+    <ul id="trust-list"></ul>
+  </section>
+  <section id="tab-schedules" hidden>
+    <table id="schedules-table"></table>
+  </section>
+  <section id="tab-backup" hidden>
+    <button id="backup-go">Back up messages now</button>
+    <p id="backup-result"></p>
   </section>
 </main>
 <script src="app.js"></script>

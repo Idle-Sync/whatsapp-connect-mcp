@@ -34,6 +34,7 @@ type Store interface {
 	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
 	Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]store.MessageRow, error)
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
+	BackupTo(path string) error
 }
 
 // Bridge is the connection surface the dashboard needs from
@@ -87,6 +88,11 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/chats", h.authed(h.handleChats))
 	h.mux.HandleFunc("/api/messages", h.authed(h.handleMessages))
 	h.mux.HandleFunc("/api/search", h.authed(h.handleSearch))
+	h.mux.HandleFunc("/api/trust", h.authed(h.handleTrust))
+	h.mux.HandleFunc("/api/trust/", h.authed(h.mutating(h.handleTrustRemove)))
+	h.mux.HandleFunc("/api/schedules", h.authed(h.handleSchedules))
+	h.mux.HandleFunc("/api/schedules/", h.authed(h.mutating(h.handleScheduleCancel)))
+	h.mux.HandleFunc("/api/backup", h.authed(h.mutating(h.handleBackup)))
 	return h
 }
 

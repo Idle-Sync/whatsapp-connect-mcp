@@ -415,6 +415,12 @@ right in the browser — start pairing there and scan it with WhatsApp >
 Linked devices > Link a device, no terminal needed. This also covers
 re-pairing after a WhatsApp-side logout.
 
+The Trust tab lists and edits the trusted-contact list — the same
+config.json the `trust` command manages, so a change there takes effect
+immediately in a running server. The Schedules tab lists pending scheduled
+sends and lets you cancel one. The Backup tab writes a snapshot with one
+click, exactly like the `backup` command below.
+
 ## Backing up
 
 ```sh

@@ -37,13 +37,11 @@ func runBackup(args []string) int {
 
 	path := *dest
 	if path == "" {
-		backupDir := filepath.Join(dataDir, "backups")
-		if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		path = store.DefaultBackupPath(dataDir, time.Now())
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			fmt.Fprintf(os.Stderr, "backup: create backups directory: %v\n", err)
 			return 1
 		}
-		path = filepath.Join(backupDir,
-			"messages-"+time.Now().UTC().Format("20060102-150405")+".db")
 	}
 
 	if err := st.BackupTo(path); err != nil {

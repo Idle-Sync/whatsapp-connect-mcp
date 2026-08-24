@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,10 +17,11 @@ import (
 // fakeStore satisfies dashboard.Store; fields configure behavior, later
 // task tests extend it alongside the interface.
 type fakeStore struct {
-	counts   store.Counts
-	chats    []store.ChatRow
-	msgs     []store.MessageRow
-	gotLimit int
+	counts     store.Counts
+	chats      []store.ChatRow
+	msgs       []store.MessageRow
+	gotLimit   int
+	backupPath string
 }
 
 func (f *fakeStore) Counts() (store.Counts, error) { return f.counts, nil }
@@ -37,6 +39,11 @@ func (f *fakeStore) Messages(_ string, _, _ int64, limit int) ([]store.MessageRo
 func (f *fakeStore) SearchMessages(_, _ string, limit int) ([]store.MessageRow, error) {
 	f.gotLimit = limit
 	return f.msgs, nil
+}
+
+func (f *fakeStore) BackupTo(path string) error {
+	f.backupPath = path
+	return os.WriteFile(path, []byte("fake"), 0o600)
 }
 
 type fakeBridge struct {

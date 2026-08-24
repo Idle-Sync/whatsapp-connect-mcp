@@ -122,6 +122,54 @@ document.getElementById("search-go").addEventListener("click", async () => {
 
 document.querySelector('nav button[data-tab="chats"]').addEventListener("click", loadChats);
 
+async function loadTrust() {
+  const jids = await api("/api/trust");
+  const ul = document.getElementById("trust-list");
+  ul.replaceChildren();
+  for (const j of jids) {
+    const li = el("li", j + " ");
+    const del = el("button", "remove");
+    del.addEventListener("click", async () => {
+      await api("/api/trust/" + encodeURIComponent(j), { method: "DELETE" });
+      loadTrust();
+    });
+    li.appendChild(del);
+    ul.appendChild(li);
+  }
+}
+document.getElementById("trust-add").addEventListener("click", async () => {
+  const jid = document.getElementById("trust-jid").value.trim();
+  if (!jid) return;
+  await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
+  document.getElementById("trust-jid").value = "";
+  loadTrust();
+});
+
+async function loadSchedules() {
+  const rows = await api("/api/schedules");
+  const t = document.getElementById("schedules-table");
+  t.replaceChildren();
+  for (const s of rows) {
+    const tr = row(t, [s.fire_at, s.preview]);
+    const cancel = el("button", "cancel");
+    cancel.addEventListener("click", async () => {
+      await api("/api/schedules/" + encodeURIComponent(s.id), { method: "DELETE" });
+      loadSchedules();
+    });
+    const td = document.createElement("td");
+    td.appendChild(cancel);
+    tr.appendChild(td);
+  }
+}
+
+document.getElementById("backup-go").addEventListener("click", async () => {
+  const r = await api("/api/backup", { method: "POST" });
+  document.getElementById("backup-result").textContent = "written: " + r.path + " (" + r.size + " bytes)";
+});
+
+document.querySelector('nav button[data-tab="trust"]').addEventListener("click", loadTrust);
+document.querySelector('nav button[data-tab="schedules"]').addEventListener("click", loadSchedules);
+
 refreshStatus();
 refreshDoctor();
 setInterval(refreshStatus, 5000);

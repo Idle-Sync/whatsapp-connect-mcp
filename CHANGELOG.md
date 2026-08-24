@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-pairing after a WhatsApp-side logout.
 - Dashboard: read-only chat browsing and full-text search. Media messages
   show as placeholders; the dashboard never fetches media.
+- Dashboard: trust-list management (applies to a running server
+  immediately), scheduled-send list/cancel, and a one-click backup.
 
 ### Changed
 

@@ -3,6 +3,8 @@ package store
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"time"
 )
 
 // BackupTo writes a consistent snapshot of the open database to path,
@@ -23,4 +25,12 @@ func (s *Store) BackupTo(path string) error {
 		return errors.New("back up database: write failed — check free disk space and that the destination directory exists")
 	}
 	return nil
+}
+
+// DefaultBackupPath is the destination the backup command and the
+// dashboard's backup action share when the caller doesn't choose one:
+// <dataDir>/backups/messages-<UTC timestamp>.db.
+func DefaultBackupPath(dataDir string, now time.Time) string {
+	return filepath.Join(dataDir, "backups",
+		"messages-"+now.UTC().Format("20060102-150405")+".db")
 }

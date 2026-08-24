@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBackupToProducesConsistentCopy(t *testing.T) {
@@ -105,5 +106,14 @@ func TestBackupToErrorsOmitPath(t *testing.T) {
 	errStr := err.Error()
 	if strings.Contains(errStr, dir) || strings.Contains(errStr, dest) {
 		t.Fatalf("BackupTo error must not contain path; got: %v", err)
+	}
+}
+
+func TestDefaultBackupPath(t *testing.T) {
+	now := time.Date(2026, 8, 24, 13, 5, 7, 0, time.UTC)
+	got := DefaultBackupPath(`/data`, now)
+	want := filepath.Join(`/data`, "backups", "messages-20260824-130507.db")
+	if got != want {
+		t.Fatalf("DefaultBackupPath = %q, want %q", got, want)
 	}
 }
