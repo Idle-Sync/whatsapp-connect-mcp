@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `service install|uninstall|restart` now works on Windows, using a Task
+  Scheduler logon task. The server runs as a minimized console window;
+  closing it stops the server. Creating the task may require an
+  Administrator terminal.
 - Connection-health diagnostics: dropped connections, keepalive timeouts,
   refused connects, temporary bans, and an outdated client now each print
   one clear line to the server log instead of passing silently.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -252,13 +253,85 @@ func TestUnsupportedPlatform(t *testing.T) {
 	} {
 		rec := &recorder{}
 		var out bytes.Buffer
-		err := fn("windows", testConfig(t.TempDir()), rec.run, &out)
+		err := fn("freebsd", testConfig(t.TempDir()), rec.run, &out)
 		if err == nil || !strings.Contains(err.Error(), "not supported") {
-			t.Fatalf("error = %v, want a not-supported error on windows", err)
+			t.Fatalf("error = %v, want a not-supported error on freebsd", err)
 		}
 		if len(rec.calls) != 0 {
 			t.Fatalf("unsupported platform still ran commands: %v", rec.calls)
 		}
+	}
+}
+
+func TestInstallWindowsCreatesAndRunsTask(t *testing.T) {
+	var calls [][]string
+	run := func(name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+	var out bytes.Buffer
+	cfg := Config{BinaryPath: `C:\bin\whatsapp-connect-mcp.exe`, HTTPAddr: "127.0.0.1:2178"}
+
+	if err := Install("windows", cfg, run, &out); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls = %v, want create then run", calls)
+	}
+	wantCreate := []string{"schtasks", "/Create", "/TN", "whatsapp-connect-mcp",
+		"/TR", `cmd /c start "" /min "C:\bin\whatsapp-connect-mcp.exe" serve --http 127.0.0.1:2178`,
+		"/SC", "ONLOGON", "/RL", "LIMITED", "/F"}
+	if !reflect.DeepEqual(calls[0], wantCreate) {
+		t.Fatalf("create call = %q, want %q", calls[0], wantCreate)
+	}
+	wantRun := []string{"schtasks", "/Run", "/TN", "whatsapp-connect-mcp"}
+	if !reflect.DeepEqual(calls[1], wantRun) {
+		t.Fatalf("run call = %q, want %q", calls[1], wantRun)
+	}
+	if !strings.Contains(out.String(), "minimized") {
+		t.Fatalf("output should explain the minimized-window behavior, got %q", out.String())
+	}
+}
+
+func TestUninstallWindowsStopsAndDeletes(t *testing.T) {
+	var calls [][]string
+	run := func(name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+	var out bytes.Buffer
+	if err := Uninstall("windows", Config{}, run, &out); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	// query (exists), end (best-effort), delete
+	if len(calls) != 3 || calls[2][1] != "/Delete" {
+		t.Fatalf("calls = %v, want query, end, delete", calls)
+	}
+}
+
+func TestUninstallWindowsNothingInstalledSaysSo(t *testing.T) {
+	run := func(_ string, _ ...string) error { return errors.New("task not found") }
+	var out bytes.Buffer
+	if err := Uninstall("windows", Config{}, run, &out); err != nil {
+		t.Fatalf("Uninstall on empty system: %v", err)
+	}
+	if !strings.Contains(out.String(), "no service installed") {
+		t.Fatalf("out = %q, want the nothing-installed message", out.String())
+	}
+}
+
+func TestRestartWindows(t *testing.T) {
+	var calls [][]string
+	run := func(name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+	var out bytes.Buffer
+	if err := Restart("windows", Config{}, run, &out); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if len(calls) != 2 || calls[0][1] != "/End" || calls[1][1] != "/Run" {
+		t.Fatalf("calls = %v, want end then run", calls)
 	}
 }
 

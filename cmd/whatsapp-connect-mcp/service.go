@@ -81,7 +81,7 @@ func runService(args []string) int {
 
 func printServiceUsage() {
 	fmt.Fprintln(os.Stderr, "usage: whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]")
-	fmt.Fprintln(os.Stderr, "\ninstall    write and start a background serve --http service (launchd/systemd)")
+	fmt.Fprintln(os.Stderr, "\ninstall    write and start a background serve --http service (launchd/systemd/Task Scheduler)")
 	fmt.Fprintln(os.Stderr, "uninstall  stop the service and remove its definition")
 	fmt.Fprintln(os.Stderr, "restart    restart it, e.g. after updating the binary")
 }

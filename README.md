@@ -78,7 +78,8 @@ connect at once.
 > It acknowledges with `serve: listening on http://127.0.0.1:2178 …` and
 > stays in the foreground, so it dies with its terminal. To keep it alive
 > across logouts and reboots instead, install it as a background service
-> (launchd on macOS, a systemd user unit on Linux):
+> (launchd on macOS, a systemd user unit on Linux, or a Task Scheduler logon
+> task on Windows):
 >
 > ```sh
 > whatsapp-connect-mcp service install
@@ -86,7 +87,10 @@ connect at once.
 >
 > `service uninstall` removes it; `service restart` restarts it after an
 > update. On a headless Linux box, add `loginctl enable-linger` so the
-> service outlives your login session.
+> service outlives your login session. On Windows, the service runs as a
+> minimized console window that appears at logon; closing the window stops
+> the server. Creating the task may require an elevated (Administrator)
+> terminal.
 
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
@@ -395,7 +399,7 @@ whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entri
 whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]
-                                             # manage a background serve --http service (macOS/Linux)
+                                             # manage a background serve --http service (macOS/Linux/Windows)
 ```
 
 > **`--http` requires a bearer token and a loopback Host.** On first use it
