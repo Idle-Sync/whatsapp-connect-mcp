@@ -39,6 +39,8 @@ func run(args []string) int {
 			return runRemove(args[1:])
 		case "reset":
 			return runReset(args[1:])
+		case "backup":
+			return runBackup(args[1:])
 		}
 	}
 
@@ -53,5 +55,6 @@ func run(args []string) int {
 	fmt.Fprintln(os.Stderr, "  service <install|uninstall|restart> [--http addr]   manage a background serve --http service (macOS/Linux/Windows)")
 	fmt.Fprintln(os.Stderr, "  remove                 delete the local session (unpair)")
 	fmt.Fprintln(os.Stderr, "  reset                  remove, plus delete messages, media, and settings")
+	fmt.Fprintln(os.Stderr, "  backup [--dest path]   snapshot messages.db into a backup file (safe while serve runs)")
 	return 2
 }

@@ -392,6 +392,25 @@ is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
 client's name, never its path on disk.
 
+## Backing up
+
+```sh
+whatsapp-connect-mcp backup [--dest path]
+```
+
+Writes a consistent snapshot of the message database (`messages.db`) to
+`<data-dir>/backups/messages-<timestamp>.db` (or a custom path via `--dest`).
+The backup is a standalone, fully-usable SQLite database — not a copy of
+sessions or settings, just messages. Unlike a phone backup, a `backup`
+snapshot is safe to take while `serve` is running; SQLite's WAL mode and
+busy timeout guarantee consistency.
+
+Message history is the one thing that cannot be recovered any other way — a
+session can be re-paired if needed, but messages fetched from the phone stay
+on the phone only as long as the phone remembers them, which is typically
+a few months. A regular automated backup (via `cron`, a systemd timer, or the
+Task Scheduler on Windows) is the simplest insurance against losing them.
+
 ## Other commands
 
 ```sh

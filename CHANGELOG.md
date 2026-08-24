@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `backup` command: writes a consistent snapshot of the message
+  database to `<data-dir>/backups/` (or `--dest`), safe to run while the
+  server is up. Message history is the one thing re-pairing cannot
+  recover.
 - `service install|uninstall|restart` now works on Windows, using a Task
   Scheduler logon task. The server runs as a minimized console window;
   closing it stops the server. Creating the task may require an
