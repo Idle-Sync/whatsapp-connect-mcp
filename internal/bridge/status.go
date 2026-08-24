@@ -6,14 +6,19 @@ import (
 )
 
 // connState is the Bridge's connection lifecycle state, stored in an
-// atomic.Int32 and stringified only at the Status boundary.
+// atomic.Int32 and stringified only at the Status boundary. The values
+// start above zero so the atomic's zero value (never explicitly stored)
+// stays a distinct, detectable "unset" sentinel instead of colliding with
+// stUnpaired — setState compares the stored value to detect a real
+// transition, and a collision at zero would make the very first setState
+// call after Open look like a no-op.
 type connState int32
 
 const (
-	stUnpaired   connState = iota // no device identity; pairing required
-	stOffline                     // paired, no connection attempt in progress
-	stConnecting                  // Connect/PairQR called, or whatsmeow is auto-reconnecting
-	stConnected                   // events.Connected received
+	stUnpaired   connState = iota + 1 // no device identity; pairing required
+	stOffline                         // paired, no connection attempt in progress
+	stConnecting                      // Connect/PairQR called, or whatsmeow is auto-reconnecting
+	stConnected                       // events.Connected received
 )
 
 func (s connState) String() string {
@@ -24,8 +29,12 @@ func (s connState) String() string {
 		return "offline"
 	case stConnecting:
 		return "connecting"
-	default:
+	case stConnected:
 		return "connected"
+	default:
+		// The zero value, before Open has run setState. Should never be
+		// observable through Status once Open has returned.
+		return "unknown"
 	}
 }
 

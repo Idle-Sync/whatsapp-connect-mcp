@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types/events"
@@ -34,6 +35,25 @@ func TestStatusTracksLifecycle(t *testing.T) {
 	b.handleEvent(&events.Connected{})
 	if got := b.Status(); got.State != "connected" || got.Reconnects != 1 {
 		t.Fatalf("after reconnect: %+v, want connected with 1 reconnect", got)
+	}
+}
+
+// TestFreshUnpairedBridgeSinceIsRecent guards against the connState zero
+// value (stUnpaired) colliding with atomic.Int32's zero value: Open sets
+// stUnpaired on an unpaired device, and setState must still record that
+// entry rather than mistaking it for "state unchanged" and leaving
+// stateSince at its zero value (the Unix epoch).
+func TestFreshUnpairedBridgeSinceIsRecent(t *testing.T) {
+	start := time.Now()
+	b, _ := newTestBridge(t)
+	end := time.Now()
+
+	// setState stores whole-second Unix timestamps, so allow a second of
+	// slack on either side of the [start, end] window rather than demanding
+	// sub-second precision.
+	since := b.Status().Since
+	if since.Before(start.Add(-time.Second)) || since.After(end.Add(time.Second)) {
+		t.Fatalf("Status().Since = %v, want within a second of [%v, %v]", since, start, end)
 	}
 }
 
