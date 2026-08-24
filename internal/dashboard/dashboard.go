@@ -35,6 +35,7 @@ type Store interface {
 	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
 	TailRowID(chatJID string, includeOwn bool, n int) (int64, error)
 	MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error)
+	MessageMediaRef(chatJID, id string) (ref []byte, filename, kind string, err error)
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 	BackupTo(path string) error
 }
@@ -47,6 +48,7 @@ type Bridge interface {
 	PairQR(ctx context.Context, show func(code string)) error
 	Logout(ctx context.Context) error
 	WaitForCatchUp(ctx context.Context)
+	DownloadMedia(ctx context.Context, ref []byte, destDir, filename string) (string, error)
 }
 
 // Deps wires the dashboard into serve's already-constructed pieces. Ctx is
@@ -96,6 +98,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/chats", h.authed(h.handleChats))
 	h.mux.HandleFunc("/api/messages", h.authed(h.handleMessages))
 	h.mux.HandleFunc("/api/search", h.authed(h.handleSearch))
+	h.mux.HandleFunc("/api/media", h.authed(h.handleMedia))
 	h.mux.HandleFunc("/api/trust", h.authed(h.handleTrust))
 	h.mux.HandleFunc("/api/trust/", h.authed(h.mutating(h.handleTrustRemove)))
 	h.mux.HandleFunc("/api/schedules", h.authed(h.handleSchedules))

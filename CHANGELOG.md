@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   place, following the scroll only if you were already at the bottom)
   and one reloads the chat list. No background polling — updates load
   on demand.
+- Media in the dashboard's chat screen: images and stickers preview
+  inline (lazily, so only what scrolls into view is fetched), and every
+  other attachment gets a download link. Files are served from the same
+  per-chat media directory `download_media` uses, so each file is
+  fetched from WhatsApp at most once, however many times it is viewed.
+  Content types are verified server-side: only raster images ever
+  render inline, and everything else — including SVG and HTML — comes
+  down as an opaque attachment, so WhatsApp-supplied content can never
+  run script on the dashboard's origin.
 
 ## [0.3.1] - 2026-08-24
 

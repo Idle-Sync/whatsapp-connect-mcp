@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/doctor"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/medianame"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/timewin"
 )
@@ -600,25 +601,6 @@ func (in downloadMediaInput) hasTimeWindow() bool {
 	return in.Before != "" || in.After != "" || in.Date != "" || in.Window != "" || in.Kind != "" || in.Limit != 0
 }
 
-// chatMediaDirReplacer maps JID characters that are invalid in a Windows
-// path component (':' shows up in linked-device JIDs like
-// "1234567890:12@s.whatsapp.net") to a safe substitute, and neutralizes any
-// path separator so a chat_jid can never redirect the write outside
-// dataDir/media.
-var chatMediaDirReplacer = strings.NewReplacer(":", "_", "/", "_", `\`, "_")
-
-// chatMediaDir returns the directory download_media writes into for
-// chatJID, per ARCHITECTURE.md §2: <dataDir>/media/<chat>/.
-func chatMediaDir(dataDir, chatJID string) (string, error) {
-	if strings.TrimSpace(chatJID) == "" {
-		return "", errors.New("chat_jid is required")
-	}
-	if strings.Contains(chatJID, "..") {
-		return "", errors.New("invalid chat_jid")
-	}
-	return filepath.Join(dataDir, "media", chatMediaDirReplacer.Replace(chatJID)), nil
-}
-
 // sanitizeMediaFilename validates filename — data the store returned
 // verbatim from a WhatsApp message, i.e. supplied by the remote sender,
 // not this program — before it is used as a path component. filename must
@@ -640,48 +622,6 @@ func sanitizeMediaFilename(filename string) (string, error) {
 	return base, nil
 }
 
-// savedMediaFilename derives the filename download_media writes the media
-// under: always <message_id><ext>, never the sender-declared filename.
-// Using the message id — an operator-supplied MCP argument that must
-// already match a row this server stored, not free text from the remote
-// sender — means the sender can never choose any part of saved_path, and
-// two media messages in the same chat can never collide on the file they
-// write to, the way two sender-chosen "IMG_0001.jpg" names could. The
-// extension is fixed per kind, except for documents, whose type is
-// meaningful (.pdf vs .docx): those keep the extension off the
-// sender-declared name (safe to read even from an untrusted string —
-// filepath.Ext only looks at the suffix after the final dot in the final
-// path element) and fall back to ".bin" when it has none. messageID is
-// still run through sanitizeMediaFilename before use: WhatsApp message ids
-// originate with the sending client too, so the same path-component check
-// that guards a filename guards this.
-func savedMediaFilename(messageID, kind, senderFilename string) (string, error) {
-	var ext string
-	switch kind {
-	case "image":
-		ext = ".jpg"
-	case "video", "video_note":
-		ext = ".mp4"
-	case "audio", "voice":
-		ext = ".ogg"
-	case "sticker":
-		ext = ".webp"
-	case "document":
-		ext = filepath.Ext(senderFilename)
-		if ext == "" {
-			ext = ".bin"
-		}
-	default:
-		ext = ".bin"
-	}
-
-	name, err := sanitizeMediaFilename(messageID + ext)
-	if err != nil {
-		return "", fmt.Errorf("derive saved media filename: %w", err)
-	}
-	return name, nil
-}
-
 // downloadOne fetches one message's media into destDir. bannerRow is the
 // WhatsApp-derived display data (sender-declared filename and kind) callers
 // must keep inside the untrusted-data banner; savedPath is this server's
@@ -692,7 +632,7 @@ func (d *toolDeps) downloadOne(ctx context.Context, chatJID, destDir, messageID 
 		return "", "", err
 	}
 
-	savedName, err := savedMediaFilename(messageID, kind, filename)
+	savedName, err := medianame.SavedFilename(messageID, kind, filename)
 	if err != nil {
 		return "", "", err
 	}
@@ -737,7 +677,7 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, nil, errors.New("use exactly one of message_id, message_ids, or a time window (before/after, date, window, kind, or limit)")
 	}
 
-	destDir, err := chatMediaDir(d.dataDir, in.ChatJID)
+	destDir, err := medianame.ChatDir(d.dataDir, in.ChatJID)
 	if err != nil {
 		return nil, nil, err
 	}
