@@ -17,6 +17,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -43,7 +44,6 @@ type Ingest interface {
 // and an Ingest sink for decoded events. Zero value is not usable;
 // construct with Open.
 type Bridge struct {
-	client    *whatsmeow.Client
 	container *sqlstore.Container
 	store     Ingest
 	dataDir   string
@@ -80,12 +80,16 @@ type Bridge struct {
 	// results.
 	diag io.Writer
 
-	handlerOnce sync.Once
-	// handlerRegistrations counts how many times ensureHandlerRegistered
-	// actually registered the event handler (as opposed to how many times
-	// it was called). It exists so tests can prove the registration is a
-	// true no-op on repeat calls, which is what guarantees a second
-	// Connect/PairQR can never double-dispatch events.
+	// clientMu guards client and handlerRegistrations. The client is
+	// swapped exactly twice in a Bridge's life at most: once at Open and
+	// once per logout re-initialization; every other access is a read.
+	clientMu sync.RWMutex
+	client   *whatsmeow.Client
+	// handlerRegistrations counts how many times setClient has built a
+	// client and registered the event handler on it. It exists so tests can
+	// prove every client setClient ever produces gets the handler exactly
+	// once, which is what guarantees no call sequence can double-dispatch
+	// events.
 	handlerRegistrations int
 }
 
@@ -119,35 +123,43 @@ func Open(ctx context.Context, dataDir string, st Ingest, roots mediapath.Roots)
 		return nil, fmt.Errorf("load device: %w", err)
 	}
 
-	client := whatsmeow.NewClient(device, waLog.Noop)
 	b := &Bridge{
-		client: client, container: container, store: st, dataDir: dataDir,
+		container: container, store: st, dataDir: dataDir,
 		mediaRoots: roots, openedAt: time.Now(), catchUpGrace: defaultCatchUpGrace,
 		diag: os.Stderr,
 	}
-	// Registered here, once, rather than in Connect: PairQR also needs
-	// inbound events flowing (history sync can start arriving mid-pairing),
-	// and registering in exactly one place removes any chance of a second
-	// Connect call adding a duplicate handler.
-	b.ensureHandlerRegistered()
+	b.setClient(device)
 	return b, nil
 }
 
-// ensureHandlerRegistered registers handleEvent with the whatsmeow client.
-// It is safe to call more than once (from Open, Connect, and PairQR): only
-// the first call actually registers anything, so the client's event
-// dispatch can never end up with two copies of the same handler.
-func (b *Bridge) ensureHandlerRegistered() {
-	b.handlerOnce.Do(func() {
-		b.client.AddEventHandler(b.handleEvent)
-		b.handlerRegistrations++
-	})
+// setClient builds a whatsmeow client for device, registers handleEvent on
+// it, and makes it the Bridge's current client. It is the only way a
+// client comes to exist on a Bridge, which is what guarantees every client
+// has the handler registered exactly once — no call sequence of Connect
+// and PairQR can ever double-dispatch events.
+func (b *Bridge) setClient(device *waStore.Device) {
+	c := whatsmeow.NewClient(device, waLog.Noop)
+	c.AddEventHandler(b.handleEvent)
+
+	b.clientMu.Lock()
+	b.client = c
+	b.handlerRegistrations++
+	b.clientMu.Unlock()
+}
+
+// wa returns the current whatsmeow client. Callers use it for one
+// operation and take it fresh next time — retaining it would pin a client
+// a logout re-initialization has already replaced.
+func (b *Bridge) wa() *whatsmeow.Client {
+	b.clientMu.RLock()
+	defer b.clientMu.RUnlock()
+	return b.client
 }
 
 // Close disconnects the client, if connected, and closes the underlying
 // session database.
 func (b *Bridge) Close() error {
-	b.client.Disconnect()
+	b.wa().Disconnect()
 	if err := b.container.Close(); err != nil {
 		return fmt.Errorf("close session store: %w", err)
 	}
@@ -207,13 +219,13 @@ func (b *Bridge) OpenedAt() time.Time {
 // NeedsPairing reports whether the session store has no paired device yet,
 // i.e. PairQR must be run before Connect will do anything useful.
 func (b *Bridge) NeedsPairing() bool {
-	return b.client.Store.ID == nil
+	return b.wa().Store.ID == nil
 }
 
 // LoggedIn reports whether the client is currently connected and
 // authenticated with WhatsApp.
 func (b *Bridge) LoggedIn() bool {
-	return b.client.IsLoggedIn()
+	return b.wa().IsLoggedIn()
 }
 
 // PairQR runs the QR-code pairing flow: it connects the (unpaired) client
@@ -222,13 +234,13 @@ func (b *Bridge) LoggedIn() bool {
 // cancelled. Must be called before Connect, and only when NeedsPairing is
 // true.
 func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
-	b.ensureHandlerRegistered()
+	cl := b.wa()
 
-	qrChan, err := b.client.GetQRChannel(ctx)
+	qrChan, err := cl.GetQRChannel(ctx)
 	if err != nil {
 		return waErr("start pairing", err)
 	}
-	if err := b.client.ConnectContext(ctx); err != nil {
+	if err := cl.ConnectContext(ctx); err != nil {
 		return waErr("connect", err)
 	}
 
@@ -249,8 +261,7 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 // is already registered (Open does that once, up front), so calling
 // Connect more than once cannot cause events to be dispatched twice.
 func (b *Bridge) Connect(ctx context.Context) error {
-	b.ensureHandlerRegistered()
-	if err := b.client.ConnectContext(ctx); err != nil {
+	if err := b.wa().ConnectContext(ctx); err != nil {
 		return waErr("connect", err)
 	}
 	return nil
@@ -258,7 +269,7 @@ func (b *Bridge) Connect(ctx context.Context) error {
 
 // Blocklist returns the JIDs the paired account has blocked, fetched live.
 func (b *Bridge) Blocklist(ctx context.Context) ([]string, error) {
-	bl, err := b.client.GetBlocklist(ctx)
+	bl, err := b.wa().GetBlocklist(ctx)
 	if err != nil {
 		return nil, waErr("fetch block list", err)
 	}
@@ -284,7 +295,7 @@ func (b *Bridge) GroupInfo(ctx context.Context, groupJID string) (subject, descr
 		return "", "", "", nil, err
 	}
 
-	info, err := b.client.GetGroupInfo(ctx, jid)
+	info, err := b.wa().GetGroupInfo(ctx, jid)
 	if err != nil {
 		return "", "", "", nil, waErr("fetch group info", err)
 	}
@@ -305,7 +316,7 @@ func (b *Bridge) GroupParticipants(ctx context.Context, groupJID string) ([]stri
 		return nil, err
 	}
 
-	info, err := b.client.GetGroupInfo(ctx, jid)
+	info, err := b.wa().GetGroupInfo(ctx, jid)
 	if err != nil {
 		return nil, waErr("fetch group participants", err)
 	}
@@ -347,7 +358,8 @@ func (b *Bridge) RequestOlderMessages(
 		ID:            msgID,
 		Timestamp:     time.Unix(ts, 0),
 	}
-	if _, err := b.client.SendPeerMessage(ctx, b.client.BuildHistorySyncRequest(info, count)); err != nil {
+	cl := b.wa()
+	if _, err := cl.SendPeerMessage(ctx, cl.BuildHistorySyncRequest(info, count)); err != nil {
 		return waErr("request older messages", err)
 	}
 	return nil
@@ -410,19 +422,20 @@ func sanitizeMediaFilename(filename string) (string, error) {
 // requires the specific attachment type rather than the whole message
 // (its deprecated DownloadAny wrapper does this same dispatch internally).
 func (b *Bridge) downloadMessage(ctx context.Context, msg *waE2E.Message) ([]byte, error) {
+	cl := b.wa()
 	switch {
 	case msg.GetImageMessage() != nil:
-		return b.client.Download(ctx, msg.GetImageMessage())
+		return cl.Download(ctx, msg.GetImageMessage())
 	case msg.GetVideoMessage() != nil:
-		return b.client.Download(ctx, msg.GetVideoMessage())
+		return cl.Download(ctx, msg.GetVideoMessage())
 	case msg.GetPtvMessage() != nil:
-		return b.client.Download(ctx, msg.GetPtvMessage())
+		return cl.Download(ctx, msg.GetPtvMessage())
 	case msg.GetAudioMessage() != nil:
-		return b.client.Download(ctx, msg.GetAudioMessage())
+		return cl.Download(ctx, msg.GetAudioMessage())
 	case msg.GetDocumentMessage() != nil:
-		return b.client.Download(ctx, msg.GetDocumentMessage())
+		return cl.Download(ctx, msg.GetDocumentMessage())
 	case msg.GetStickerMessage() != nil:
-		return b.client.Download(ctx, msg.GetStickerMessage())
+		return cl.Download(ctx, msg.GetStickerMessage())
 	default:
 		return nil, whatsmeow.ErrNothingDownloadableFound
 	}

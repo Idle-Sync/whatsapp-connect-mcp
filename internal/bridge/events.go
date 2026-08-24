@@ -160,7 +160,7 @@ func (b *Bridge) ingestHistorySync(evt *events.HistorySync) {
 			if webMsg == nil {
 				continue
 			}
-			msgEvt, err := b.client.ParseWebMessage(chatJID, webMsg)
+			msgEvt, err := b.wa().ParseWebMessage(chatJID, webMsg)
 			if err != nil {
 				continue
 			}
