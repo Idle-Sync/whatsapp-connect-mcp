@@ -16,18 +16,38 @@ import (
 // fakeStore satisfies dashboard.Store; fields configure behavior, later
 // task tests extend it alongside the interface.
 type fakeStore struct {
-	counts store.Counts
+	counts   store.Counts
+	chats    []store.ChatRow
+	msgs     []store.MessageRow
+	gotLimit int
 }
 
 func (f *fakeStore) Counts() (store.Counts, error) { return f.counts, nil }
 
+func (f *fakeStore) Chats(_ string, _ bool, limit int) ([]store.ChatRow, error) {
+	f.gotLimit = limit
+	return f.chats, nil
+}
+
+func (f *fakeStore) Messages(_ string, _, _ int64, limit int) ([]store.MessageRow, error) {
+	f.gotLimit = limit
+	return f.msgs, nil
+}
+
+func (f *fakeStore) SearchMessages(_, _ string, limit int) ([]store.MessageRow, error) {
+	f.gotLimit = limit
+	return f.msgs, nil
+}
+
 type fakeBridge struct {
 	status   bridge.Status
 	unpaired bool
+	caughtUp bool
 }
 
-func (f *fakeBridge) Status() bridge.Status { return f.status }
-func (f *fakeBridge) NeedsPairing() bool    { return f.unpaired }
+func (f *fakeBridge) Status() bridge.Status          { return f.status }
+func (f *fakeBridge) NeedsPairing() bool             { return f.unpaired }
+func (f *fakeBridge) WaitForCatchUp(context.Context) { f.caughtUp = true }
 
 // fakeBridge's default PairQR blocks until cancelled — the base fake
 // never pairs; pairFakeBridge overrides it with scripted behavior.

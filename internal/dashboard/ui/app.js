@@ -82,6 +82,46 @@ async function pollPair() {
   setTimeout(pollPair, 1000);
 }
 
+function messageText(m) {
+  if (m.has_media) {
+    const label = "[" + m.kind + "]";
+    return m.text ? label + " " + m.text : label;
+  }
+  return m.text;
+}
+
+function renderMessages(title, msgs) {
+  const h2 = document.getElementById("messages-title");
+  h2.hidden = false;
+  h2.textContent = title;
+  const t = document.getElementById("messages-table");
+  t.replaceChildren();
+  for (const m of msgs) row(t, [m.ts, m.sender, messageText(m)], m.from_me ? "from-me" : "");
+}
+
+async function loadChats() {
+  const chats = await api("/api/chats?limit=50");
+  const list = document.getElementById("chats-list");
+  list.replaceChildren();
+  for (const c of chats) {
+    const b = el("button", (c.name || c.jid) + (c.is_group ? " (group)" : ""));
+    b.addEventListener("click", async () => {
+      const msgs = await api("/api/messages?chat=" + encodeURIComponent(c.jid) + "&limit=50");
+      renderMessages(c.name || c.jid, msgs.reverse());
+    });
+    list.appendChild(b);
+  }
+}
+
+document.getElementById("search-go").addEventListener("click", async () => {
+  const q = document.getElementById("search-box").value.trim();
+  if (!q) return;
+  const msgs = await api("/api/search?q=" + encodeURIComponent(q) + "&limit=50");
+  renderMessages("Search: " + q, msgs);
+});
+
+document.querySelector('nav button[data-tab="chats"]').addEventListener("click", loadChats);
+
 refreshStatus();
 refreshDoctor();
 setInterval(refreshStatus, 5000);

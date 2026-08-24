@@ -17,6 +17,7 @@
 <nav>
   <button data-tab="status" class="active">Status</button>
   <button data-tab="pair">Pair</button>
+  <button data-tab="chats">Chats</button>
 </nav>
 <main>
   <section id="tab-status">
@@ -28,6 +29,13 @@
     <p id="pair-msg"></p>
     <img id="pair-qr" alt="QR code" hidden>
     <button id="pair-start">Start pairing</button>
+  </section>
+  <section id="tab-chats" hidden>
+    <input id="search-box" placeholder="Search messages (or leave empty and pick a chat)">
+    <button id="search-go">Search</button>
+    <div id="chats-list"></div>
+    <h2 id="messages-title" hidden></h2>
+    <table id="messages-table"></table>
   </section>
 </main>
 <script src="app.js"></script>

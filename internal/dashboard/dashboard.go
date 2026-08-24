@@ -31,6 +31,9 @@ var uiFS embed.FS
 // Extended by later tasks; satisfied by *store.Store throughout.
 type Store interface {
 	Counts() (store.Counts, error)
+	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
+	Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]store.MessageRow, error)
+	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 }
 
 // Bridge is the connection surface the dashboard needs from
@@ -39,6 +42,7 @@ type Bridge interface {
 	Status() bridge.Status
 	NeedsPairing() bool
 	PairQR(ctx context.Context, show func(code string)) error
+	WaitForCatchUp(ctx context.Context)
 }
 
 // Deps wires the dashboard into serve's already-constructed pieces. Ctx is
@@ -80,6 +84,9 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/pair/start", h.authed(h.mutating(h.handlePairStart)))
 	h.mux.HandleFunc("/api/pair", h.authed(h.handlePairInfo))
 	h.mux.HandleFunc("/api/pair/qr.png", h.authed(h.handlePairQR))
+	h.mux.HandleFunc("/api/chats", h.authed(h.handleChats))
+	h.mux.HandleFunc("/api/messages", h.authed(h.handleMessages))
+	h.mux.HandleFunc("/api/search", h.authed(h.handleSearch))
 	return h
 }
 
