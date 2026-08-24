@@ -115,6 +115,39 @@ var staticTypes = map[string]string{
 	".js":   "text/javascript; charset=utf-8",
 }
 
+// staticFile is one embedded UI asset. All assets are loaded once at
+// package init into staticFiles, so a request path only ever selects
+// among fixed compile-time entries — it never reaches a filesystem read.
+type staticFile struct {
+	data        []byte
+	contentType string
+}
+
+var staticFiles = loadStaticFiles()
+
+// loadStaticFiles reads every embedded UI asset with a known extension.
+// A failure here means the binary itself is broken (the embed is part of
+// it), so panicking at init matches New's stance on an unusable process.
+func loadStaticFiles() map[string]staticFile {
+	entries, err := uiFS.ReadDir("ui")
+	if err != nil {
+		panic("dashboard: embedded ui missing: " + err.Error())
+	}
+	out := make(map[string]staticFile, len(entries))
+	for _, e := range entries {
+		ct, ok := staticTypes[path.Ext(e.Name())]
+		if !ok {
+			continue
+		}
+		data, err := uiFS.ReadFile("ui/" + e.Name())
+		if err != nil {
+			panic("dashboard: read embedded " + e.Name() + ": " + err.Error())
+		}
+		out[e.Name()] = staticFile{data: data, contentType: ct}
+	}
+	return out
+}
+
 // serveStatic serves the embedded UI files under /ui/, with the designed
 // not-found page (styled, and pointing back at /ui/) instead of a bare
 // 404 line for paths that don't exist.
@@ -123,27 +156,27 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "index.html"
 	}
-	data, err := uiFS.ReadFile("ui/" + name)
-	ct, known := staticTypes[path.Ext(name)]
-	if err != nil || !known {
+	f, ok := staticFiles[name]
+	if !ok {
 		h.servePage(w, http.StatusNotFound, "notfound.html")
 		return
 	}
-	w.Header().Set("Content-Type", ct)
-	_, _ = w.Write(data)
+	w.Header().Set("Content-Type", f.contentType)
+	_, _ = w.Write(f.data)
 }
 
 // servePage writes one of the embedded standalone pages (the designed
-// signed-out and not-found screens) with the given status.
+// signed-out and not-found screens) with the given status. name is always
+// a compile-time constant at the call sites.
 func (h *Handler) servePage(w http.ResponseWriter, code int, name string) {
-	data, err := uiFS.ReadFile("ui/" + name)
-	if err != nil {
+	f, ok := staticFiles[name]
+	if !ok {
 		http.Error(w, http.StatusText(code), code)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Type", f.contentType)
 	w.WriteHeader(code)
-	_, _ = w.Write(data)
+	_, _ = w.Write(f.data)
 }
 
 // writeJSON writes v with the right header; encoding failures are a
