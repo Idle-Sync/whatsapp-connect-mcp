@@ -373,6 +373,8 @@ button.refresh { flex: none; font-size: 0.95rem; line-height: 1; padding: 0.3rem
 .msg .sender { display: block; font-size: 0.74rem; font-weight: 600; margin-bottom: 0.05rem; }
 .msg .body { font-size: 0.86rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .msg .body.media { color: var(--dim); font-style: italic; }
+.msg .media-img { display: block; max-width: min(100%, 280px); max-height: 320px; border-radius: 8px; margin: 0.1rem 0; }
+.msg .dl { color: var(--ok); font-style: normal; }
 .msg .time {
   float: right;
   margin: 0.55rem 0 0 0.75rem;

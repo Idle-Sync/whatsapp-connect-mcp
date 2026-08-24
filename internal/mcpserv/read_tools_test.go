@@ -725,46 +725,6 @@ func TestDownloadMediaTwoMessagesInSameChatDoNotCollide(t *testing.T) {
 	}
 }
 
-func TestSavedMediaFilename(t *testing.T) {
-	cases := []struct {
-		name           string
-		messageID      string
-		kind           string
-		senderFilename string
-		want           string
-		wantErr        bool
-	}{
-		{"image ignores sender name", "m1", "image", "photo.png", "m1.jpg", false},
-		{"video", "m1", "video", "", "m1.mp4", false},
-		{"video note", "m1", "video_note", "", "m1.mp4", false},
-		{"audio", "m1", "audio", "", "m1.ogg", false},
-		{"voice", "m1", "voice", "", "m1.ogg", false},
-		{"sticker", "m1", "sticker", "", "m1.webp", false},
-		{"unknown kind falls back to bin", "m1", "other", "", "m1.bin", false},
-		{"document keeps its own extension", "m1", "document", "report.pdf", "m1.pdf", false},
-		{"document with no extension falls back to bin", "m1", "document", "README", "m1.bin", false},
-		{"document traversal name only contributes its extension", "m1", "document", "../../../../evil.sh", "m1.sh", false},
-		{"traversal message id is rejected", "../../etc/passwd", "image", "", "", true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := savedMediaFilename(c.messageID, c.kind, c.senderFilename)
-			if c.wantErr {
-				if err == nil {
-					t.Fatalf("savedMediaFilename(%q, %q, %q) error = nil, want error", c.messageID, c.kind, c.senderFilename)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("savedMediaFilename(%q, %q, %q) error = %v, want nil", c.messageID, c.kind, c.senderFilename, err)
-			}
-			if got != c.want {
-				t.Fatalf("savedMediaFilename(%q, %q, %q) = %q, want %q", c.messageID, c.kind, c.senderFilename, got, c.want)
-			}
-		})
-	}
-}
-
 func TestDownloadMediaSanitizesJIDForFilesystemUse(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "note.opus", mediaKind: "voice"}

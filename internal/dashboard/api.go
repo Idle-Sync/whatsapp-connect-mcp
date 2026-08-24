@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/medianame"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
@@ -43,7 +45,7 @@ func messageRows(msgs []store.MessageRow) []map[string]any {
 		rows[i] = map[string]any{
 			"ts":     time.Unix(m.TS, 0).UTC().Format(time.RFC3339),
 			"sender": m.SenderName, "kind": m.Kind, "text": m.Text,
-			"id": m.ID, "has_media": m.HasMedia, "from_me": m.FromMe,
+			"id": m.ID, "chat": m.ChatJID, "has_media": m.HasMedia, "from_me": m.FromMe,
 		}
 	}
 	return rows
@@ -91,6 +93,88 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, messageRows(msgs))
+}
+
+// rasterInline is the closed set of content types the media endpoint will
+// serve inline. Membership is decided by sniffing the file's own bytes,
+// never the sender-declared kind; everything outside it — notably SVG and
+// HTML, which would execute script on this origin — is forced down as an
+// opaque attachment.
+var rasterInline = map[string]bool{
+	"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true,
+}
+
+// handleMedia serves one message's media from <dataDir>/media/<chat>/,
+// the same location download_media saves to — an existing file is served
+// with no WhatsApp traffic, and a miss is downloaded through the bridge
+// exactly once. Attachments are attacker-supplied content served from the
+// dashboard's own origin: the content type is verified server-side and
+// only allowlisted raster images ever render inline.
+func (h *Handler) handleMedia(w http.ResponseWriter, r *http.Request) {
+	chat := r.URL.Query().Get("chat")
+	id := r.URL.Query().Get("id")
+	if chat == "" || id == "" {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "chat and id are required"})
+		return
+	}
+	ref, senderFilename, kind, err := h.deps.Store.MessageMediaRef(chat, id)
+	if err != nil {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "no media for that message"})
+		return
+	}
+	dir, err := medianame.ChatDir(h.deps.DataDir, chat)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid chat"})
+		return
+	}
+	name, err := medianame.SavedFilename(id, kind, senderFilename)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid message id"})
+		return
+	}
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); err != nil { // #nosec G703 -- dir and name are traversal-checked by medianame just above
+		if _, err := h.deps.Bridge.DownloadMedia(r.Context(), ref, dir, name); err != nil {
+			h.writeJSON(w, http.StatusBadGateway, map[string]string{"error": "media download failed"})
+			return
+		}
+	}
+
+	f, err := os.Open(path) // #nosec G304 G703 -- same medianame-confined path as the Stat above
+	if err != nil {
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
+		return
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
+		return
+	}
+
+	buf := make([]byte, 512)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "media unreadable"})
+		return
+	}
+
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	if ct := http.DetectContentType(buf[:n]); rasterInline[ct] {
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Content-Disposition", "inline")
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		// name is a validated single path component (message-id-derived);
+		// stripping quotes keeps the header unambiguous even so.
+		w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	}
+	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
 // Trust management. The written project rule is amended alongside this

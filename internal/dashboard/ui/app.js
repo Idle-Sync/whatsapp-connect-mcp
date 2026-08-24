@@ -317,18 +317,35 @@ async function pollPair() {
 
 /* ---------- chats: the WhatsApp-style window ---------- */
 
-function messageText(m) {
-  if (m.has_media) {
-    const label = "[" + m.kind + "]";
-    return m.text ? label + " " + m.text : label;
-  }
-  // A message with no body — a system event, a removed reaction, a poll
-  // vote — renders as a dim kind placeholder instead of an empty bubble.
-  if (!m.text) return "[" + m.kind + "]";
-  return m.text;
+function mediaURL(m) {
+  return "/api/media?chat=" + encodeURIComponent(m.chat) + "&id=" + encodeURIComponent(m.id);
 }
 
-function isPlaceholder(m) { return m.has_media || !m.text; }
+// mediaNode renders a media message's payload: images and stickers as an
+// inline lazy-loaded picture (the server only serves verified raster
+// types inline; a refused or failed load falls back to the placeholder),
+// everything else as the kind placeholder plus a download link. Media
+// bytes come from this server's own /api/media — the page still makes
+// zero external requests.
+function mediaNode(m) {
+  const label = "[" + m.kind + "]";
+  if (m.kind === "image" || m.kind === "sticker") {
+    const img = document.createElement("img");
+    img.className = "media-img";
+    img.loading = "lazy";
+    img.alt = label;
+    img.addEventListener("error", () => {
+      img.replaceWith(el("span", label, "body media"));
+    });
+    img.src = mediaURL(m);
+    return img;
+  }
+  const line = el("span", label + " ", "body media");
+  const a = el("a", "download", "dl");
+  a.href = mediaURL(m);
+  line.appendChild(a);
+  return line;
+}
 
 // currentChat is the open chat's refresh state — jid, display bits, the
 // server's replay-safe rowid cursor, and the last day divider rendered.
@@ -351,8 +368,14 @@ function appendMessages(list, msgs, showSenders, lastDay) {
       who.style.color = "hsl(" + hueFor(m.sender) + " 55% 65%)";
       box.appendChild(who);
     }
-    const body = el("span", messageText(m), isPlaceholder(m) ? "body media" : "body");
-    box.appendChild(body);
+    if (m.has_media) {
+      box.appendChild(mediaNode(m));
+      if (m.text) box.appendChild(el("span", m.text, "body"));
+    } else {
+      // A message with no body — a system event, a removed reaction, a
+      // poll vote — renders as a dim kind placeholder, not an empty bubble.
+      box.appendChild(el("span", m.text || "[" + m.kind + "]", m.text ? "body" : "body media"));
+    }
     box.appendChild(el("span", clock(m.ts), "time"));
     list.appendChild(box);
   }

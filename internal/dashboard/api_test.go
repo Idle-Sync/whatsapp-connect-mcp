@@ -1,9 +1,13 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,6 +84,9 @@ func TestMessagesInitialLoadTailsWithCursor(t *testing.T) {
 	if len(page.Messages) != 1 || page.Messages[0]["has_media"] != true || page.Messages[0]["kind"] != "image" {
 		t.Fatalf("messages = %v", page.Messages)
 	}
+	if page.Messages[0]["chat"] != "c" {
+		t.Fatalf("chat = %v, want the row's chat JID (media links need it)", page.Messages[0]["chat"])
+	}
 }
 
 func TestMessagesRefreshReadsAfterCursor(t *testing.T) {
@@ -133,6 +140,128 @@ func TestMessagesRequiresChat(t *testing.T) {
 	h, cookie := newTestHandler(t, nil, nil)
 	if w := authedGet(t, h, cookie, "/api/messages"); w.Code != http.StatusBadRequest {
 		t.Fatalf("messages without chat = %d, want 400", w.Code)
+	}
+}
+
+// pngBytes is a minimal valid PNG header — enough for content sniffing to
+// identify image/png.
+var pngBytes = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+
+func TestMediaCacheHitServesInlineRasterWithoutBridge(t *testing.T) {
+	fs := &fakeStore{mediaRef: []byte("ref"), mediaKind: "image"}
+	fb := &fakeBridge{}
+	var dataDir string
+	h, cookie := newTestHandlerWith(t, func(d *Deps) {
+		d.Store, d.Bridge, dataDir = fs, fb, d.DataDir
+	})
+
+	dir := filepath.Join(dataDir, "media", "c@s.whatsapp.net")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "m1.jpg"), pngBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("media = %d: %s", w.Code, w.Body.String())
+	}
+	if fb.downloadedName != "" {
+		t.Fatal("cache hit must not reach the bridge")
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("Content-Type = %q, want sniffed image/png", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd != "inline" {
+		t.Fatalf("Content-Disposition = %q, want inline", cd)
+	}
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("nosniff header missing")
+	}
+	if !bytes.Equal(w.Body.Bytes(), pngBytes) {
+		t.Fatal("served bytes differ from the cached file")
+	}
+}
+
+func TestMediaCacheMissDownloadsOnceThenServes(t *testing.T) {
+	fs := &fakeStore{mediaRef: []byte("ref"), mediaKind: "image"}
+	fb := &fakeBridge{downloadData: pngBytes}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store, d.Bridge = fs, fb })
+
+	w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("media = %d: %s", w.Code, w.Body.String())
+	}
+	if fb.downloadedName != "m1.jpg" {
+		t.Fatalf("bridge downloaded %q, want m1.jpg", fb.downloadedName)
+	}
+	if !bytes.Equal(w.Body.Bytes(), pngBytes) {
+		t.Fatal("served bytes differ from the downloaded file")
+	}
+
+	fb.downloadedName = ""
+	if w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1"); w.Code != http.StatusOK {
+		t.Fatalf("second read = %d", w.Code)
+	}
+	if fb.downloadedName != "" {
+		t.Fatal("second read must come from the disk cache, not a fresh download")
+	}
+}
+
+func TestMediaNonRasterNeverRendersInline(t *testing.T) {
+	// The stored kind claims image, but the bytes are markup — the served
+	// response must be a forced download, never an inline render.
+	fs := &fakeStore{mediaRef: []byte("ref"), mediaKind: "image"}
+	fb := &fakeBridge{downloadData: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>")}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store, d.Bridge = fs, fb })
+
+	w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("media = %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q, want application/octet-stream", ct)
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment") || !strings.Contains(cd, `filename="m1.jpg"`) {
+		t.Fatalf("Content-Disposition = %q, want attachment with the derived filename", cd)
+	}
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("nosniff header missing")
+	}
+}
+
+func TestMediaDocumentIsAttachment(t *testing.T) {
+	fs := &fakeStore{mediaRef: []byte("ref"), mediaKind: "document", mediaFilename: "report.pdf"}
+	fb := &fakeBridge{downloadData: []byte("%PDF-1.7 fake")}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store, d.Bridge = fs, fb })
+
+	w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("media = %d", w.Code)
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment") || !strings.Contains(cd, `filename="m1.pdf"`) {
+		t.Fatalf("Content-Disposition = %q, want attachment with m1.pdf", cd)
+	}
+}
+
+func TestMediaMissingIs404(t *testing.T) {
+	fs := &fakeStore{mediaRefErr: errors.New("message media: message not found")}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store = fs })
+	if w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net&id=m1"); w.Code != http.StatusNotFound {
+		t.Fatalf("missing media = %d, want 404", w.Code)
+	}
+}
+
+func TestMediaRequiresChatAndID(t *testing.T) {
+	h, cookie := newTestHandler(t, nil, nil)
+	if w := authedGet(t, h, cookie, "/api/media?chat=c%40s.whatsapp.net"); w.Code != http.StatusBadRequest {
+		t.Fatalf("media without id = %d, want 400", w.Code)
+	}
+	if w := authedGet(t, h, cookie, "/api/media?id=m1"); w.Code != http.StatusBadRequest {
+		t.Fatalf("media without chat = %d, want 400", w.Code)
 	}
 }
 

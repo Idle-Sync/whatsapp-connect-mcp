@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +28,11 @@ type fakeStore struct {
 	gotOwn     bool
 	tailCalled bool
 	backupPath string
+
+	mediaRef      []byte
+	mediaFilename string
+	mediaKind     string
+	mediaRefErr   error
 }
 
 func (f *fakeStore) Counts() (store.Counts, error) { return f.counts, nil }
@@ -55,6 +61,13 @@ func (f *fakeStore) SearchMessages(_, _ string, limit int) ([]store.MessageRow, 
 	return f.msgs, nil
 }
 
+func (f *fakeStore) MessageMediaRef(_, _ string) ([]byte, string, string, error) {
+	if f.mediaRefErr != nil {
+		return nil, "", "", f.mediaRefErr
+	}
+	return f.mediaRef, f.mediaFilename, f.mediaKind, nil
+}
+
 func (f *fakeStore) BackupTo(path string) error {
 	f.backupPath = path
 	return os.WriteFile(path, []byte("fake"), 0o600)
@@ -66,6 +79,21 @@ type fakeBridge struct {
 	caughtUp  bool
 	loggedOut bool
 	logoutErr error
+
+	downloadData   []byte // bytes DownloadMedia writes to the requested path
+	downloadedName string // filename of the last DownloadMedia call
+}
+
+func (f *fakeBridge) DownloadMedia(_ context.Context, _ []byte, destDir, filename string) (string, error) {
+	f.downloadedName = filename
+	if err := os.MkdirAll(destDir, 0o700); err != nil { // #nosec G703 -- test fake writing under t.TempDir
+		return "", err
+	}
+	path := filepath.Join(destDir, filename)
+	if err := os.WriteFile(path, f.downloadData, 0o600); err != nil { // #nosec G703 -- test fake writing under t.TempDir
+		return "", err
+	}
+	return path, nil
 }
 
 func (f *fakeBridge) Status() bridge.Status          { return f.status }
