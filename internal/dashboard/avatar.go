@@ -122,6 +122,6 @@ func (h *Handler) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		// avatars change rarely, and a chat-list refresh should not
 		// re-request fifty of them.
 		w.Header().Set("Cache-Control", "private, max-age=3600")
-		_, _ = w.Write(e.data)
+		_, _ = w.Write(e.data) // #nosec G705 -- bytes sniff-verified as a raster image above; Content-Type is explicit and nosniff is set
 	}
 }

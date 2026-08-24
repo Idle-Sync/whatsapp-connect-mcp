@@ -67,7 +67,7 @@ func (b *Bridge) fetchAvatar(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("fetch profile picture: request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch profile picture: unexpected status %d", resp.StatusCode)
 	}
