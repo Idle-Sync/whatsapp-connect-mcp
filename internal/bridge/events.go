@@ -110,22 +110,35 @@ func (b *Bridge) handleEvent(raw any) {
 // ingestGroupInfoName and ingestHistorySync below.
 func (b *Bridge) ingestMessage(evt *events.Message) {
 	m, chatName, isGroup := decodeMessage(evt)
+	src := evt.Info.MessageSource
 
-	b.noteIngest(b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS))
-	b.noteIngest(b.store.UpsertMessage(m))
-
-	// A message that carries both of the sender's addresses (privacy LID
-	// and phone JID, in either order) teaches the store the pairing, which
-	// is what lets a LID-only sender row read back with a real name. The
-	// mapping is recorded under the exact sender string too when it differs
-	// (a device-qualified JID), since sender_jid joins against it verbatim.
-	lidExact, lidCanon, pn := lidPairing(evt.Info.MessageSource)
+	// A message that carries both of someone's addresses (privacy LID and
+	// phone JID, in either order — the sender's, or for a direct chat the
+	// recipient's) teaches the store the pairing, which is what lets a
+	// LID-only row read back with a real name. The sender mapping is
+	// recorded under the exact sender string too when it differs (a
+	// device-qualified JID), since sender_jid joins against it verbatim.
+	lidExact, lidCanon, pn := lidPairing(src)
 	if pn != "" {
+		b.rememberLID(src.Sender, src.SenderAlt)
+		b.rememberLID(src.SenderAlt, src.Sender)
 		b.noteIngest(b.store.UpsertLIDMapping(lidExact, pn))
 		if lidCanon != lidExact {
 			b.noteIngest(b.store.UpsertLIDMapping(lidCanon, pn))
 		}
 	}
+	if lid, phone, ok := chatPairing(src); ok {
+		b.rememberLID(lid, phone)
+		b.noteIngest(b.store.UpsertLIDMapping(lid.String(), phone.String()))
+	}
+
+	// Then key the row on phone numbers wherever one is known, so a person
+	// is one chat and one sender however WhatsApp addressed this message.
+	m.ChatJID = b.phoneJID(src.Chat).String()
+	m.SenderJID = b.phoneJID(src.Sender).String()
+
+	b.noteIngest(b.store.UpsertChat(m.ChatJID, chatName, isGroup, m.TS))
+	b.noteIngest(b.store.UpsertMessage(m))
 
 	if !m.FromMe && evt.Info.PushName != "" {
 		b.noteIngest(b.store.UpsertContact(m.SenderJID, phoneFromJID(m.SenderJID), evt.Info.PushName, "", ""))
@@ -161,11 +174,11 @@ func (b *Bridge) ingestReceipt(evt *events.Receipt) {
 	if !ok {
 		return
 	}
-	b.noteIngest(b.store.MarkRead(chatJID, ids, readAt))
+	b.noteIngest(b.store.MarkRead(b.phoneJIDString(chatJID), ids, readAt))
 }
 
 func (b *Bridge) ingestCall(id, peerJID string, ts int64, direction, status string, isVideo bool) {
-	b.noteIngest(b.store.InsertCall(id, peerJID, ts, direction, status, isVideo))
+	b.noteIngest(b.store.InsertCall(id, b.phoneJIDString(peerJID), ts, direction, status, isVideo))
 }
 
 // ingestHistorySync writes the conversations and messages carried in a
@@ -175,21 +188,29 @@ func (b *Bridge) ingestCall(id, peerJID string, ts int64, direction, status stri
 // *events.Message shape a live message arrives as; ParseWebMessage does
 // only local parsing (JID parsing and a local device-store read for our
 // own JID), never network I/O.
+//
+// Entries without a message payload are stubs — the status lines WhatsApp
+// keeps in a chat (a security-code change, a missed call marker) — and are
+// skipped: parsed, they would come out as empty "other" rows, and a LID
+// conversation made only of them would surface as a nameless phantom chat.
+// Once the sync is ingested, any LID identity whose pairing it delivered
+// is folded into its phone number.
 func (b *Bridge) ingestHistorySync(evt *events.HistorySync) {
 	for _, conv := range evt.Data.GetConversations() {
 		jid, name, isGroup, ok := decodeHistorySyncConversation(conv)
 		if !ok {
 			continue
 		}
-		b.noteIngest(b.store.UpsertChat(jid, name, isGroup, int64(conv.GetConversationTimestamp()))) // #nosec G115 -- WhatsApp timestamps fit int64 for the foreseeable future
-
 		chatJID, err := types.ParseJID(jid)
 		if err != nil {
 			continue
 		}
+		chatJID = b.phoneJID(chatJID)
+		b.noteIngest(b.store.UpsertChat(chatJID.String(), name, isGroup, int64(conv.GetConversationTimestamp()))) // #nosec G115 -- WhatsApp timestamps fit int64 for the foreseeable future
+
 		for _, hsMsg := range conv.GetMessages() {
 			webMsg := hsMsg.GetMessage()
-			if webMsg == nil {
+			if webMsg.GetMessage() == nil {
 				continue
 			}
 			msgEvt, err := b.wa().ParseWebMessage(chatJID, webMsg)
@@ -199,6 +220,9 @@ func (b *Bridge) ingestHistorySync(evt *events.HistorySync) {
 			b.ingestMessage(msgEvt)
 		}
 	}
+	if _, err := b.FoldLIDs(); err != nil {
+		b.noteIngest(err)
+	}
 }
 
 func (b *Bridge) ingestContact(evt *events.Contact) {
@@ -206,6 +230,7 @@ func (b *Bridge) ingestContact(evt *events.Contact) {
 	if !ok {
 		return
 	}
+	jid = b.phoneJIDString(jid)
 	b.noteIngest(b.store.UpsertContact(jid, phoneFromJID(jid), "", fullName, ""))
 }
 
@@ -214,6 +239,7 @@ func (b *Bridge) ingestPushName(evt *events.PushName) {
 	if pushName == "" {
 		return
 	}
+	jid = b.phoneJIDString(jid)
 	b.noteIngest(b.store.UpsertContact(jid, phoneFromJID(jid), pushName, "", ""))
 }
 

@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- One person is one chat again. WhatsApp increasingly addresses people by
+  a privacy LID (`...@lid`) instead of their phone number, and the same
+  contact could show up twice in the chat list — a phone-number chat with
+  the history and a nameless LID chat with the newest messages — with the
+  LID half reading as `user …12345`. Every LID the server can pair with a
+  phone number (from the message itself, or from the pairing table
+  WhatsApp syncs to the device) is now keyed on the phone number as it is
+  stored: chats, senders, contacts, read receipts and calls alike. What was
+  stored split by earlier versions is folded together on the next start,
+  and again after every history sync, so pairings that arrive late still
+  take effect. LIDs WhatsApp never pairs stay as they are.
+- History-sync stubs — the status lines WhatsApp keeps in a chat with no
+  message behind them — no longer become empty `[other]` rows, or the
+  phantom LID chats made of nothing else. Existing ones are dropped on the
+  next start.
+
 ## [0.3.3] - 2026-08-25
 
 ### Fixed
