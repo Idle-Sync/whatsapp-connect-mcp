@@ -105,6 +105,7 @@ func runServe(args []string) int {
 		return 1
 	}
 	defer func() { _ = br.Close() }()
+	tidyStore(st, br, os.Stderr)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -238,6 +239,25 @@ func connectWhenPaired(ctx context.Context, br *bridge.Bridge, errOut io.Writer)
 		_, _ = fmt.Fprintf(errOut, "serve: %v (continuing with the built-in version)\n", err)
 	}
 	return br.Connect(ctx)
+}
+
+// tidyStore folds what earlier versions stored under privacy LIDs into
+// phone-number identities and drops the content-less stub rows they
+// ingested — both keyed off the local session store, so this runs before
+// any connect. Failures are reported and otherwise ignored: a store that
+// cannot be tidied still serves.
+func tidyStore(st *store.Store, br *bridge.Bridge, errOut io.Writer) {
+	if msgs, chats, err := st.PruneStubMessages(); err != nil {
+		_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
+	} else if msgs > 0 || chats > 0 {
+		_, _ = fmt.Fprintf(errOut, "serve: dropped %d empty stub message rows and %d LID chats left with nothing in them\n", msgs, chats)
+	}
+	if stats, err := br.FoldLIDs(); err != nil {
+		_, _ = fmt.Fprintf(errOut, "serve: %v\n", err)
+	} else if stats.Total() > 0 {
+		_, _ = fmt.Fprintf(errOut, "serve: folded LID identities into phone numbers — %d chats, %d messages, %d contacts, %d calls\n",
+			stats.Chats, stats.Messages, stats.Contacts, stats.Calls)
+	}
 }
 
 // Backoff for the http transport's startup connect: first retry after

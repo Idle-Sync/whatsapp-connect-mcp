@@ -263,6 +263,7 @@ type fakeIngest struct {
 	reads       []fakeReadCall
 	calls       []fakeCallCall
 	lidMappings []fakeLIDMappingCall
+	folds       int
 
 	// failWith, when set, is returned by every Ingest method, simulating a
 	// persistently failing store (disk full, corruption).
@@ -324,6 +325,11 @@ func (f *fakeIngest) UpsertLIDMapping(lid, pn string) error {
 func (f *fakeIngest) InsertCall(id, peerJID string, ts int64, direction, status string, isVideo bool) error {
 	f.calls = append(f.calls, fakeCallCall{id, peerJID, ts, direction, status, isVideo})
 	return f.failWith
+}
+
+func (f *fakeIngest) FoldLIDs(_ func(lid string) string) (store.FoldStats, error) {
+	f.folds++
+	return store.FoldStats{}, f.failWith
 }
 
 // newTestBridge opens a Bridge against a temp dataDir with fake as the
@@ -1129,5 +1135,143 @@ func TestDecodeMessageViewOnceMarker(t *testing.T) {
 	m := decodeKind(t, &waE2E.Message{SecretEncryptedMessage: &waE2E.SecretEncryptedMessage{}})
 	if m.Kind != "view_once" || !strings.Contains(m.Text, "paired phone") {
 		t.Fatalf("secret-encrypted = kind %q text %q, want view_once with a readable-only-on-phone hint", m.Kind, m.Text)
+	}
+}
+
+// TestHandleEventDirectLIDChatKeyedOnPhone: a direct chat WhatsApp
+// addressed by the peer's LID, with the phone JID as the alternative
+// recipient address, is stored under the phone number — chat and sender
+// alike — and the pairing is recorded.
+func TestHandleEventDirectLIDChatKeyedOnPhone(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	src := types.MessageSource{
+		Chat:         types.NewJID("190319228375093", types.HiddenUserServer),
+		Sender:       types.NewJID("190319228375093", types.HiddenUserServer),
+		SenderAlt:    types.NewJID("919654123140", types.DefaultUserServer),
+		RecipientAlt: types.NewJID("919654123140", types.DefaultUserServer),
+		IsFromMe:     false,
+		IsGroup:      false,
+	}
+	b.handleEvent(messageEvent(src, "Priya", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	if len(fake.messages) != 1 || fake.messages[0].ChatJID != "919654123140@s.whatsapp.net" || fake.messages[0].SenderJID != "919654123140@s.whatsapp.net" {
+		t.Fatalf("messages = %+v, want chat and sender keyed on 919654123140@s.whatsapp.net", fake.messages)
+	}
+	if len(fake.chats) != 1 || fake.chats[0].jid != "919654123140@s.whatsapp.net" || fake.chats[0].name != "Priya" {
+		t.Fatalf("chats = %+v, want one phone-number chat named Priya", fake.chats)
+	}
+	for _, c := range fake.contacts {
+		if strings.HasSuffix(c.jid, "@lid") {
+			t.Fatalf("contacts = %+v, must not create a LID contact once the phone number is known", fake.contacts)
+		}
+	}
+	// The pairing arrived on this message, so it is on record for the
+	// read-side fallbacks too.
+	want := fakeLIDMappingCall{lid: "190319228375093@lid", pn: "919654123140@s.whatsapp.net"}
+	found := false
+	for _, m := range fake.lidMappings {
+		if m == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("lid mappings = %+v, want %+v among them", fake.lidMappings, want)
+	}
+}
+
+// TestHandleEventOwnMessageToLIDChatKeyedOnPhone: our own message to a
+// LID-addressed peer carries only the recipient's alternative address;
+// that is enough to key the chat on the phone number.
+func TestHandleEventOwnMessageToLIDChatKeyedOnPhone(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	src := types.MessageSource{
+		Chat:         types.NewJID("190319228375093", types.HiddenUserServer),
+		Sender:       types.NewJID("918100466743", types.DefaultUserServer),
+		RecipientAlt: types.NewJID("919654123140", types.DefaultUserServer),
+		IsFromMe:     true,
+	}
+	b.handleEvent(messageEvent(src, "", &waE2E.Message{Conversation: proto.String("hello")}))
+
+	if len(fake.messages) != 1 || fake.messages[0].ChatJID != "919654123140@s.whatsapp.net" {
+		t.Fatalf("messages = %+v, want the chat keyed on 919654123140@s.whatsapp.net", fake.messages)
+	}
+}
+
+// TestHandleEventLIDResolvedFromSessionStore: with no alternative address
+// on the message, the pairing whatsmeow already holds in the session
+// store is what resolves the LID — for the chat, the sender, and later
+// receipts against that chat.
+func TestHandleEventLIDResolvedFromSessionStore(t *testing.T) {
+	b, fake := newTestBridge(t)
+	lid := types.NewJID("249791271452696", types.HiddenUserServer)
+	pn := types.NewJID("917980466253", types.DefaultUserServer)
+	// An unpaired device has no LID map wired up; a paired one has the
+	// container's. Wire it the way pairing would.
+	b.wa().Store.LIDs = b.container.LIDMap
+	if err := b.wa().Store.LIDs.PutLIDMapping(context.Background(), lid, pn); err != nil {
+		t.Fatalf("PutLIDMapping: %v", err)
+	}
+
+	src := types.MessageSource{Chat: lid, Sender: types.JID{User: lid.User, Device: 6, Server: types.HiddenUserServer}}
+	b.handleEvent(messageEvent(src, "Soumyadeep", &waE2E.Message{Conversation: proto.String("hi")}))
+	b.handleEvent(&events.Receipt{
+		MessageSource: types.MessageSource{Chat: lid, Sender: lid},
+		MessageIDs:    []string{"MSG1"},
+		Timestamp:     time.Unix(1700000100, 0),
+		Type:          types.ReceiptTypeRead,
+	})
+
+	if len(fake.messages) != 1 || fake.messages[0].ChatJID != pn.String() || fake.messages[0].SenderJID != pn.String() {
+		t.Fatalf("messages = %+v, want chat and sender resolved to %s via the session store", fake.messages, pn)
+	}
+	if len(fake.reads) != 1 || fake.reads[0].chatJID != pn.String() {
+		t.Fatalf("reads = %+v, want the receipt applied to the phone-number chat", fake.reads)
+	}
+	if len(fake.contacts) == 0 || fake.contacts[0].jid != pn.String() || fake.contacts[0].pushName != "Soumyadeep" {
+		t.Fatalf("contacts = %+v, want the push name on the phone-number contact", fake.contacts)
+	}
+}
+
+// TestHandleEventUnresolvedLIDStaysLID: a LID nothing can pair with a
+// phone number is stored as the LID it is — never dropped, never guessed.
+func TestHandleEventUnresolvedLIDStaysLID(t *testing.T) {
+	b, fake := newTestBridge(t)
+	lid := types.NewJID("555", types.HiddenUserServer)
+
+	b.handleEvent(messageEvent(types.MessageSource{Chat: lid, Sender: lid}, "Stranger", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	if len(fake.messages) != 1 || fake.messages[0].ChatJID != "555@lid" || fake.messages[0].SenderJID != "555@lid" {
+		t.Fatalf("messages = %+v, want the LID kept as is", fake.messages)
+	}
+}
+
+// TestHistorySyncSkipsStubsAndFolds: a history-sync entry with no message
+// payload is a stub and must not become a row; the real entry beside it
+// is ingested, and the sync ends with a fold so pairings it delivered
+// take effect on what was stored before them.
+func TestHistorySyncSkipsStubsAndFolds(t *testing.T) {
+	b, fake := newTestBridge(t)
+
+	key := func(id string) *waCommon.MessageKey {
+		return &waCommon.MessageKey{RemoteJID: proto.String("111@s.whatsapp.net"), FromMe: proto.Bool(false), ID: proto.String(id)}
+	}
+	stubType := waWeb.WebMessageInfo_E2E_IDENTITY_CHANGED
+	b.handleEvent(&events.HistorySync{Data: &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{{
+			ID: proto.String("111@s.whatsapp.net"),
+			Messages: []*waHistorySync.HistorySyncMsg{
+				{Message: &waWeb.WebMessageInfo{Key: key("STUB"), MessageTimestamp: proto.Uint64(1700000000), MessageStubType: &stubType}},
+				{Message: &waWeb.WebMessageInfo{Key: key("REAL"), MessageTimestamp: proto.Uint64(1700000001), Message: &waE2E.Message{Conversation: proto.String("hi")}}},
+			},
+		}},
+	}})
+
+	if len(fake.messages) != 1 || fake.messages[0].ID != "REAL" {
+		t.Fatalf("messages = %+v, want only the entry that carried a payload", fake.messages)
+	}
+	if fake.folds != 1 {
+		t.Fatalf("folds = %d, want one fold after the sync", fake.folds)
 	}
 }

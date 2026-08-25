@@ -39,6 +39,7 @@ type Ingest interface {
 	UpsertLIDMapping(lid, pn string) error
 	MarkRead(chatJID string, ids []string, readAt int64) error
 	InsertCall(id, peerJID string, ts int64, direction, status string, isVideo bool) error
+	FoldLIDs(resolve func(lid string) string) (store.FoldStats, error)
 }
 
 // Bridge wraps a whatsmeow client bound to a session stored under dataDir
@@ -48,6 +49,11 @@ type Bridge struct {
 	container *sqlstore.Container
 	store     Ingest
 	dataDir   string
+
+	// lidCache memoizes LID→phone-number resolutions (bare LID user →
+	// bare phone JID) so ingest pays the session-store lookup once per
+	// person, not once per message. See lid.go.
+	lidCache sync.Map
 
 	// mediaRoots confines which local files an outbound send may read. Its
 	// zero value allows nothing, so a Bridge opened without roots (setup,
