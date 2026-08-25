@@ -265,6 +265,72 @@ func TestMediaRequiresChatAndID(t *testing.T) {
 	}
 }
 
+// TestSearchCarriesChatNamesAndScope: every result names its chat (the
+// list is read chat-first) and ?chat= narrows the search to one chat.
+func TestSearchCarriesChatNamesAndScope(t *testing.T) {
+	fs := &fakeStore{
+		chats: []store.ChatRow{{JID: "g@g.us", Name: "Team", IsGroup: true}},
+		msgs: []store.MessageRow{
+			{ChatJID: "g@g.us", ID: "m1", TS: 5, Kind: "text", Text: "good morning", SenderName: "A"},
+			{ChatJID: "x@s.whatsapp.net", ID: "m2", TS: 4, Kind: "text", Text: "good night", SenderName: "B"},
+		},
+	}
+	h, cookie := newTestHandler(t, fs, nil)
+
+	w := authedGet(t, h, cookie, "/api/search?q=good&chat=g%40g.us")
+	if w.Code != http.StatusOK {
+		t.Fatalf("search = %d", w.Code)
+	}
+	if fs.gotChat != "g@g.us" {
+		t.Fatalf("chat scope reached the store as %q, want g@g.us", fs.gotChat)
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 2 || rows[0]["chat_name"] != "Team" || rows[0]["chat_is_group"] != true {
+		t.Fatalf("rows = %v, want the group's name and flag on its result", rows)
+	}
+	if rows[1]["chat_name"] != "" || rows[1]["chat_is_group"] != false {
+		t.Fatalf("rows[1] = %v, want an empty name for a chat the store doesn't know (client falls back to the JID)", rows[1])
+	}
+}
+
+// TestMessagesAroundReturnsContextWithoutCursor: opening a search result
+// asks for the window around that message, split evenly from the limit,
+// and gets no rowid cursor back — that page is parked mid-history.
+func TestMessagesAroundReturnsContextWithoutCursor(t *testing.T) {
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
+	fs := &fakeStore{msgs: []store.MessageRow{{ChatJID: "c", ID: "hit", TS: 5, Kind: "text", Text: "found", SenderName: "A"}}}
+	h, cookie := newTestHandler(t, fs, fb)
+
+	w := authedGet(t, h, cookie, "/api/messages?chat=c&around=hit&limit=60")
+	if w.Code != http.StatusOK {
+		t.Fatalf("messages around = %d", w.Code)
+	}
+	if !fb.caughtUp {
+		t.Fatal("WaitForCatchUp not called before the read")
+	}
+	if fs.gotAround != "hit" || fs.gotBefore != 30 || fs.gotAfterN != 30 {
+		t.Fatalf("context asked for %q ±%d/%d, want hit ±30/30", fs.gotAround, fs.gotBefore, fs.gotAfterN)
+	}
+	if fs.tailCalled {
+		t.Fatal("a context load must not compute a tail cursor")
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"cursor"`) || !strings.Contains(body, `"around":"hit"`) {
+		t.Fatalf("body = %s, want the around id echoed and no cursor", body)
+	}
+}
+
+func TestMessagesAroundUnknownIs404(t *testing.T) {
+	fs := &fakeStore{contextErr: errors.New("message context: message not found")}
+	h, cookie := newTestHandler(t, fs, nil)
+	if w := authedGet(t, h, cookie, "/api/messages?chat=c&around=nope"); w.Code != http.StatusNotFound {
+		t.Fatalf("messages around unknown id = %d, want 404", w.Code)
+	}
+}
+
 func TestSearchRequiresQuery(t *testing.T) {
 	h, cookie := newTestHandler(t, nil, nil)
 	if w := authedGet(t, h, cookie, "/api/search"); w.Code != http.StatusBadRequest {

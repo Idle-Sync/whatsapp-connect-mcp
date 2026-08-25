@@ -37,6 +37,8 @@ type Store interface {
 	MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error)
 	MessageMediaRef(chatJID, id string) (ref []byte, filename, kind string, err error)
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
+	Chat(jid string) (store.ChatRow, bool, error)
+	MessageContext(chatJID, id string, before, after int) ([]store.MessageRow, error)
 	BackupTo(path string) error
 }
 

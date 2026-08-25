@@ -51,11 +51,14 @@ func messageRows(msgs []store.MessageRow) []map[string]any {
 	return rows
 }
 
-// handleMessages serves both faces of the chat pane through one rowid
-// cursor (poll_new_messages' machinery): without ?after= it tails the
-// newest page, with ?after= it returns only what landed past the caller's
-// cursor. Either way the response carries the next cursor, so a refresh
-// can neither skip nor duplicate a message.
+// handleMessages serves the chat pane's three faces. Without ?after= it
+// tails the newest page; with ?after= it returns only what landed past the
+// caller's rowid cursor (poll_new_messages' machinery), and either way the
+// response carries the next cursor, so a refresh can neither skip nor
+// duplicate a message. With ?around=<id> — a search result being opened in
+// place — it returns the window of messages surrounding that one instead,
+// with no cursor: the pane is then parked mid-history, and returning to
+// the live tail is a fresh load.
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	chat := r.URL.Query().Get("chat")
 	if chat == "" {
@@ -64,6 +67,20 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := queryLimit(r)
 	h.deps.Bridge.WaitForCatchUp(r.Context())
+
+	if around := r.URL.Query().Get("around"); around != "" {
+		msgs, err := h.deps.Store.MessageContext(chat, around, limit/2, limit/2)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "message not found"})
+				return
+			}
+			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
+			return
+		}
+		h.writeJSON(w, http.StatusOK, map[string]any{"messages": messageRows(msgs), "around": around})
+		return
+	}
 
 	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	if !r.URL.Query().Has("after") || err != nil {
@@ -87,12 +104,26 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.Bridge.WaitForCatchUp(r.Context())
-	msgs, err := h.deps.Store.SearchMessages(q, "", queryLimit(r))
+	msgs, err := h.deps.Store.SearchMessages(q, r.URL.Query().Get("chat"), queryLimit(r))
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "search failed"})
 		return
 	}
-	h.writeJSON(w, http.StatusOK, messageRows(msgs))
+	// A result list is read chat-first — "who was this with" before "what
+	// was said" — so each row carries its chat's display name, resolved
+	// once per distinct chat.
+	rows := messageRows(msgs)
+	names := map[string]store.ChatRow{}
+	for i, m := range msgs {
+		c, seen := names[m.ChatJID]
+		if !seen {
+			c, _, _ = h.deps.Store.Chat(m.ChatJID)
+			names[m.ChatJID] = c
+		}
+		rows[i]["chat_name"] = c.Name
+		rows[i]["chat_is_group"] = c.IsGroup
+	}
+	h.writeJSON(w, http.StatusOK, rows)
 }
 
 // rasterInline is the closed set of content types the media endpoint will

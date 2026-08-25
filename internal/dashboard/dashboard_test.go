@@ -29,6 +29,12 @@ type fakeStore struct {
 	tailCalled bool
 	backupPath string
 
+	gotChat    string
+	gotAround  string
+	gotBefore  int
+	gotAfterN  int
+	contextErr error
+
 	mediaRef      []byte
 	mediaFilename string
 	mediaKind     string
@@ -56,8 +62,27 @@ func (f *fakeStore) MessagesAfterRowID(_ string, afterRowID int64, includeOwn bo
 	return f.msgs, f.nextRowID, nil
 }
 
-func (f *fakeStore) SearchMessages(_, _ string, limit int) ([]store.MessageRow, error) {
+func (f *fakeStore) SearchMessages(_, chatJID string, limit int) ([]store.MessageRow, error) {
 	f.gotLimit = limit
+	f.gotChat = chatJID
+	return f.msgs, nil
+}
+
+func (f *fakeStore) Chat(jid string) (store.ChatRow, bool, error) {
+	for _, c := range f.chats {
+		if c.JID == jid {
+			return c, true, nil
+		}
+	}
+	return store.ChatRow{}, false, nil
+}
+
+func (f *fakeStore) MessageContext(_, id string, before, after int) ([]store.MessageRow, error) {
+	f.gotAround = id
+	f.gotBefore, f.gotAfterN = before, after
+	if f.contextErr != nil {
+		return nil, f.contextErr
+	}
 	return f.msgs, nil
 }
 

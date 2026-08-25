@@ -64,9 +64,10 @@
         <h2>Chats</h2>
         <button id="chats-refresh" class="refresh" title="Refresh chat list">&#8635;</button>
       </div>
-      <div class="searchbar">
-        <input id="search-box" placeholder="Search all messages">
-        <button id="search-go">Search</button>
+      <div class="searchbar search">
+        <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="search-box" placeholder="Search messages" autocomplete="off" aria-label="Search messages">
+        <button id="search-clear" class="clear" hidden title="Clear search" aria-label="Clear search">&times;</button>
       </div>
       <div class="chats-layout">
         <div id="chats-list" class="chats-list"></div>
@@ -74,6 +75,7 @@
           <div id="messages-head" class="chat-header" hidden>
             <span id="messages-title"></span>
             <button id="messages-refresh" class="refresh" hidden title="Check for new messages">&#8635;</button>
+            <button id="messages-latest" class="refresh latest" hidden title="Back to the latest messages">&#8595; latest</button>
           </div>
           <div id="messages-list" class="messages-list"></div>
         </div>
@@ -114,6 +116,10 @@
       <p id="backup-result" class="chip" hidden></p>
     </section>
   </main>
+</div>
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-label="Image preview">
+  <button id="lightbox-close" class="lightbox-close" title="Close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" alt="">
 </div>
 <script src="app.js"></script>
 </body>
