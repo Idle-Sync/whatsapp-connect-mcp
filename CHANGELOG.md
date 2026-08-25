@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `serve --http` no longer gives up after one failed connect at startup.
+  A service started at login often beat the network to it: with DNS not
+  yet answering, the single connect attempt failed, and since WhatsApp's
+  auto-reconnect only covers a connection that once existed, the process
+  sat paired-but-offline until someone restarted it — with the dashboard
+  reading "connecting" the entire time. The startup connect is now
+  retried with a doubling backoff (5s up to a minute) until it lands, each
+  failure logged with the wait before the next attempt, and a failed
+  attempt now reports `offline` rather than a permanent `connecting`.
+
 ## [0.3.2] - 2026-08-24
 
 ### Added

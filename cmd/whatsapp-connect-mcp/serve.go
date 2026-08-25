@@ -182,11 +182,14 @@ func runServe(args []string) int {
 		// The listener comes up BEFORE pairing so the dashboard's QR page
 		// is reachable exactly when the user needs it. Store-backed read
 		// tools serve local data meanwhile; live/send tools fail with the
-		// "no longer paired" category error until the connect lands.
+		// "no longer paired" category error until the connect lands. The
+		// connect is retried until it does land: a service started at
+		// login routinely wins the race against the network, and a single
+		// attempt would leave the process paired-but-offline for good.
 		go func() {
-			if err := connectWhenPaired(ctx, br, os.Stderr); err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintf(os.Stderr, "serve: %v — the server stays up (dashboard and local reads still work); restart after fixing this\n", err)
-			}
+			_ = retryConnect(ctx, func(ctx context.Context) error {
+				return connectWhenPaired(ctx, br, os.Stderr)
+			}, os.Stderr, connectRetryMin, connectRetryMax)
 		}()
 
 		dash := dashboard.New(dashboard.Deps{
@@ -235,6 +238,43 @@ func connectWhenPaired(ctx context.Context, br *bridge.Bridge, errOut io.Writer)
 		_, _ = fmt.Fprintf(errOut, "serve: %v (continuing with the built-in version)\n", err)
 	}
 	return br.Connect(ctx)
+}
+
+// Backoff for the http transport's startup connect: first retry after
+// connectRetryMin, doubling per failure up to connectRetryMax, forever. A
+// service manager starts serve at login, often before DNS answers, and
+// whatsmeow only auto-reconnects a connection that once existed — so an
+// initial connect that fails is never retried by anything else, and before
+// this loop the only remedy was a manual restart.
+const (
+	connectRetryMin = 5 * time.Second
+	connectRetryMax = time.Minute
+)
+
+// retryConnect calls connect until it succeeds or ctx is done, sleeping a
+// doubling delay between attempts and reporting each failure on errOut
+// along with the delay before the next try. Returns nil on success and
+// ctx.Err() on cancellation — never a connect error, since every one of
+// those is retried. connect's own errors are category-only (bridge.waErr)
+// and don't wrap ctx.Err(), so cancellation is detected on ctx directly.
+func retryConnect(ctx context.Context, connect func(context.Context) error, errOut io.Writer, minDelay, maxDelay time.Duration) error {
+	delay := minDelay
+	for {
+		err := connect(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		_, _ = fmt.Fprintf(errOut, "serve: %v — retrying in %s (the server stays up: dashboard and local reads work meanwhile)\n", err, delay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, maxDelay)
+	}
 }
 
 // runStdio runs server over stdio until ctx is cancelled, the client

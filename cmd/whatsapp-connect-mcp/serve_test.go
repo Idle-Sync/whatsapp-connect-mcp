@@ -107,3 +107,58 @@ func TestConnectWhenPairedCancelledWhileWaiting(t *testing.T) {
 		t.Fatalf("connectWhenPaired = %v, want context.Canceled", err)
 	}
 }
+
+// TestRetryConnectKeepsTryingUntilSuccess: a startup connect that fails
+// (DNS not up yet at login, typically) is retried with a doubling delay
+// rather than abandoned, each failure reported with the wait before the
+// next attempt, and the loop ends the moment an attempt succeeds.
+func TestRetryConnectKeepsTryingUntilSuccess(t *testing.T) {
+	attempts := 0
+	connect := func(context.Context) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("connect: WhatsApp request failed")
+		}
+		return nil
+	}
+	var out bytes.Buffer
+	err := retryConnect(context.Background(), connect, &out, time.Millisecond, 2*time.Millisecond)
+	if err != nil {
+		t.Fatalf("retryConnect = %v, want nil once connect succeeds", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("connect called %d times, want 3", attempts)
+	}
+	log := out.String()
+	if strings.Count(log, "retrying in") != 2 {
+		t.Fatalf("output %q should report exactly the two failed attempts", log)
+	}
+	if !strings.Contains(log, "retrying in 1ms") || !strings.Contains(log, "retrying in 2ms") {
+		t.Fatalf("output %q should name the doubling delay before each retry", log)
+	}
+}
+
+// TestRetryConnectStopsOnCancel: shutdown during the backoff sleep ends the
+// loop with the context error instead of one more attempt, and a connect
+// that fails because the context was cancelled mid-attempt is reported as
+// cancellation, not as a failure to retry.
+func TestRetryConnectStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	connect := func(context.Context) error {
+		attempts++
+		cancel()
+		return errors.New("connect: timed out")
+	}
+	var out bytes.Buffer
+	err := retryConnect(ctx, connect, &out, time.Hour, time.Hour)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("retryConnect = %v, want context.Canceled", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("connect called %d times after cancellation, want 1", attempts)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a cancelled attempt must not be reported as a retry; got %q", out.String())
+	}
+}

@@ -378,20 +378,27 @@ func (b *Bridge) PairQR(ctx context.Context, show func(code string)) error {
 // connect, the second caller must be a harmless no-op.
 func (b *Bridge) Connect(ctx context.Context) error {
 	b.setState(stConnecting)
-	err := b.wa().ConnectContext(ctx)
-	if errors.Is(err, whatsmeow.ErrAlreadyConnected) {
-		b.setState(stConnected) // no Connected event will re-fire for us
-		return nil
-	}
-	return b.connectErr(err)
+	return b.connectErr(b.wa().ConnectContext(ctx))
 }
 
-// connectErr maps a ConnectContext error for Connect and its tests:
-// already-connected is success, anything else classifies through waErr.
+// connectErr maps a ConnectContext error for Connect and its tests, and
+// settles the state the attempt leaves behind. Success keeps stConnecting
+// for the Connected event to advance; already-connected is success too,
+// landing in stConnected directly because no Connected event will re-fire
+// for us. Anything else classifies through waErr and lands in stOffline:
+// no connection ever existed, so whatsmeow has nothing to auto-reconnect,
+// and a status that kept saying "connecting" would be a lie the dashboard
+// shows for as long as the process lives (the login-time race where the
+// service starts before DNS is up did exactly that).
 func (b *Bridge) connectErr(err error) error {
-	if err == nil || errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, whatsmeow.ErrAlreadyConnected):
+		b.setState(stConnected)
 		return nil
 	}
+	b.setState(stOffline)
 	return b.waErr("connect", err)
 }
 
