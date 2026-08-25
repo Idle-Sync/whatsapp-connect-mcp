@@ -321,12 +321,37 @@ function mediaURL(m) {
   return "/api/media?chat=" + encodeURIComponent(m.chat) + "&id=" + encodeURIComponent(m.id);
 }
 
+/* lightbox: a clicked picture comes forward full-size over the blurred
+   page; click anywhere outside it, the close control, or Escape returns.
+   The picture is this server's own /api/media URL, never a remote one. */
+const lightbox = document.getElementById("lightbox");
+const lightboxImg = document.getElementById("lightbox-img");
+
+function openLightbox(src, alt) {
+  lightboxImg.src = src;
+  lightboxImg.alt = alt;
+  lightbox.hidden = false;
+  document.body.classList.add("lightbox-open");
+  document.getElementById("lightbox-close").focus();
+}
+
+function closeLightbox() {
+  if (lightbox.hidden) return;
+  lightbox.hidden = true;
+  lightboxImg.removeAttribute("src");
+  document.body.classList.remove("lightbox-open");
+}
+
+lightbox.addEventListener("click", (ev) => { if (ev.target !== lightboxImg) closeLightbox(); });
+document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeLightbox(); });
+
 // mediaNode renders a media message's payload: images and stickers as an
 // inline lazy-loaded picture (the server only serves verified raster
-// types inline; a refused or failed load falls back to the placeholder),
-// everything else as the kind placeholder plus a download link. Media
-// bytes come from this server's own /api/media — the page still makes
-// zero external requests.
+// types inline; a refused or failed load falls back to the placeholder)
+// that opens in the lightbox on click, everything else as the kind
+// placeholder plus a download link. Media bytes come from this server's
+// own /api/media — the page still makes zero external requests.
 function mediaNode(m) {
   const label = "[" + m.kind + "]";
   if (m.kind === "image" || m.kind === "sticker") {
@@ -337,6 +362,7 @@ function mediaNode(m) {
     img.addEventListener("error", () => {
       img.replaceWith(el("span", label, "body media"));
     });
+    img.addEventListener("click", () => openLightbox(img.src, label));
     img.src = mediaURL(m);
     return img;
   }
@@ -347,10 +373,15 @@ function mediaNode(m) {
   return line;
 }
 
-// currentChat is the open chat's refresh state — jid, display bits, the
-// server's replay-safe rowid cursor, and the last day divider rendered.
-// null while the pane shows search results, which have nothing to refresh.
+// currentChat is the open chat's state — jid, display bits, the server's
+// replay-safe rowid cursor, the last day divider rendered, and whether the
+// pane is parked mid-history on a search hit (parked: no cursor to refresh
+// from; the "latest" control reloads the tail). null when nothing is open.
 let currentChat = null;
+
+// lastChats caches the chat list so leaving a search restores it without
+// another fetch.
+let lastChats = [];
 
 // appendMessages adds bubbles (and day dividers as the day rolls over) to
 // the pane without touching what's already there. Returns the new lastDay
@@ -363,6 +394,7 @@ function appendMessages(list, msgs, showSenders, lastDay) {
       list.appendChild(el("div", day, "day"));
     }
     const box = el("div", undefined, m.from_me ? "msg me" : "msg");
+    box.dataset.id = m.id;
     if (showSenders && !m.from_me) {
       const who = el("span", prettyLabel(m.sender), "sender");
       who.style.color = "hsl(" + hueFor(m.sender) + " 55% 65%)";
@@ -391,12 +423,14 @@ function pinList(list, toBottom) {
 // renderMessages fills the message pane WhatsApp-style: day dividers,
 // incoming bubbles left, own bubbles right, time inside the bubble, and —
 // when senders vary — a colored sender label. scrollBottom pins the view
-// to the newest message (a chat); search results stay scrolled to top.
-// The refresh control shows only for a chat (currentChat set by caller).
+// to the newest message (a live chat); a parked context stays put for the
+// caller to scroll to its hit. The header offers refresh for a live chat
+// and "latest" for a parked one.
 function renderMessages(title, msgs, showSenders, scrollBottom) {
   document.getElementById("messages-head").hidden = false;
   document.getElementById("messages-title").textContent = title;
-  document.getElementById("messages-refresh").hidden = !currentChat;
+  document.getElementById("messages-refresh").hidden = !(currentChat && !currentChat.parked);
+  document.getElementById("messages-latest").hidden = !(currentChat && currentChat.parked);
   const list = document.getElementById("messages-list");
   list.replaceChildren();
   if (msgs.length === 0) { empty(list, "No messages stored for this chat yet."); return ""; }
@@ -405,50 +439,98 @@ function renderMessages(title, msgs, showSenders, scrollBottom) {
   return lastDay;
 }
 
-async function loadChats() {
+// avatarFor builds the round avatar: the initial letter stays underneath
+// as the fallback; the picture (served by this server, never a remote
+// URL) lazily covers it, and a 404 (no picture), 429 (rate cap), or
+// failed load just removes the image again.
+function avatarFor(name, jid) {
+  const avatar = el("span", Array.from(name.replace(/^\+|^user …/, "") || name)[0].toUpperCase(), "avatar");
+  const pic = document.createElement("img");
+  pic.className = "avatar-img";
+  pic.loading = "lazy";
+  pic.alt = "";
+  pic.addEventListener("error", () => pic.remove());
+  pic.src = "/api/avatar?jid=" + encodeURIComponent(jid);
+  avatar.appendChild(pic);
+  return avatar;
+}
+
+function markActiveRow(jid) {
+  for (const r of document.getElementById("chats-list").querySelectorAll(".chat-row")) {
+    r.classList.toggle("active", r.dataset.jid === jid);
+  }
+}
+
+// openChat loads a chat's live tail: the newest page plus the cursor a
+// refresh continues from.
+async function openChat(jid, name, isGroup) {
+  markActiveRow(jid);
+  skeleton(document.getElementById("messages-list"), 6, "2.6rem");
+  try {
+    const page = await api("/api/messages?chat=" + encodeURIComponent(jid) + "&limit=50");
+    currentChat = { jid, name, isGroup, cursor: page.cursor, lastDay: "", parked: false };
+    currentChat.lastDay = renderMessages(name, page.messages, isGroup, true);
+  } catch (e) {
+    currentChat = null;
+    empty(document.getElementById("messages-list"), "Couldn't load messages.");
+  }
+}
+
+// jumpTo opens a chat parked on one message — the window of messages
+// around it — scrolls that message to the centre and rings it.
+async function jumpTo(jid, id, name, isGroup) {
+  markActiveRow(jid);
+  const list = document.getElementById("messages-list");
+  skeleton(list, 6, "2.6rem");
+  try {
+    const page = await api("/api/messages?chat=" + encodeURIComponent(jid) + "&around=" + encodeURIComponent(id) + "&limit=60");
+    currentChat = { jid, name, isGroup, cursor: 0, lastDay: "", parked: true };
+    currentChat.lastDay = renderMessages(name, page.messages, isGroup, false);
+    const hit = Array.from(list.children).find((x) => x.dataset.id === id);
+    if (!hit) return;
+    hit.classList.add("hit");
+    // After pinList's own frame, so the pin doesn't undo the scroll.
+    requestAnimationFrame(() => requestAnimationFrame(() => hit.scrollIntoView({ block: "center" })));
+  } catch (e) {
+    currentChat = null;
+    empty(list, "Couldn't open that message.");
+  }
+}
+
+document.getElementById("messages-latest").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  if (currentChat) await openChat(currentChat.jid, currentChat.name, currentChat.isGroup);
+}));
+
+function renderChatList(chats) {
   const list = document.getElementById("chats-list");
-  skeleton(list, 8, "3rem");
-  let chats;
-  try { chats = await api("/api/chats?limit=50"); } catch (e) { empty(list, "Couldn't load chats."); return; }
   list.replaceChildren();
   if (chats.length === 0) { empty(list, "No chats stored yet. Once paired, history lands here."); return; }
   for (const c of chats) {
     const name = prettyLabel(c.name || c.jid);
     const b = el("button", undefined, "chat-row");
-    // The letter avatar stays underneath as the fallback; the picture
-    // (served by this server, never a remote URL) lazily covers it, and a
-    // 404 (no picture), 429 (rate cap), or failed load just removes the
-    // image again.
-    const avatar = el("span", Array.from(name.replace(/^\+|^user …/, "") || name)[0].toUpperCase(), "avatar");
-    const pic = document.createElement("img");
-    pic.className = "avatar-img";
-    pic.loading = "lazy";
-    pic.alt = "";
-    pic.addEventListener("error", () => pic.remove());
-    pic.src = "/api/avatar?jid=" + encodeURIComponent(c.jid);
-    avatar.appendChild(pic);
-    b.appendChild(avatar);
+    b.dataset.jid = c.jid;
+    b.appendChild(avatarFor(name, c.jid));
     const label = el("span", name, "chat-name");
     if (c.is_group) label.appendChild(el("span", "group", "tag"));
     b.appendChild(label);
     b.appendChild(el("span", ago(c.last_message_at), "chat-when"));
     if (currentChat && currentChat.jid === c.jid) b.classList.add("active");
-    b.addEventListener("click", async () => {
-      for (const other of list.children) other.classList.remove("active");
-      b.classList.add("active");
-      skeleton(document.getElementById("messages-list"), 6, "2.6rem");
-      try {
-        const page = await api("/api/messages?chat=" + encodeURIComponent(c.jid) + "&limit=50");
-        currentChat = { jid: c.jid, name, isGroup: c.is_group, cursor: page.cursor, lastDay: "" };
-        currentChat.lastDay = renderMessages(name, page.messages, c.is_group, true);
-      } catch (e) {
-        currentChat = null;
-        empty(document.getElementById("messages-list"), "Couldn't load messages.");
-      }
-    });
+    b.addEventListener("click", () => openChat(c.jid, name, c.is_group));
     list.appendChild(b);
   }
   stagger(list);
+}
+
+// loadChats fetches the chat list. While a search is showing its results
+// the fresh list is only cached — the results stay on screen until the
+// search is cleared.
+async function loadChats() {
+  const list = document.getElementById("chats-list");
+  if (!search.q) skeleton(list, 8, "3rem");
+  let chats;
+  try { chats = await api("/api/chats?limit=50"); } catch (e) { if (!search.q) empty(list, "Couldn't load chats."); return; }
+  lastChats = chats;
+  if (!search.q) renderChatList(chats);
 }
 
 // refreshMessages fetches only what landed after the open chat's cursor
@@ -456,7 +538,7 @@ async function loadChats() {
 // bottom. A response landing after the user switched chats is dropped.
 document.getElementById("messages-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   const chat = currentChat;
-  if (!chat) return;
+  if (!chat || chat.parked) return;
   let page;
   try {
     page = await api("/api/messages?chat=" + encodeURIComponent(chat.jid) + "&after=" + chat.cursor + "&limit=50");
@@ -474,21 +556,142 @@ document.getElementById("messages-refresh").addEventListener("click", (ev) => wi
 
 document.getElementById("chats-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, loadChats));
 
-document.getElementById("search-go").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  const q = document.getElementById("search-box").value.trim();
-  if (!q) return;
-  skeleton(document.getElementById("messages-list"), 6, "2.6rem");
-  currentChat = null;
-  try {
-    const msgs = await api("/api/search?q=" + encodeURIComponent(q) + "&limit=50");
-    renderMessages("search: " + q, msgs, true, false);
-  } catch (e) {
-    empty(document.getElementById("messages-list"), "Search failed. Try again.");
+/* ---------- search: results as you type, in the chat list's place ---------- */
+
+// search is the live query state: q is the query the results on screen
+// answer ("" while the chat list shows), scope narrows to the open chat,
+// seq drops responses that arrive after a newer query was typed.
+const search = { q: "", scope: "all", timer: null, seq: 0 };
+const searchBox = document.getElementById("search-box");
+const searchClear = document.getElementById("search-clear");
+const SEARCH_LIMIT = 100;
+
+function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// snippet trims text to a window around the first term match so the hit
+// is visible in a two-line row, with ellipses where it was cut.
+function snippet(text, terms) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const re = new RegExp(terms.map(escapeRegExp).join("|"), "i");
+  const at = flat.search(re);
+  const start = at > 40 ? at - 40 : 0;
+  const end = Math.min(flat.length, Math.max(at, 0) + 110);
+  return (start > 0 ? "…" : "") + flat.slice(start, end) + (end < flat.length ? "…" : "");
+}
+
+// highlightInto appends text to parent with every term match wrapped in a
+// <mark> — built node by node, so the text is never parsed as HTML.
+function highlightInto(parent, text, terms) {
+  if (terms.length === 0) { parent.appendChild(document.createTextNode(text)); return; }
+  const re = new RegExp(terms.map(escapeRegExp).join("|"), "ig");
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    parent.appendChild(el("mark", m[0], "hit"));
+    last = m.index + m[0].length;
   }
-}));
-document.getElementById("search-box").addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") document.getElementById("search-go").click();
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+// when renders a result's time the way a list does: the clock for today,
+// otherwise the date.
+function when(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return clock(iso);
+  const opts = { day: "numeric", month: "short" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString([], opts);
+}
+
+function renderResults(q, rows) {
+  const list = document.getElementById("chats-list");
+  list.replaceChildren();
+
+  const head = el("div", undefined, "results-head");
+  const n = rows.length;
+  head.appendChild(el("span", n === 0 ? "no results" : n + (n >= SEARCH_LIMIT ? "+" : "") + (n === 1 ? " result" : " results")));
+  if (currentChat) {
+    const scope = el("span", undefined, "scope");
+    for (const [key, label] of [["all", "All chats"], ["chat", "This chat"]]) {
+      const b = el("button", label, "scope-btn" + (search.scope === key ? " active" : ""));
+      b.addEventListener("click", () => { search.scope = key; runSearch(true); });
+      scope.appendChild(b);
+    }
+    head.appendChild(scope);
+  }
+  list.appendChild(head);
+
+  if (n === 0) { list.appendChild(el("div", "No messages match “" + q + "”.", "empty")); return; }
+
+  const terms = q.split(/\s+/).filter(Boolean);
+  for (const m of rows) {
+    const chatName = prettyLabel(m.chat_name || m.chat);
+    const b = el("button", undefined, "result-row");
+    b.appendChild(avatarFor(chatName, m.chat));
+    const main = el("span", undefined, "result-main");
+    const top = el("span", undefined, "result-top");
+    top.appendChild(el("span", chatName, "result-chat"));
+    top.appendChild(el("span", when(m.ts), "result-when"));
+    main.appendChild(top);
+    const snip = el("span", undefined, "result-snippet");
+    const who = m.from_me ? "You" : (m.chat_is_group ? prettyLabel(m.sender) : "");
+    if (who) snip.appendChild(el("span", who + ": ", "result-sender"));
+    highlightInto(snip, snippet(m.text || "[" + m.kind + "]", terms), terms);
+    main.appendChild(snip);
+    b.appendChild(main);
+    b.addEventListener("click", () => {
+      for (const o of list.querySelectorAll(".result-row")) o.classList.remove("active");
+      b.classList.add("active");
+      jumpTo(m.chat, m.id, chatName, Boolean(m.chat_is_group));
+    });
+    list.appendChild(b);
+  }
+  stagger(list);
+}
+
+// runSearch reacts to the box: under two characters shows the chat list,
+// otherwise queries after a short pause (or at once on Enter / scope
+// change). Results already on screen stay until the new ones land, so
+// refining a query never flashes a skeleton.
+function runSearch(immediate) {
+  const q = searchBox.value.trim();
+  searchClear.hidden = q === "";
+  clearTimeout(search.timer);
+  if (q.length < 2) {
+    if (search.q) { search.q = ""; renderChatList(lastChats); }
+    return;
+  }
+  const go = async () => {
+    const seq = ++search.seq;
+    const list = document.getElementById("chats-list");
+    if (!search.q) skeleton(list, 6, "3.4rem");
+    search.q = q;
+    let url = "/api/search?q=" + encodeURIComponent(q) + "&limit=" + SEARCH_LIMIT;
+    if (search.scope === "chat" && currentChat) url += "&chat=" + encodeURIComponent(currentChat.jid);
+    let rows;
+    try { rows = await api(url); } catch (e) {
+      if (seq === search.seq) empty(list, "Search failed. Try again.");
+      return;
+    }
+    if (seq !== search.seq) return;
+    renderResults(q, rows);
+  };
+  if (immediate) go(); else search.timer = setTimeout(go, 250);
+}
+
+function clearSearch() {
+  searchBox.value = "";
+  searchBox.focus();
+  runSearch(true);
+}
+
+searchBox.addEventListener("input", () => runSearch(false));
+searchBox.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") runSearch(true);
+  if (ev.key === "Escape" && searchBox.value) { ev.stopPropagation(); clearSearch(); }
 });
+searchClear.addEventListener("click", clearSearch);
 
 /* ---------- trust ---------- */
 

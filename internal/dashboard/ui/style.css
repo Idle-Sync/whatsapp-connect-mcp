@@ -28,6 +28,11 @@
 
 * { box-sizing: border-box; min-width: 0; }
 
+/* The hidden attribute must win over every display rule below (a flex
+   pairing stage, a grid lightbox) — otherwise a panel told to hide stays
+   on screen. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -226,6 +231,18 @@ input.mono { font-family: var(--mono); font-size: 0.8rem; }
 
 .searchbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 
+/* Message search: an icon in the field, a clear control that appears with
+   the first character, no submit button — results arrive as you type. */
+.searchbar.search { position: relative; align-items: center; }
+.searchbar.search .search-icon { position: absolute; left: 0.8rem; color: var(--dim); pointer-events: none; }
+.searchbar.search input { padding-left: 2.4rem; padding-right: 2.4rem; }
+.searchbar.search .clear {
+  position: absolute; right: 0.35rem;
+  border: 0; background: none; color: var(--dim);
+  font-size: 1.15rem; line-height: 1; padding: 0.15rem 0.5rem; border-radius: 6px;
+}
+.searchbar.search .clear:hover { color: var(--ink); background: var(--hover); transform: none; }
+
 /* ---------- status chips ---------- */
 
 .chip {
@@ -310,6 +327,52 @@ input.mono { font-family: var(--mono); font-size: 0.8rem; }
 .tag { font-size: 0.62rem; font-family: var(--mono); color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; margin-left: 0.4rem; vertical-align: 1px; }
 .chat-when { font-family: var(--mono); font-size: 0.68rem; color: var(--dim); flex: none; }
 
+/* ---------- search results (in the chat list's place) ---------- */
+
+.results-head {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.6rem 0.5rem;
+  font-family: var(--mono); font-size: 0.72rem; color: var(--dim);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0.25rem;
+}
+.scope { display: inline-flex; gap: 2px; background: var(--panel); border-radius: 6px; padding: 2px; }
+.scope-btn { font-family: var(--mono); font-size: 0.68rem; padding: 0.15rem 0.5rem; border: 0; border-radius: 4px; background: none; color: var(--dim); }
+.scope-btn.active { background: var(--hover); color: var(--ink); }
+.scope-btn:hover { color: var(--ink); }
+
+.result-row {
+  display: flex; align-items: flex-start; gap: 0.65rem;
+  width: 100%; text-align: left;
+  background: none; border: 0; border-radius: 8px;
+  padding: 0.55rem 0.6rem; flex: none;
+  animation: rise 0.25s var(--ease) both;
+}
+.result-row:hover { background: var(--panel); }
+.result-row.active { background: var(--hover); }
+.result-row .avatar { margin-top: 0.1rem; }
+.result-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.result-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.result-chat { font-size: 0.86rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-when { font-family: var(--mono); font-size: 0.66rem; color: var(--dim); flex: none; }
+.result-snippet {
+  font-size: 0.8rem; color: var(--dim); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.result-sender { color: var(--ink); }
+mark.hit { background: rgba(0, 168, 132, 0.32); color: var(--ink); border-radius: 3px; padding: 0 1px; }
+
+/* The message a search result opened: a ring that fades as you arrive. */
+.msg.hit { animation: rise 0.18s var(--ease) both, hit 2.6s ease-out both; }
+@keyframes hit {
+  0%, 25% { box-shadow: 0 0 0 2px var(--ok), 0 0 22px rgba(0, 168, 132, 0.55); }
+  100% { box-shadow: 0 1px 1px rgba(0, 0, 0, 0.35); }
+}
+
+button.latest { font-family: var(--mono); font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+
 .messages-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
 .chat-header {
@@ -377,7 +440,36 @@ button.refresh { flex: none; font-size: 0.95rem; line-height: 1; padding: 0.3rem
 .msg .sender { display: block; font-size: 0.74rem; font-weight: 600; margin-bottom: 0.05rem; }
 .msg .body { font-size: 0.86rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .msg .body.media { color: var(--dim); font-style: italic; }
-.msg .media-img { display: block; max-width: min(100%, 280px); max-height: 320px; border-radius: 8px; margin: 0.1rem 0; }
+.msg .media-img { display: block; max-width: min(100%, 280px); max-height: 320px; border-radius: 8px; margin: 0.1rem 0; cursor: zoom-in; transition: filter 0.15s; }
+.msg .media-img:hover { filter: brightness(1.08); }
+
+/* ---------- lightbox: a clicked image, forward, over a blurred page ---------- */
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center; padding: 3rem;
+  background: rgba(11, 20, 26, 0.72);
+  -webkit-backdrop-filter: blur(16px) saturate(0.85);
+  backdrop-filter: blur(16px) saturate(0.85);
+  cursor: zoom-out;
+  animation: fade 0.18s ease-out both;
+}
+.lightbox img {
+  max-width: 100%; max-height: 100%;
+  border-radius: 10px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
+  cursor: default;
+  animation: pop 0.24s var(--ease) both;
+}
+.lightbox-close {
+  position: absolute; top: 1rem; right: 1rem;
+  width: 2.4rem; height: 2.4rem; padding: 0;
+  border-radius: 50%; font-size: 1.4rem; line-height: 1;
+  background: rgba(32, 44, 51, 0.85); border-color: rgba(233, 237, 239, 0.15);
+}
+body.lightbox-open { overflow: hidden; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
 .msg .dl { color: var(--ok); font-style: normal; }
 .msg .time {
   float: right;

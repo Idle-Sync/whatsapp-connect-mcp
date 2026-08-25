@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Message search in the dashboard now works the way a chat app's does:
+  results arrive as you type (no button), listed in the chat list's
+  place with the chat's name, who said it, a snippet with the matches
+  highlighted, and when. Clicking a result opens that chat parked on the
+  message — scrolled to it and ringed — with a "latest" control to return
+  to the live tail. With a chat open, results can be narrowed to it.
+- Pictures in the chat pane open full-size on click, brought forward over
+  the blurred page; click outside, the close control, or Escape returns.
+
+### Fixed
+
+- The pair tab no longer shows the "Start pairing" button alongside the
+  linked panel when this server is already paired (clicking it only ever
+  produced "already paired").
+
 ## [0.3.4] - 2026-08-25
 
 ### Fixed
