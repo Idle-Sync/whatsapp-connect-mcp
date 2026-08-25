@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Reactions now sit on the message they react to, as a small pill on the
+  bubble's lower edge, instead of floating as their own `[reaction]`
+  bubbles — the way the real app shows them. One pill per person (a newer
+  reaction from the same person replaces their older one, and an un-react
+  removes it), with a count when several people used the same emoji.
+- Images opened from the chat pane now scale to fit the screen. The
+  lightbox sized the image against a content-derived box, so a tall or
+  large picture overflowed the viewport; it is now bounded to the viewport
+  in both dimensions and always fits.
+
 ## [0.3.6] - 2026-08-25
 
 ### Fixed

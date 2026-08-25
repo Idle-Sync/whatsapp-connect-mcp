@@ -47,6 +47,7 @@ func messageRows(msgs []store.MessageRow) []map[string]any {
 			"ts_unix": m.TS, // numeric, for the pane's (ts, id) scroll cursors
 			"sender":  m.SenderName, "kind": m.Kind, "text": m.Text,
 			"id": m.ID, "chat": m.ChatJID, "has_media": m.HasMedia, "from_me": m.FromMe,
+			"quoted_id": m.QuotedID, // a reaction's target message (attached to it, not shown as a bubble)
 		}
 	}
 	return rows
