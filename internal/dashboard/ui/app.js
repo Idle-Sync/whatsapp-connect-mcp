@@ -373,6 +373,50 @@ function mediaNode(m) {
   return line;
 }
 
+// reactionsByTarget maps a target message id to the reactions on it
+// (sender key -> emoji); bubbleById indexes rendered bubbles by message id
+// so a reaction arriving in any batch can attach to its target whether the
+// target was drawn before or after it. Both are reset per chat load in
+// renderMessages, then accumulate across refresh/scroll-older appends.
+const reactionsByTarget = new Map();
+const bubbleById = new Map();
+
+// reactionKey identifies who reacted, so a later reaction from the same
+// person replaces their earlier one (and an empty text removes it) — one
+// reaction per person, like the app.
+function reactionKey(m) { return m.from_me ? "me" : (m.sender || "?"); }
+
+// applyReaction records a reaction row (never a bubble of its own) and, if
+// its target is already on screen, refreshes that bubble's pill.
+function applyReaction(m) {
+  let on = reactionsByTarget.get(m.quoted_id);
+  if (!on) { on = new Map(); reactionsByTarget.set(m.quoted_id, on); }
+  if (m.text) on.set(reactionKey(m), m.text); else on.delete(reactionKey(m));
+  const box = bubbleById.get(m.quoted_id);
+  if (box) renderReactionPill(box, m.quoted_id);
+}
+
+// renderReactionPill (re)builds the reaction pill on a bubble from the
+// accumulated reactions for its id: one chip per distinct emoji, with a
+// small count when more than one person used it. Built node by node — no
+// HTML parsing.
+function renderReactionPill(box, id) {
+  const on = reactionsByTarget.get(id);
+  let pill = box.querySelector(".reactions");
+  if (!on || on.size === 0) { if (pill) pill.remove(); box.classList.remove("has-reactions"); return; }
+  if (!pill) { pill = el("span", undefined, "reactions"); box.appendChild(pill); }
+  const counts = new Map();
+  for (const emo of on.values()) counts.set(emo, (counts.get(emo) || 0) + 1);
+  pill.replaceChildren();
+  for (const [emo, n] of counts) {
+    const chip = el("span", undefined, "reaction-chip");
+    chip.appendChild(el("span", emo));
+    if (n > 1) chip.appendChild(el("span", String(n), "n"));
+    pill.appendChild(chip);
+  }
+  box.classList.add("has-reactions");
+}
+
 // currentChat is the open chat's state — jid, display bits, the server's
 // replay-safe rowid cursor, the last day divider rendered, and whether the
 // pane is parked mid-history on a search hit (parked: no cursor to refresh
@@ -388,6 +432,8 @@ let lastChats = [];
 // so a later append continues the divider sequence.
 function appendMessages(list, msgs, showSenders, lastDay) {
   for (const m of msgs) {
+    // Reactions are not messages — they attach to the message they target.
+    if (m.kind === "reaction") { applyReaction(m); continue; }
     const day = dayOf(m.ts);
     if (day !== lastDay) {
       lastDay = day;
@@ -411,6 +457,8 @@ function appendMessages(list, msgs, showSenders, lastDay) {
     }
     box.appendChild(el("span", clock(m.ts), "time"));
     list.appendChild(box);
+    bubbleById.set(m.id, box);
+    if (reactionsByTarget.has(m.id)) renderReactionPill(box, m.id);
   }
   return lastDay;
 }
@@ -489,6 +537,8 @@ function renderMessages(title, msgs, showSenders, scrollBottom) {
   document.getElementById("messages-older").hidden = !currentChat;
   const list = document.getElementById("messages-list");
   list.replaceChildren();
+  reactionsByTarget.clear();
+  bubbleById.clear();
   if (msgs.length === 0) { empty(list, "No messages stored for this chat yet."); return ""; }
   const lastDay = appendMessages(list, msgs, showSenders, "");
   pinList(list, scrollBottom);
