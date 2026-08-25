@@ -188,3 +188,32 @@ func TestConnectAlreadyConnectedIsSuccess(t *testing.T) {
 		t.Fatal("a real connect error must still surface")
 	}
 }
+
+// TestConnectOutcomeSettlesState: the state Connect enters (connecting)
+// must not outlive a failed attempt. Nothing retries a connect that never
+// produced a connection, so a bridge left in "connecting" would report it
+// forever — the dashboard showed exactly that after a service started
+// before DNS was up. Already-connected lands in connected directly, since
+// no Connected event fires for it.
+func TestConnectOutcomeSettlesState(t *testing.T) {
+	b, _ := newTestBridge(t)
+
+	b.setState(stConnecting)
+	_ = b.connectErr(whatsmeow.ErrNotLoggedIn)
+	if got := b.Status().State; got != "offline" {
+		t.Fatalf("after a failed connect: state %q, want offline", got)
+	}
+
+	b.setState(stConnecting)
+	_ = b.connectErr(whatsmeow.ErrAlreadyConnected)
+	if got := b.Status().State; got != "connected" {
+		t.Fatalf("after already-connected: state %q, want connected", got)
+	}
+
+	// Success leaves connecting in place: the Connected event advances it.
+	b.setState(stConnecting)
+	_ = b.connectErr(nil)
+	if got := b.Status().State; got != "connecting" {
+		t.Fatalf("after a successful connect call: state %q, want connecting until the Connected event", got)
+	}
+}
