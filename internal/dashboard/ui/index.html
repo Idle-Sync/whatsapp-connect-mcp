@@ -74,8 +74,11 @@
         <div class="messages-pane">
           <div id="messages-head" class="chat-header" hidden>
             <span id="messages-title"></span>
-            <button id="messages-refresh" class="refresh" hidden title="Check for new messages">&#8635;</button>
-            <button id="messages-latest" class="refresh latest" hidden title="Back to the latest messages">&#8595; latest</button>
+            <span class="chat-header-actions">
+              <button id="messages-older" class="refresh older" hidden title="Ask your phone for older messages in this chat">&#8593; older</button>
+              <button id="messages-refresh" class="refresh" hidden title="Check for new messages">&#8635;</button>
+              <button id="messages-latest" class="refresh latest" hidden title="Back to the latest messages">&#8595; latest</button>
+            </span>
           </div>
           <div id="messages-list" class="messages-list"></div>
         </div>

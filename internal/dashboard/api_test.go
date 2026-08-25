@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
@@ -50,14 +51,16 @@ func TestChatsEndpointClampsAndRenders(t *testing.T) {
 
 type messagesPage struct {
 	Messages []map[string]any `json:"messages"`
-	Cursor   int64            `json:"cursor"`
+	Cursor   struct {
+		TS int64  `json:"ts"`
+		ID string `json:"id"`
+	} `json:"cursor"`
 }
 
-func TestMessagesInitialLoadTailsWithCursor(t *testing.T) {
+func TestMessagesInitialLoadReturnsRecentWithCursor(t *testing.T) {
 	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
 	fs := &fakeStore{
-		msgs:      []store.MessageRow{{ChatJID: "c", ID: "m1", TS: 5, Kind: "image", Text: "cap", HasMedia: true, SenderName: "A"}},
-		tailRowID: 7, nextRowID: 42,
+		msgs: []store.MessageRow{{ChatJID: "c", ID: "m1", TS: 5, Kind: "image", Text: "cap", HasMedia: true, SenderName: "A"}},
 	}
 	h, cookie := newTestHandler(t, fs, fb)
 
@@ -68,18 +71,17 @@ func TestMessagesInitialLoadTailsWithCursor(t *testing.T) {
 	if !fb.caughtUp {
 		t.Fatal("WaitForCatchUp not called before the read")
 	}
-	if !fs.tailCalled || fs.gotAfter != 7 {
-		t.Fatalf("tail cursor: tailCalled=%v afterRowID=%d, want tail cursor 7 fed to the list", fs.tailCalled, fs.gotAfter)
-	}
-	if !fs.gotOwn {
-		t.Fatal("dashboard must include own sends")
+	if !fs.recentCalled {
+		t.Fatal("initial load must read the newest page by time, not a rowid tail")
 	}
 	var page messagesPage
 	if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if page.Cursor != 42 {
-		t.Fatalf("cursor = %d, want 42", page.Cursor)
+	// The cursor is the newest shown message's (ts, id), so a refresh
+	// continues from there.
+	if page.Cursor.TS != 5 || page.Cursor.ID != "m1" {
+		t.Fatalf("cursor = %+v, want {5 m1}", page.Cursor)
 	}
 	if len(page.Messages) != 1 || page.Messages[0]["has_media"] != true || page.Messages[0]["kind"] != "image" {
 		t.Fatalf("messages = %v", page.Messages)
@@ -89,37 +91,36 @@ func TestMessagesInitialLoadTailsWithCursor(t *testing.T) {
 	}
 }
 
-func TestMessagesRefreshReadsAfterCursor(t *testing.T) {
+func TestMessagesRefreshReadsSinceCursor(t *testing.T) {
 	fs := &fakeStore{
-		msgs:      []store.MessageRow{{ChatJID: "c", ID: "m2", TS: 9, Kind: "text", Text: "new", SenderName: "A"}},
-		nextRowID: 43,
+		msgs: []store.MessageRow{{ChatJID: "c", ID: "m2", TS: 9, Kind: "text", Text: "new", SenderName: "A"}},
 	}
 	h, cookie := newTestHandler(t, fs, nil)
 
-	w := authedGet(t, h, cookie, "/api/messages?chat=c%40s.whatsapp.net&after=42")
+	w := authedGet(t, h, cookie, "/api/messages?chat=c%40s.whatsapp.net&after_ts=5&after_id=m1")
 	if w.Code != http.StatusOK {
 		t.Fatalf("messages = %d", w.Code)
 	}
-	if fs.tailCalled {
-		t.Fatal("refresh must not recompute the tail cursor")
+	if fs.recentCalled {
+		t.Fatal("a refresh must not reload the newest page")
 	}
-	if fs.gotAfter != 42 {
-		t.Fatalf("afterRowID = %d, want the caller's cursor 42", fs.gotAfter)
+	if fs.gotSinceTS != 5 || fs.gotSinceID != "m1" {
+		t.Fatalf("since cursor = (%d,%q), want (5,m1)", fs.gotSinceTS, fs.gotSinceID)
 	}
 	var page messagesPage
 	if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if page.Cursor != 43 || len(page.Messages) != 1 {
-		t.Fatalf("page = %+v, want 1 message and cursor 43", page)
+	if page.Cursor.TS != 9 || page.Cursor.ID != "m2" || len(page.Messages) != 1 {
+		t.Fatalf("page = %+v, want 1 message and cursor {9 m2}", page)
 	}
 }
 
 func TestMessagesEmptyRefreshKeepsCursorAndEmptyList(t *testing.T) {
-	fs := &fakeStore{nextRowID: 42}
+	fs := &fakeStore{}
 	h, cookie := newTestHandler(t, fs, nil)
 
-	w := authedGet(t, h, cookie, "/api/messages?chat=c%40s.whatsapp.net&after=42")
+	w := authedGet(t, h, cookie, "/api/messages?chat=c%40s.whatsapp.net&after_ts=42&after_id=m9")
 	if w.Code != http.StatusOK {
 		t.Fatalf("messages = %d", w.Code)
 	}
@@ -128,8 +129,8 @@ func TestMessagesEmptyRefreshKeepsCursorAndEmptyList(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if page.Cursor != 42 {
-		t.Fatalf("cursor = %d, want unchanged 42", page.Cursor)
+	if page.Cursor.TS != 42 || page.Cursor.ID != "m9" {
+		t.Fatalf("cursor = %+v, want the caller's {42 m9} unchanged", page.Cursor)
 	}
 	if !strings.Contains(body, `"messages":[]`) {
 		t.Fatalf("empty page must encode messages as [], got %s", body)
@@ -314,8 +315,8 @@ func TestMessagesAroundReturnsContextWithoutCursor(t *testing.T) {
 	if fs.gotAround != "hit" || fs.gotBefore != 30 || fs.gotAfterN != 30 {
 		t.Fatalf("context asked for %q ±%d/%d, want hit ±30/30", fs.gotAround, fs.gotBefore, fs.gotAfterN)
 	}
-	if fs.tailCalled {
-		t.Fatal("a context load must not compute a tail cursor")
+	if fs.recentCalled {
+		t.Fatal("a context load must not read the recent page")
 	}
 	body := w.Body.String()
 	if strings.Contains(body, `"cursor"`) || !strings.Contains(body, `"around":"hit"`) {
@@ -335,5 +336,118 @@ func TestSearchRequiresQuery(t *testing.T) {
 	h, cookie := newTestHandler(t, nil, nil)
 	if w := authedGet(t, h, cookie, "/api/search"); w.Code != http.StatusBadRequest {
 		t.Fatalf("search without q = %d, want 400", w.Code)
+	}
+}
+
+// fixedClock returns a clock function pinned to a base time that each call
+// can advance via the returned setter — so cooldown boundaries are tested
+// without sleeping.
+func fixedClock(base time.Time) (func() time.Time, func(time.Duration)) {
+	cur := base
+	return func() time.Time { return cur }, func(d time.Duration) { cur = cur.Add(d) }
+}
+
+func TestHistoryRequestsFromOldestAnchor(t *testing.T) {
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
+	fs := &fakeStore{oldest: &store.MessageRow{ID: "OLD", FromMe: true, TS: 1000}}
+	h, cookie := newTestHandler(t, fs, fb)
+
+	w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=c%40s.whatsapp.net&count=99999", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("history = %d, body %s", w.Code, w.Body.String())
+	}
+	if fb.historyCalls != 1 || fb.historyChat != "c@s.whatsapp.net" || fb.historyAnchor != "OLD" || !fb.historyFromMe || fb.historyTS != 1000 {
+		t.Fatalf("request = %+v, want anchored on the oldest stored message", *fb)
+	}
+	if fb.historyCount != maxHistoryCount {
+		t.Fatalf("count = %d, want clamped to %d", fb.historyCount, maxHistoryCount)
+	}
+}
+
+func TestHistoryEmptyChatIsRejected(t *testing.T) {
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
+	fs := &fakeStore{} // no oldest
+	h, cookie := newTestHandler(t, fs, fb)
+
+	w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=c%40s.whatsapp.net", "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("history on empty chat = %d, want 400", w.Code)
+	}
+	if fb.historyCalls != 0 {
+		t.Fatal("no request may be sent for a chat with nothing to anchor on")
+	}
+}
+
+func TestHistoryCooldownsThrottle(t *testing.T) {
+	clock, advance := fixedClock(time.Unix(1_800_000_000, 0))
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
+	fs := &fakeStore{oldest: &store.MessageRow{ID: "OLD", TS: 1000}}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store, d.Bridge, d.Now = fs, fb, clock })
+
+	first := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=a%40s.whatsapp.net", "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request = %d", first.Code)
+	}
+	// A different chat, immediately: blocked by the GLOBAL cooldown.
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=b%40s.whatsapp.net", ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second chat immediately = %d, want 429 (global cooldown)", w.Code)
+	}
+	// Past the global cooldown, the other chat is allowed.
+	advance(historyGlobalCooldown)
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=b%40s.whatsapp.net", ""); w.Code != http.StatusOK {
+		t.Fatalf("second chat after global cooldown = %d, want 200", w.Code)
+	}
+	// The FIRST chat again, past the global cooldown but inside its
+	// per-chat cooldown: still blocked.
+	advance(historyGlobalCooldown)
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=a%40s.whatsapp.net", ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("same chat inside per-chat cooldown = %d, want 429", w.Code)
+	}
+	// Past the per-chat cooldown, allowed once more.
+	advance(historyPerChatCooldown)
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=a%40s.whatsapp.net", ""); w.Code != http.StatusOK {
+		t.Fatalf("same chat after per-chat cooldown = %d, want 200", w.Code)
+	}
+}
+
+func TestHistorySendFailureDoesNotBurnQuota(t *testing.T) {
+	clock, _ := fixedClock(time.Unix(1_800_000_000, 0))
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}, historyErr: errors.New("not connected")}
+	fs := &fakeStore{oldest: &store.MessageRow{ID: "OLD", TS: 1000}}
+	h, cookie := newTestHandlerWith(t, func(d *Deps) { d.Store, d.Bridge, d.Now = fs, fb, clock })
+
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=a%40s.whatsapp.net", ""); w.Code != http.StatusBadGateway {
+		t.Fatalf("failed send = %d, want 502", w.Code)
+	}
+	// The clock hasn't advanced, yet a retry must be allowed — the failed
+	// attempt rolled its cooldown stamp back. fb now succeeds.
+	fb.historyErr = nil
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/history?chat=a%40s.whatsapp.net", ""); w.Code != http.StatusOK {
+		t.Fatalf("retry after a failed send = %d, want 200 (quota not burned)", w.Code)
+	}
+}
+
+func TestMessagesBeforeReturnsOlderWithMoreFlag(t *testing.T) {
+	fb := &fakeBridge{status: bridge.Status{State: "connected"}}
+	fs := &fakeStore{olderMsgs: []store.MessageRow{
+		{ChatJID: "c", ID: "o1", TS: 1, Kind: "text", Text: "older", SenderName: "A"},
+		{ChatJID: "c", ID: "o2", TS: 2, Kind: "text", Text: "less old", SenderName: "A"},
+	}}
+	h, cookie := newTestHandler(t, fs, fb)
+
+	// limit 2 and a full page back => more:true.
+	w := authedGet(t, h, cookie, "/api/messages?chat=c&before_ts=5&before_id=m3&limit=2")
+	if w.Code != http.StatusOK {
+		t.Fatalf("before = %d", w.Code)
+	}
+	if fs.gotBeforeTS != 5 || fs.gotBeforeID != "m3" {
+		t.Fatalf("before cursor = (%d,%q), want (5,m3)", fs.gotBeforeTS, fs.gotBeforeID)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"more":true`) {
+		t.Fatalf("a full page must report more:true; got %s", body)
+	}
+	if strings.Contains(body, `"cursor"`) {
+		t.Fatal("the load-older page must not carry a forward cursor")
 	}
 }

@@ -18,16 +18,19 @@ import (
 // fakeStore satisfies dashboard.Store; fields configure behavior, later
 // task tests extend it alongside the interface.
 type fakeStore struct {
-	counts     store.Counts
-	chats      []store.ChatRow
-	msgs       []store.MessageRow
-	tailRowID  int64
-	nextRowID  int64
-	gotLimit   int
-	gotAfter   int64
-	gotOwn     bool
-	tailCalled bool
-	backupPath string
+	counts       store.Counts
+	chats        []store.ChatRow
+	msgs         []store.MessageRow
+	gotLimit     int
+	recentCalled bool
+	gotSinceTS   int64
+	gotSinceID   string
+	backupPath   string
+	oldest       *store.MessageRow
+	oldestErr    error
+	olderMsgs    []store.MessageRow
+	gotBeforeTS  int64
+	gotBeforeID  string
 
 	gotChat    string
 	gotAround  string
@@ -48,18 +51,31 @@ func (f *fakeStore) Chats(_ string, _ bool, limit int) ([]store.ChatRow, error) 
 	return f.chats, nil
 }
 
-func (f *fakeStore) TailRowID(_ string, includeOwn bool, n int) (int64, error) {
-	f.tailCalled = true
-	f.gotOwn = includeOwn
-	f.gotLimit = n
-	return f.tailRowID, nil
+func (f *fakeStore) RecentMessages(_ string, limit int) ([]store.MessageRow, error) {
+	f.recentCalled = true
+	f.gotLimit = limit
+	return f.msgs, nil
 }
 
-func (f *fakeStore) MessagesAfterRowID(_ string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error) {
-	f.gotAfter = afterRowID
-	f.gotOwn = includeOwn
+func (f *fakeStore) MessagesSince(_ string, ts int64, id string, limit int) ([]store.MessageRow, error) {
+	f.gotSinceTS = ts
+	f.gotSinceID = id
 	f.gotLimit = limit
-	return f.msgs, f.nextRowID, nil
+	return f.msgs, nil
+}
+
+func (f *fakeStore) MessagesBefore(_ string, ts int64, id string, limit int) ([]store.MessageRow, error) {
+	f.gotBeforeTS = ts
+	f.gotBeforeID = id
+	f.gotLimit = limit
+	return f.olderMsgs, nil
+}
+
+func (f *fakeStore) OldestMessage(_ string) (store.MessageRow, bool, error) {
+	if f.oldest == nil {
+		return store.MessageRow{}, false, f.oldestErr
+	}
+	return *f.oldest, true, f.oldestErr
 }
 
 func (f *fakeStore) SearchMessages(_, chatJID string, limit int) ([]store.MessageRow, error) {
@@ -111,6 +127,14 @@ type fakeBridge struct {
 	avatarData  []byte
 	avatarErr   error
 	avatarCalls int
+
+	historyCalls  int
+	historyChat   string
+	historyAnchor string
+	historyFromMe bool
+	historyTS     int64
+	historyCount  int
+	historyErr    error
 }
 
 func (f *fakeBridge) ProfilePicture(context.Context, string) ([]byte, error) {
@@ -131,6 +155,12 @@ func (f *fakeBridge) DownloadMedia(_ context.Context, _ []byte, destDir, filenam
 		return "", err
 	}
 	return path, nil
+}
+
+func (f *fakeBridge) RequestOlderMessages(_ context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error {
+	f.historyCalls++
+	f.historyChat, f.historyAnchor, f.historyFromMe, f.historyTS, f.historyCount = chatJID, msgID, fromMe, ts, count
+	return f.historyErr
 }
 
 func (f *fakeBridge) Status() bridge.Status          { return f.status }

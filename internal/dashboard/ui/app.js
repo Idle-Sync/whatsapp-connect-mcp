@@ -395,6 +395,7 @@ function appendMessages(list, msgs, showSenders, lastDay) {
     }
     const box = el("div", undefined, m.from_me ? "msg me" : "msg");
     box.dataset.id = m.id;
+    box.dataset.ts = m.ts;
     if (showSenders && !m.from_me) {
       const who = el("span", prettyLabel(m.sender), "sender");
       who.style.color = "hsl(" + hueFor(m.sender) + " 55% 65%)";
@@ -420,6 +421,60 @@ function pinList(list, toBottom) {
   requestAnimationFrame(pin); // re-pin after entrance animations settle layout
 }
 
+// oldestOf returns the (ts, id) cursor for the oldest message of a page —
+// the top bubble — for loading further back. null for an empty page.
+function oldestOf(msgs) {
+  if (!msgs || msgs.length === 0) return null;
+  const m = msgs[0];
+  return { ts: m.ts_unix, id: m.id };
+}
+
+// prependMessages builds the older block and inserts it above the current
+// top, keeping the day dividers coherent and the viewport anchored where
+// the reader was (so loading older history doesn't jump the scroll). The
+// first existing bubble's leading day divider is dropped when the newly
+// prepended tail already ends on that same day.
+function prependMessages(list, msgs, showSenders) {
+  if (msgs.length === 0) return;
+  const frag = document.createDocumentFragment();
+  const lastDay = appendMessages(frag, msgs, showSenders, "");
+  // Drop a duplicate divider: the first existing .day equal to lastDay.
+  const firstDay = list.querySelector(".day");
+  if (firstDay && firstDay.textContent === lastDay) firstDay.remove();
+  const anchor = list.firstElementChild;
+  const before = list.scrollHeight;
+  list.insertBefore(frag, anchor);
+  // Preserve the reader's position: grow above, keep what they were on.
+  list.scrollTop += list.scrollHeight - before;
+}
+
+// loadOlder fetches the page before the oldest shown and prepends it, once
+// at a time, stopping when the store has no more. It fires when the reader
+// scrolls near the top of the pane.
+async function loadOlder() {
+  const chat = currentChat;
+  if (!chat || !chat.moreOlder || chat.loadingOlder || !chat.oldest) return;
+  chat.loadingOlder = true;
+  try {
+    const page = await api("/api/messages?chat=" + encodeURIComponent(chat.jid) +
+      "&before_ts=" + encodeURIComponent(chat.oldest.ts) + "&before_id=" + encodeURIComponent(chat.oldest.id) + "&limit=50");
+    if (currentChat !== chat) return;
+    if (page.messages.length > 0) {
+      prependMessages(document.getElementById("messages-list"), page.messages, chat.isGroup);
+      chat.oldest = oldestOf(page.messages);
+    }
+    chat.moreOlder = Boolean(page.more);
+  } catch (e) {
+    // leave moreOlder set so a later scroll retries
+  } finally {
+    chat.loadingOlder = false;
+  }
+}
+
+document.getElementById("messages-list").addEventListener("scroll", (ev) => {
+  if (ev.currentTarget.scrollTop < 120) loadOlder();
+});
+
 // renderMessages fills the message pane WhatsApp-style: day dividers,
 // incoming bubbles left, own bubbles right, time inside the bubble, and —
 // when senders vary — a colored sender label. scrollBottom pins the view
@@ -431,6 +486,7 @@ function renderMessages(title, msgs, showSenders, scrollBottom) {
   document.getElementById("messages-title").textContent = title;
   document.getElementById("messages-refresh").hidden = !(currentChat && !currentChat.parked);
   document.getElementById("messages-latest").hidden = !(currentChat && currentChat.parked);
+  document.getElementById("messages-older").hidden = !currentChat;
   const list = document.getElementById("messages-list");
   list.replaceChildren();
   if (msgs.length === 0) { empty(list, "No messages stored for this chat yet."); return ""; }
@@ -468,7 +524,7 @@ async function openChat(jid, name, isGroup) {
   skeleton(document.getElementById("messages-list"), 6, "2.6rem");
   try {
     const page = await api("/api/messages?chat=" + encodeURIComponent(jid) + "&limit=50");
-    currentChat = { jid, name, isGroup, cursor: page.cursor, lastDay: "", parked: false };
+    currentChat = { jid, name, isGroup, cursor: page.cursor, lastDay: "", parked: false, oldest: oldestOf(page.messages), moreOlder: page.messages.length >= 50, loadingOlder: false };
     currentChat.lastDay = renderMessages(name, page.messages, isGroup, true);
   } catch (e) {
     currentChat = null;
@@ -484,7 +540,7 @@ async function jumpTo(jid, id, name, isGroup) {
   skeleton(list, 6, "2.6rem");
   try {
     const page = await api("/api/messages?chat=" + encodeURIComponent(jid) + "&around=" + encodeURIComponent(id) + "&limit=60");
-    currentChat = { jid, name, isGroup, cursor: 0, lastDay: "", parked: true };
+    currentChat = { jid, name, isGroup, cursor: 0, lastDay: "", parked: true, oldest: oldestOf(page.messages), moreOlder: page.messages.length > 0, loadingOlder: false };
     currentChat.lastDay = renderMessages(name, page.messages, isGroup, false);
     const hit = Array.from(list.children).find((x) => x.dataset.id === id);
     if (!hit) return;
@@ -499,6 +555,48 @@ async function jumpTo(jid, id, name, isGroup) {
 
 document.getElementById("messages-latest").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   if (currentChat) await openChat(currentChat.jid, currentChat.name, currentChat.isGroup);
+}));
+
+// paneToast shows a brief line under the chat header (history requested, or
+// a cooldown) and clears any earlier one.
+let paneToastTimer = null;
+function paneToast(text, bad) {
+  const head = document.getElementById("messages-head");
+  let t = document.getElementById("pane-toast");
+  if (!t) {
+    t = el("div", undefined, "pane-toast");
+    t.id = "pane-toast";
+    head.insertAdjacentElement("afterend", t);
+  }
+  t.textContent = text;
+  t.className = "pane-toast" + (bad ? " bad" : "");
+  clearTimeout(paneToastTimer);
+  paneToastTimer = setTimeout(() => t.remove(), 6000);
+}
+
+// "older" asks the phone for messages before the oldest one stored for the
+// open chat — the way to pull a chat's history in from scratch, one bounded
+// page at a time. The server rate-limits this; a 429 is shown as a wait,
+// not an error. On success the pane refreshes shortly after, since the
+// answer lands asynchronously; a parked (search-opened) pane returns to the
+// live tail first so the new history is visible in order.
+document.getElementById("messages-older").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const chat = currentChat;
+  if (!chat) return;
+  try {
+    const r = await api("/api/history?chat=" + encodeURIComponent(chat.jid) + "&count=50", { method: "POST" });
+    paneToast(r.status || "Requested older messages.");
+    // The answer lands asynchronously below the oldest shown; re-arm the
+    // scroll-up loader and pull the first older page in shortly after.
+    setTimeout(() => {
+      if (currentChat !== chat) return;
+      chat.moreOlder = true;
+      loadOlder();
+    }, 2500);
+  } catch (e) {
+    const wait = e.body && e.body.retry_after;
+    paneToast(wait ? "Asked very recently — try again in " + wait + "s." : errorMessage(e), true);
+  }
 }));
 
 function renderChatList(chats) {
@@ -539,9 +637,11 @@ async function loadChats() {
 document.getElementById("messages-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   const chat = currentChat;
   if (!chat || chat.parked) return;
+  const cur = chat.cursor || { ts: 0, id: "" };
   let page;
   try {
-    page = await api("/api/messages?chat=" + encodeURIComponent(chat.jid) + "&after=" + chat.cursor + "&limit=50");
+    page = await api("/api/messages?chat=" + encodeURIComponent(chat.jid) +
+      "&after_ts=" + encodeURIComponent(cur.ts) + "&after_id=" + encodeURIComponent(cur.id) + "&limit=50");
   } catch (e) { return; }
   if (currentChat !== chat) return;
   chat.cursor = page.cursor;

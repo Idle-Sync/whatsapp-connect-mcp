@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
@@ -33,8 +34,10 @@ var uiFS embed.FS
 type Store interface {
 	Counts() (store.Counts, error)
 	Chats(query string, includeArchived bool, limit int) ([]store.ChatRow, error)
-	TailRowID(chatJID string, includeOwn bool, n int) (int64, error)
-	MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn bool, limit int) ([]store.MessageRow, int64, error)
+	RecentMessages(chatJID string, limit int) ([]store.MessageRow, error)
+	MessagesSince(chatJID string, ts int64, id string, limit int) ([]store.MessageRow, error)
+	MessagesBefore(chatJID string, ts int64, id string, limit int) ([]store.MessageRow, error)
+	OldestMessage(chatJID string) (store.MessageRow, bool, error)
 	MessageMediaRef(chatJID, id string) (ref []byte, filename, kind string, err error)
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 	Chat(jid string) (store.ChatRow, bool, error)
@@ -52,6 +55,7 @@ type Bridge interface {
 	WaitForCatchUp(ctx context.Context)
 	DownloadMedia(ctx context.Context, ref []byte, destDir, filename string) (string, error)
 	ProfilePicture(ctx context.Context, jid string) ([]byte, error)
+	RequestOlderMessages(ctx context.Context, chatJID, msgID string, fromMe bool, ts int64, count int) error
 }
 
 // Deps wires the dashboard into serve's already-constructed pieces. Ctx is
@@ -66,6 +70,9 @@ type Deps struct {
 	Token   string
 	Version string
 	Doctor  func(ctx context.Context) []doctor.Finding
+	// Now is the clock the history-backfill cooldowns measure against; nil
+	// means the real clock. Injectable so tests need not sleep.
+	Now func() time.Time
 }
 
 // Handler is the dashboard's http.Handler. Construct with New.
@@ -75,6 +82,16 @@ type Handler struct {
 	mux     *http.ServeMux
 	pair    pairState
 	avatars *avatarCache
+
+	// History backfill throttle. Requesting older history sends a peer
+	// message to the paired phone; a button a person can hold down must
+	// not turn into a burst of them, and sweeping every chat in seconds is
+	// exactly the pattern that gets a number flagged. lastHistory caps how
+	// often ONE chat may be backfilled; lastHistoryAny caps the global
+	// rate across all chats. See handleHistory.
+	historyMu      sync.Mutex
+	lastHistory    map[string]time.Time
+	lastHistoryAny time.Time
 }
 
 // New builds the dashboard handler. It panics only on entropy failure at
@@ -84,7 +101,7 @@ func New(deps Deps) *Handler {
 	if _, err := rand.Read(buf); err != nil {
 		panic("dashboard: session entropy unavailable: " + err.Error())
 	}
-	h := &Handler{deps: deps, session: hex.EncodeToString(buf), mux: http.NewServeMux(), avatars: newAvatarCache()}
+	h := &Handler{deps: deps, session: hex.EncodeToString(buf), mux: http.NewServeMux(), avatars: newAvatarCache(), lastHistory: map[string]time.Time{}}
 
 	h.mux.HandleFunc("/ui/login", h.handleLogin)
 	h.mux.Handle("/ui/", h.authed(h.serveStatic))
@@ -101,6 +118,7 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/pair/qr.png", h.authed(h.handlePairQR))
 	h.mux.HandleFunc("/api/chats", h.authed(h.handleChats))
 	h.mux.HandleFunc("/api/messages", h.authed(h.handleMessages))
+	h.mux.HandleFunc("/api/history", h.authed(h.mutating(h.handleHistory)))
 	h.mux.HandleFunc("/api/search", h.authed(h.handleSearch))
 	h.mux.HandleFunc("/api/media", h.authed(h.handleMedia))
 	h.mux.HandleFunc("/api/avatar", h.authed(h.handleAvatar))

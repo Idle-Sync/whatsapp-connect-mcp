@@ -255,6 +255,71 @@ func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]
 	return out, nil
 }
 
+// RecentMessages returns the newest `limit` messages in chatJID, ordered
+// oldest-first for direct display. Ordering is by (ts, id) — wall-clock
+// time, not rowid insertion order: a chat can hold a history-sync backfill
+// whose rows were inserted (high rowid) long after the moments they record
+// (old ts), and the LID fold merges chats whose rows interleave in time,
+// so rowid order is not time order. The read tools' poll cursor keeps its
+// rowid ordering (an agent wants newly *ingested* messages); a human
+// reading a chat wants them in the order they were sent.
+func (s *Store) RecentMessages(chatJID string, limit int) ([]MessageRow, error) {
+	limit = ClampLimit(limit)
+	out, err := queryMessages(s.db,
+		messageSelect+` WHERE m.chat_jid = ? ORDER BY m.ts DESC, m.id DESC LIMIT ?`,
+		chatJID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recent messages: %w", err)
+	}
+	reverseMessages(out)
+	s.resolveMentionRows(out)
+	return out, nil
+}
+
+// MessagesSince returns messages in chatJID strictly newer than the
+// (ts, id) cursor, oldest-first, capped at limit. It backs the chat
+// pane's in-place refresh: the caller passes the (ts, id) of the newest
+// message it is showing and appends whatever comes back. A zero cursor
+// (ts 0, id "") returns the oldest `limit`. Comparing on (ts, id) — the
+// same total order RecentMessages and MessageContext use — means a message
+// sent in the same second as the cursor is neither skipped nor repeated.
+// A live message (ts at/after now) is always newer than a screen full of
+// existing history, so it surfaces; a late history-sync backfill of old
+// messages does not jump into the live view, which is what a reader wants.
+func (s *Store) MessagesSince(chatJID string, ts int64, id string, limit int) ([]MessageRow, error) {
+	limit = ClampLimit(limit)
+	out, err := queryMessages(s.db,
+		messageSelect+` WHERE m.chat_jid = ? AND (m.ts > ? OR (m.ts = ? AND m.id > ?)) ORDER BY m.ts ASC, m.id ASC LIMIT ?`,
+		chatJID, ts, ts, id, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("messages since: %w", err)
+	}
+	s.resolveMentionRows(out)
+	return out, nil
+}
+
+// MessagesBefore returns messages in chatJID strictly older than the
+// (ts, id) cursor, oldest-first, capped at limit — the chat pane's
+// scroll-up (load-older) direction, the mirror of MessagesSince. Oldest-
+// first so the caller can prepend the block above what it already shows
+// without reversing it. A message sharing the cursor's second is excluded
+// by the (ts, id) total order, so paging up neither skips nor repeats.
+func (s *Store) MessagesBefore(chatJID string, ts int64, id string, limit int) ([]MessageRow, error) {
+	limit = ClampLimit(limit)
+	out, err := queryMessages(s.db,
+		messageSelect+` WHERE m.chat_jid = ? AND (m.ts < ? OR (m.ts = ? AND m.id < ?)) ORDER BY m.ts DESC, m.id DESC LIMIT ?`,
+		chatJID, ts, ts, id, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("messages before: %w", err)
+	}
+	reverseMessages(out)
+	s.resolveMentionRows(out)
+	return out, nil
+}
+
 // ftsPhrase turns arbitrary user search text into a syntactically valid
 // FTS5 MATCH argument. Each whitespace-separated token is individually
 // escaped (embedded double quotes doubled) and wrapped in its own quoted

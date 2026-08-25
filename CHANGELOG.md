@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The chat pane now shows a chat's newest messages again. It paginated by
+  database rowid (insertion order), which assumed rowid order matched time
+  order — but a chat can hold a history-sync backfill whose rows were
+  written long after the moments they record, and the LID fold in 0.3.4
+  merged chats whose rows interleave in time. The result was an active
+  chat opening on months-old backfilled messages instead of today's. The
+  pane (initial load and in-place refresh) is now ordered by timestamp.
+  No data was lost — only the view's ordering was wrong. The
+  `poll_new_messages` MCP tool keeps its rowid cursor, which is correct
+  for an agent reacting to newly *ingested* messages.
+
+### Added
+
+- Scroll up in a chat to load older messages — the pane fetches further
+  back a page at a time and keeps your place as it grows, instead of only
+  ever showing the newest ~50.
+- An "↑ older" control in the chat header asks your paired phone for
+  messages from before the oldest one stored — the way to pull a chat's
+  history in from scratch, one page at a time. It requests your own
+  history from your own phone (it messages nobody) and is rate-limited by
+  two cooldowns — one per chat, one global — so a held button or a script
+  can't turn into the burst of history requests that risks a number being
+  flagged; a cooldown shows as a short "try again in Ns" note, not an
+  error.
+
 ## [0.3.5] - 2026-08-25
 
 ### Added
