@@ -43,22 +43,44 @@ func messageRows(msgs []store.MessageRow) []map[string]any {
 	rows := make([]map[string]any, len(msgs))
 	for i, m := range msgs {
 		rows[i] = map[string]any{
-			"ts":     time.Unix(m.TS, 0).UTC().Format(time.RFC3339),
-			"sender": m.SenderName, "kind": m.Kind, "text": m.Text,
+			"ts":      time.Unix(m.TS, 0).UTC().Format(time.RFC3339),
+			"ts_unix": m.TS, // numeric, for the pane's (ts, id) scroll cursors
+			"sender":  m.SenderName, "kind": m.Kind, "text": m.Text,
 			"id": m.ID, "chat": m.ChatJID, "has_media": m.HasMedia, "from_me": m.FromMe,
 		}
 	}
 	return rows
 }
 
-// handleMessages serves the chat pane's three faces. Without ?after= it
-// tails the newest page; with ?after= it returns only what landed past the
-// caller's rowid cursor (poll_new_messages' machinery), and either way the
-// response carries the next cursor, so a refresh can neither skip nor
-// duplicate a message. With ?around=<id> — a search result being opened in
-// place — it returns the window of messages surrounding that one instead,
-// with no cursor: the pane is then parked mid-history, and returning to
-// the live tail is a fresh load.
+// cursor is the chat pane's position: the (ts, id) of the newest message
+// on screen, in the same total order RecentMessages/MessagesSince use. The
+// client sends it back to fetch only what is newer.
+type cursor struct {
+	TS int64  `json:"ts"`
+	ID string `json:"id"`
+}
+
+// cursorOf returns the cursor for the newest of an oldest-first page,
+// leaving a fallback untouched when the page is empty (an empty refresh
+// keeps the caller's cursor).
+func cursorOf(msgs []store.MessageRow, fallback cursor) cursor {
+	if len(msgs) == 0 {
+		return fallback
+	}
+	last := msgs[len(msgs)-1]
+	return cursor{TS: last.TS, ID: last.ID}
+}
+
+// handleMessages serves the chat pane's three faces, all ordered by
+// wall-clock time (ts, id) — NOT rowid: a chat can hold a history-sync
+// backfill inserted long after the moments it records, and the LID fold
+// merges chats whose rows interleave in time, so "highest rowid" is not
+// "newest message". Without a cursor it returns the newest page; with
+// ?after_ts=&after_id= it returns only what is newer, and the response
+// carries the next cursor so a refresh neither skips nor duplicates.
+// With ?around=<id> — a search result opened in place — it returns the
+// window surrounding that message, no cursor: the pane is then parked
+// mid-history, and returning to the live tail is a fresh load.
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	chat := r.URL.Query().Get("chat")
 	if chat == "" {
@@ -82,19 +104,34 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	if !r.URL.Query().Has("after") || err != nil {
-		if after, err = h.deps.Store.TailRowID(chat, true, limit); err != nil {
+	if r.URL.Query().Has("before_ts") {
+		bts, _ := strconv.ParseInt(r.URL.Query().Get("before_ts"), 10, 64)
+		older, err := h.deps.Store.MessagesBefore(chat, bts, r.URL.Query().Get("before_id"), limit)
+		if err != nil {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
 			return
 		}
+		// more is true when the page came back full, so the client knows
+		// another scroll-up can load further back.
+		h.writeJSON(w, http.StatusOK, map[string]any{"messages": messageRows(older), "more": len(older) == limit})
+		return
 	}
-	msgs, cursor, err := h.deps.Store.MessagesAfterRowID(chat, after, true, limit)
+
+	var msgs []store.MessageRow
+	var err error
+	prev := cursor{}
+	if r.URL.Query().Has("after_ts") {
+		prev.TS, _ = strconv.ParseInt(r.URL.Query().Get("after_ts"), 10, 64)
+		prev.ID = r.URL.Query().Get("after_id")
+		msgs, err = h.deps.Store.MessagesSince(chat, prev.TS, prev.ID, limit)
+	} else {
+		msgs, err = h.deps.Store.RecentMessages(chat, limit)
+	}
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
 		return
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"messages": messageRows(msgs), "cursor": cursor})
+	h.writeJSON(w, http.StatusOK, map[string]any{"messages": messageRows(msgs), "cursor": cursorOf(msgs, prev)})
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +161,123 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		rows[i]["chat_is_group"] = c.IsGroup
 	}
 	h.writeJSON(w, http.StatusOK, rows)
+}
+
+// History backfill rate limits. These are deliberately conservative: the
+// control is a manual button, so even the per-chat limit is far looser than
+// any human clicks, and the global limit bounds a script driving the
+// endpoint. Requesting history sends a peer message to the paired phone;
+// abnormal request volume is a documented ban trigger (see the README's
+// ban-risk section), so the server refuses to exceed these regardless of
+// how fast it is asked.
+const (
+	historyPerChatCooldown = 15 * time.Second
+	historyGlobalCooldown  = 3 * time.Second
+	defaultHistoryCount    = 50
+	maxHistoryCount        = 500
+)
+
+func (h *Handler) now() time.Time {
+	if h.deps.Now != nil {
+		return h.deps.Now()
+	}
+	return time.Now()
+}
+
+// handleHistory asks the paired phone for messages older than the oldest
+// one already stored for a chat — the dashboard's "load older" control, and
+// the way to pull a chat's history in from scratch, one bounded page at a
+// time. It reuses fetch_older_messages' exact machinery: anchor on the
+// oldest stored message, send a history-sync request, let the answer land
+// asynchronously in the store. Two cooldowns keep a button (or a script)
+// from turning into a burst of peer messages. Nothing is sent to any
+// contact — this requests your own history from your own phone.
+func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	chat := r.URL.Query().Get("chat")
+	if chat == "" {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "chat is required"})
+		return
+	}
+	count := defaultHistoryCount
+	if n, err := strconv.Atoi(r.URL.Query().Get("count")); err == nil && n > 0 {
+		count = n
+	}
+	if count > maxHistoryCount {
+		count = maxHistoryCount
+	}
+
+	// The phone anchors its reply on a message it can be told about, so a
+	// chat with nothing stored cannot be backfilled. Say so plainly.
+	oldest, ok, err := h.deps.Store.OldestMessage(chat)
+	if err != nil {
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store unavailable"})
+		return
+	}
+	if !ok {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nothing stored for this chat yet — open it once it has messages, then load older"})
+		return
+	}
+
+	// Reserve a slot under the cooldowns before sending. Holding the lock
+	// across the send would serialize every history request behind one
+	// round-trip; instead we stamp the times up front and roll them back
+	// if the send itself fails, so a failed attempt doesn't burn the quota.
+	now := h.now()
+	h.historyMu.Lock()
+	if wait := historyGlobalCooldown - now.Sub(h.lastHistoryAny); wait > 0 {
+		h.historyMu.Unlock()
+		h.tooSoon(w, wait)
+		return
+	}
+	if last, seen := h.lastHistory[chat]; seen {
+		if wait := historyPerChatCooldown - now.Sub(last); wait > 0 {
+			h.historyMu.Unlock()
+			h.tooSoon(w, wait)
+			return
+		}
+	}
+	prevChat, prevAny := h.lastHistory[chat], h.lastHistoryAny
+	h.lastHistory[chat] = now
+	h.lastHistoryAny = now
+	h.historyMu.Unlock()
+
+	if err := h.deps.Bridge.RequestOlderMessages(r.Context(), chat, oldest.ID, oldest.FromMe, oldest.TS, count); err != nil {
+		h.historyMu.Lock()
+		// Roll back only if nothing newer claimed the slot meanwhile.
+		if h.lastHistory[chat].Equal(now) {
+			if prevChat.IsZero() {
+				delete(h.lastHistory, chat)
+			} else {
+				h.lastHistory[chat] = prevChat
+			}
+		}
+		if h.lastHistoryAny.Equal(now) {
+			h.lastHistoryAny = prevAny
+		}
+		h.historyMu.Unlock()
+		h.writeJSON(w, http.StatusBadGateway, map[string]string{"error": "couldn't reach WhatsApp to request history"})
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "requested older messages — they arrive from your phone in a few seconds; refresh to see them",
+		"anchor_ts": oldest.TS,
+		"count":     count,
+	})
+}
+
+// tooSoon writes the 429 a cooldown produces, naming the seconds to wait so
+// the client can show a countdown instead of a bare error.
+func (h *Handler) tooSoon(w http.ResponseWriter, wait time.Duration) {
+	secs := int(wait/time.Second) + 1
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	h.writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"error":       "history was requested very recently — wait a moment before asking again",
+		"retry_after": secs,
+	})
 }
 
 // rasterInline is the closed set of content types the media endpoint will

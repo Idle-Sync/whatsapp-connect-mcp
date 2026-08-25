@@ -371,7 +371,20 @@ mark.hit { background: rgba(0, 168, 132, 0.32); color: var(--ink); border-radius
   100% { box-shadow: 0 1px 1px rgba(0, 0, 0, 0.35); }
 }
 
-button.latest { font-family: var(--mono); font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+button.latest, button.older { font-family: var(--mono); font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+.chat-header-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
+
+/* A brief line under the chat header confirming a history request or a
+   cooldown, without a blocking dialog. */
+.pane-toast {
+  flex: none;
+  font-family: var(--mono); font-size: 0.72rem;
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ok-soft); color: var(--ink);
+  animation: chip-in 0.2s var(--ease) both;
+}
+.pane-toast.bad { background: var(--bad-soft); }
 
 .messages-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
