@@ -42,6 +42,9 @@ type Store interface {
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 	Chat(jid string) (store.ChatRow, bool, error)
 	MessageContext(chatJID, id string, before, after int) ([]store.MessageRow, error)
+	// SearchContacts backs name resolution, so the trust and scope boxes
+	// take a person's name or number rather than a raw JID.
+	SearchContacts(query string, limit int) ([]store.ContactRow, error)
 	BackupTo(path string) error
 }
 
@@ -67,9 +70,29 @@ type Deps struct {
 	Gate    *gate.Gate
 	Sched   *schedule.Store
 	DataDir string
-	Token   string
-	Version string
+	// AccountDir is the paired account's own directory: where its trust
+	// list, readable-chat allowlist, downloaded media and backups live.
+	// Empty falls back to DataDir, which is what an unpaired install and
+	// the dashboard's own tests want.
+	AccountDir string
+	Token      string
+	Version    string
+	// Home is the user's home directory, the root the MCP-client config
+	// paths are resolved under. Passed in rather than read from the
+	// environment so tests can point it at a temp directory.
+	Home string
+	// BinaryPath is this executable's path, used for a stdio client entry
+	// and to tell a valid injected entry from one naming another binary.
+	BinaryPath string
+	// HTTPURL is the base URL this server is reachable at when serve was
+	// started with --http. Non-empty means client entries are injected as
+	// HTTP rather than stdio.
+	HTTPURL string
 	Doctor  func(ctx context.Context) []doctor.Finding
+	// OnPaired runs after a dashboard-driven pairing succeeds, so the
+	// caller can re-point the store at the account that has just become
+	// known. Nil skips it.
+	OnPaired func() error
 	// Now is the clock the history-backfill cooldowns measure against; nil
 	// means the real clock. Injectable so tests need not sleep.
 	Now func() time.Time
@@ -129,6 +152,10 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/backup", h.authed(h.mutating(h.handleBackup)))
 	h.mux.HandleFunc("/api/drafts", h.authed(h.handleDrafts))
 	h.mux.HandleFunc("/api/drafts/", h.authed(h.mutating(h.handleDraftAction)))
+	h.mux.HandleFunc("/api/clients", h.authed(h.handleClients))
+	h.mux.HandleFunc("/api/clients/", h.authed(h.mutating(h.handleClientRemove)))
+	h.mux.HandleFunc("/api/scope", h.authed(h.handleScope))
+	h.mux.HandleFunc("/api/scope/", h.authed(h.mutating(h.handleScopeRemove)))
 	return h
 }
 

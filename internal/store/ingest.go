@@ -22,7 +22,7 @@ type Message struct {
 // last_message_at only ever moves forward, so a stale or missing timestamp
 // never overwrites a newer one.
 func (s *Store) UpsertChat(jid, name string, isGroup bool, lastMessageAt int64) error {
-	_, err := s.db.Exec(`
+	_, err := s.conn().Exec(`
 		INSERT INTO chats (jid, name, is_group, last_message_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT (jid) DO UPDATE SET
@@ -43,7 +43,7 @@ func (s *Store) UpsertChat(jid, name string, isGroup bool, lastMessageAt int64) 
 // last_message_at forward to m.TS; it never moves it backward and is a
 // no-op if the chat row does not exist yet.
 func (s *Store) UpsertMessage(m Message) error {
-	tx, err := s.db.Begin()
+	tx, err := s.conn().Begin()
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
 	}
@@ -83,7 +83,7 @@ func (s *Store) UpsertMessage(m Message) error {
 // pushName, fullName, or businessName passed empty leaves the existing
 // stored value untouched rather than overwriting it with blank.
 func (s *Store) UpsertContact(jid, phone, pushName, fullName, businessName string) error {
-	_, err := s.db.Exec(`
+	_, err := s.conn().Exec(`
 		INSERT INTO contacts (jid, phone, push_name, full_name, business_name)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (jid) DO UPDATE SET
@@ -108,7 +108,7 @@ func (s *Store) UpsertLIDMapping(lid, pn string) error {
 	if lid == "" || pn == "" {
 		return nil
 	}
-	_, err := s.db.Exec(`
+	_, err := s.conn().Exec(`
 		INSERT INTO lid_map (lid, pn) VALUES (?, ?)
 		ON CONFLICT (lid) DO UPDATE SET pn = excluded.pn`,
 		lid, pn,
@@ -141,7 +141,7 @@ func (s *Store) MarkRead(chatJID string, ids []string, readAt int64) error {
 	query.WriteString(`UPDATE messages SET read_at = MAX(read_at, ?) WHERE chat_jid = ? AND id IN (`)
 	query.WriteString(placeholders)
 	query.WriteString(`)`)
-	if _, err := s.db.Exec(query.String(), args...); err != nil {
+	if _, err := s.conn().Exec(query.String(), args...); err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
 	return nil
@@ -150,7 +150,7 @@ func (s *Store) MarkRead(chatJID string, ids []string, readAt int64) error {
 // InsertCall inserts or updates the call row for id with the newest fields,
 // so a later status report (e.g. ringing -> missed) overwrites in place.
 func (s *Store) InsertCall(id, peerJID string, ts int64, direction, status string, isVideo bool) error {
-	_, err := s.db.Exec(`
+	_, err := s.conn().Exec(`
 		INSERT INTO calls (id, peer_jid, ts, direction, status, is_video)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET

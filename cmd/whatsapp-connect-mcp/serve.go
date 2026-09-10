@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/accounts"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/dashboard"
@@ -71,13 +71,28 @@ func runServe(args []string) int {
 	}
 	defer func() { _ = lock.Release() }()
 
-	cfg, err := config.Load(dataDir)
+	// Which account is paired decides where this run's messages, trust
+	// list, readable chats, and pending schedules live. It is read from
+	// session.db before anything opens, because the message store has to be
+	// the right account's from the first write — see internal/accounts.
+	ownJID, err := accounts.Current(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+	acct, err := prepareAccount(dataDir, ownJID, os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	cfg, err := config.LoadFor(dataDir, acct.Dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
@@ -125,12 +140,12 @@ func runServe(args []string) int {
 	// wiped here before the gate exists so nothing granted for a previous
 	// process carries into this one. Both stay CLI-only: no MCP tool
 	// writes either file.
-	sess := sessiontrust.Open(dataDir)
+	sess := sessiontrust.Open(acct.Dir)
 	if err := sess.ClearAtStartup(); err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
-	trustReader := config.NewTrustReader(dataDir)
+	trustReader := config.NewTrustReader(dataDir, acct.Dir)
 	trusted := func(jid string) bool { return trustReader.Trusted(jid) || sess.Trusted(jid) }
 
 	g := gate.New(br, trusted, cfg.RateBurst, cfg.RatePerSeconds, time.Now)
@@ -142,7 +157,7 @@ func runServe(args []string) int {
 	// same shared rate limiter as every other send. Schedules that came
 	// due more than 15 minutes ago while serve was down are dropped, and
 	// said so.
-	schedStore, droppedSchedules, err := schedule.Load(dataDir, time.Now())
+	schedStore, droppedSchedules, err := schedule.Load(acct.Dir, time.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
@@ -161,12 +176,12 @@ func runServe(args []string) int {
 	go runner.Run(ctx)
 
 	doc := mcpserv.DoctorEnv{
-		Home: home, BinaryPath: binaryPath,
+		DataDir: dataDir, Home: home, BinaryPath: binaryPath,
 		NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
 		LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
 		IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
 	}
-	server := mcpserv.New(st, br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, dataDir, doc)
+	server := mcpserv.New(st, config.NewScopeReader(dataDir, acct.Dir), br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, acct.Dir, doc)
 
 	if *httpAddr != "" {
 		token, created, err := httpauth.LoadOrCreateToken(dataDir)
@@ -195,10 +210,18 @@ func runServe(args []string) int {
 
 		dash := dashboard.New(dashboard.Deps{
 			Ctx: ctx, Store: st, Bridge: br, Gate: g, Sched: schedStore,
-			DataDir: dataDir, Token: token, Version: version.String(),
+			DataDir: dataDir, AccountDir: acct.Dir, Token: token, Version: version.String(),
+			OnPaired: func() error {
+				own, err := accounts.Current(dataDir)
+				if err != nil {
+					return err
+				}
+				return attachAccount(dataDir, own, st, os.Stderr)
+			},
+			Home: home, BinaryPath: binaryPath, HTTPURL: clientURL(*httpAddr),
 			Doctor: func(dctx context.Context) []doctor.Finding {
 				return doctor.Run(dctx, doctor.Env{
-					DataDir: dataDir, BinaryPath: binaryPath, Home: home, Store: st,
+					DataDir: dataDir, AccountDir: acct.Dir, BinaryPath: binaryPath, Home: home, Store: st,
 					NeedsPairing: br.NeedsPairing, LoggedIn: br.LoggedIn,
 					LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
 					IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
@@ -345,6 +368,22 @@ func browserToDashboard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// clientURL turns the --http listen address into the base URL an MCP
+// client should dial. A wildcard or empty host ("" or ":2178", "0.0.0.0",
+// "[::]") becomes loopback: the client runs on this same machine, and the
+// address the server binds is not necessarily one it can connect to.
+func clientURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, token string, errOut io.Writer) int {

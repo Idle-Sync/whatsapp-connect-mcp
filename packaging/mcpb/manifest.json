@@ -4,7 +4,7 @@
   "version": "0.0.0-dev",
   "display_name": "WhatsApp Connect",
   "description": "Read, search, and send WhatsApp messages from any MCP client, with every outbound send protected by a server-enforced draft-and-confirm gate.",
-  "long_description": "A WhatsApp MCP server shipped as a single static Go binary. Sixteen tools cover chats, messages, contacts, calls, and media, plus a built-in `doctor` diagnostic. Every outbound send goes through a draft-first confirmation gate and a rate limiter, mitigating (never eliminating) the account-ban risk inherent to the unofficial WhatsApp Web protocol this project relies on. Run `whatsapp-connect-mcp setup` once, outside this client, to pair a device before use.",
+  "long_description": "A WhatsApp MCP server shipped as a single static Go binary. Twenty-four tools cover chats, messages, contacts, calls, and media, plus a built-in `doctor` diagnostic. Every outbound send goes through a draft-first confirmation gate and a rate limiter, mitigating (never eliminating) the account-ban risk inherent to the unofficial WhatsApp Web protocol this project relies on. Reads can be confined to an allowlist of chats you choose, so a client need not be handed every conversation on the account. Run `whatsapp-connect-mcp setup` once, outside this client, to pair a device before use.",
   "author": {
     "name": "Idle-Sync",
     "url": "https://github.com/idle-sync"

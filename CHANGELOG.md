@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Limit which chats agents may read.** Connecting an MCP client used to
+  hand it every chat on the account. `setup` now asks what connected
+  agents should see — every chat, only your own self-chat, or nothing
+  until you say so — and the choice is editable afterwards from the
+  dashboard's clients tab or the new `scope` command
+  (`--allow`/`--deny`/`--all`/`--list`).
+
+  Once a limit is on, chat-addressed reads outside it are refused and say
+  the chat is out of scope rather than pretending it does not exist, so a
+  model stops asking instead of retrying. Questions asked across all chats
+  — global search, `poll_new_messages`, call history, contact search —
+  come back filtered; contact search included, because an agent that can
+  still enumerate your address book leaks exactly what the limit exists to
+  withhold. Enforcement wraps the store once rather than at each call
+  site, so a read tool added later cannot forget it.
+
+  The limit is one setting for the whole server, not one per client: every
+  client authenticates with the same bearer token, so the server cannot
+  tell them apart. Only you can change it — no MCP tool writes
+  `config.json`, the same rule the trust list already follows. And an
+  empty allowlist means *nothing* is readable rather than everything,
+  which is why the mode is stored separately from the list; `check` names
+  that state, since every read tool then returning empty looks exactly
+  like a broken install. The dashboard is deliberately exempt: it is your
+  own window onto your own messages.
+
+- **A clients tab in the dashboard.** Every MCP client detected on this
+  machine, whether it is installed, whether this server is added to it,
+  and where its entry points — with one click to add or remove that entry.
+  A config the doctor calls broken can now be fixed without dropping to a
+  terminal. The broken flag repeats the doctor's own verdict rather than
+  inventing a second opinion.
+
+### Fixed
+
+- **Pairing a second number no longer shows the first number's data.**
+  Everything that belongs to a WhatsApp account — its messages, downloaded
+  media, backups, trust list, readable-chat allowlist and pending
+  scheduled sends — now lives under `accounts/<number>/`, and only the
+  machine's own settings (rate limits, outbox roots, the HTTP token) stay
+  shared. Switching numbers is clean in both directions: pair the first
+  one back and its history and settings are exactly as they were.
+
+  The worst case this closes was not the visible one. A pending scheduled
+  send sat in a single shared file, so a message scheduled under one
+  number would have fired from whichever number happened to be paired when
+  its time came — a real message, to a real person, from an account they
+  did not expect.
+
+  Separation is by file rather than by a column every query has to
+  remember: two accounts cannot see each other because their rows are not
+  in the same database, including from code written long after this. The
+  upgrade moves an existing install into the new shape by renaming files,
+  never rewriting rows — deliberately, because adding an account column to
+  the existing tables would mean rebuilding them, and that renumbers
+  SQLite rowids, which here are both the full-text index's link to its
+  content and the cursor `poll_new_messages` hands out. Renumbering them
+  would have silently corrupted search results and made agents skip
+  messages they never received.
+
+### Changed
+
+- **`trust` and `scope` take a name or a phone number, not just a JID.**
+  Nobody knows their friend as `15551234567@s.whatsapp.net`, and the old
+  failure mode was silent: a mistyped JID was accepted, stored, and simply
+  never matched anything. Both now accept a contact or group name, a phone
+  number in any of the shapes people paste, or a JID. A name matching
+  several people is never guessed at — the CLI lists the matches and asks,
+  the dashboard shows them as a chooser, and nothing is written until one
+  is picked. The same goes for the dashboard's trust and readable-chat
+  boxes.
+
 ## [0.3.7] - 2026-08-25
 
 ### Fixed

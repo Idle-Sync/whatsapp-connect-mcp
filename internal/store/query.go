@@ -193,7 +193,7 @@ func (s *Store) Chats(query string, includeArchived bool, limit int) ([]ChatRow,
 	b.WriteString(` ORDER BY ch.last_message_at DESC LIMIT ?`)
 	args = append(args, limit)
 
-	rows, err := s.db.Query(b.String(), args...)
+	rows, err := s.conn().Query(b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list chats: %w", err)
 	}
@@ -215,7 +215,7 @@ func (s *Store) Chats(query string, includeArchived bool, limit int) ([]ChatRow,
 
 // Chat looks up a single chat by jid. ok is false when no such chat exists.
 func (s *Store) Chat(jid string) (ChatRow, bool, error) {
-	row := s.db.QueryRow(chatSelect+` WHERE ch.jid = ?`, jid)
+	row := s.conn().QueryRow(chatSelect+` WHERE ch.jid = ?`, jid)
 	c, err := scanChatRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChatRow{}, false, nil
@@ -247,7 +247,7 @@ func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]
 	b.WriteString(` ORDER BY m.ts DESC, m.id DESC LIMIT ?`)
 	args = append(args, limit)
 
-	out, err := queryMessages(s.db, b.String(), args...)
+	out, err := queryMessages(s.conn(), b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
@@ -265,7 +265,7 @@ func (s *Store) Messages(chatJID string, beforeTS, afterTS int64, limit int) ([]
 // reading a chat wants them in the order they were sent.
 func (s *Store) RecentMessages(chatJID string, limit int) ([]MessageRow, error) {
 	limit = ClampLimit(limit)
-	out, err := queryMessages(s.db,
+	out, err := queryMessages(s.conn(),
 		messageSelect+` WHERE m.chat_jid = ? ORDER BY m.ts DESC, m.id DESC LIMIT ?`,
 		chatJID, limit,
 	)
@@ -289,7 +289,7 @@ func (s *Store) RecentMessages(chatJID string, limit int) ([]MessageRow, error) 
 // messages does not jump into the live view, which is what a reader wants.
 func (s *Store) MessagesSince(chatJID string, ts int64, id string, limit int) ([]MessageRow, error) {
 	limit = ClampLimit(limit)
-	out, err := queryMessages(s.db,
+	out, err := queryMessages(s.conn(),
 		messageSelect+` WHERE m.chat_jid = ? AND (m.ts > ? OR (m.ts = ? AND m.id > ?)) ORDER BY m.ts ASC, m.id ASC LIMIT ?`,
 		chatJID, ts, ts, id, limit,
 	)
@@ -308,7 +308,7 @@ func (s *Store) MessagesSince(chatJID string, ts int64, id string, limit int) ([
 // by the (ts, id) total order, so paging up neither skips nor repeats.
 func (s *Store) MessagesBefore(chatJID string, ts int64, id string, limit int) ([]MessageRow, error) {
 	limit = ClampLimit(limit)
-	out, err := queryMessages(s.db,
+	out, err := queryMessages(s.conn(),
 		messageSelect+` WHERE m.chat_jid = ? AND (m.ts < ? OR (m.ts = ? AND m.id < ?)) ORDER BY m.ts DESC, m.id DESC LIMIT ?`,
 		chatJID, ts, ts, id, limit,
 	)
@@ -366,7 +366,7 @@ func (s *Store) SearchMessages(query, chatJID string, limit int) ([]MessageRow, 
 	b.WriteString(` ORDER BY m.ts DESC, m.id DESC LIMIT ?`)
 	args = append(args, limit)
 
-	out, err := queryMessages(s.db, b.String(), args...)
+	out, err := queryMessages(s.conn(), b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)
 	}
@@ -376,7 +376,7 @@ func (s *Store) SearchMessages(query, chatJID string, limit int) ([]MessageRow, 
 
 // messageByID fetches the single message identified by (chatJID, id).
 func (s *Store) messageByID(chatJID, id string) (MessageRow, bool, error) {
-	row := s.db.QueryRow(messageSelect+` WHERE m.chat_jid = ? AND m.id = ?`, chatJID, id)
+	row := s.conn().QueryRow(messageSelect+` WHERE m.chat_jid = ? AND m.id = ?`, chatJID, id)
 	m, err := scanMessageRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MessageRow{}, false, nil
@@ -406,7 +406,7 @@ func (s *Store) MessageContext(chatJID, id string, before, after int) ([]Message
 	var b strings.Builder
 	b.WriteString(messageSelect)
 	b.WriteString(` WHERE m.chat_jid = ? AND (m.ts < ? OR (m.ts = ? AND m.id < ?)) ORDER BY m.ts DESC, m.id DESC LIMIT ?`)
-	beforeRows, err := queryMessages(s.db, b.String(), chatJID, target.TS, target.TS, target.ID, before)
+	beforeRows, err := queryMessages(s.conn(), b.String(), chatJID, target.TS, target.TS, target.ID, before)
 	if err != nil {
 		return nil, fmt.Errorf("message context: %w", err)
 	}
@@ -415,7 +415,7 @@ func (s *Store) MessageContext(chatJID, id string, before, after int) ([]Message
 	b.Reset()
 	b.WriteString(messageSelect)
 	b.WriteString(` WHERE m.chat_jid = ? AND (m.ts > ? OR (m.ts = ? AND m.id > ?)) ORDER BY m.ts ASC, m.id ASC LIMIT ?`)
-	afterRows, err := queryMessages(s.db, b.String(), chatJID, target.TS, target.TS, target.ID, after)
+	afterRows, err := queryMessages(s.conn(), b.String(), chatJID, target.TS, target.TS, target.ID, after)
 	if err != nil {
 		return nil, fmt.Errorf("message context: %w", err)
 	}
@@ -459,7 +459,7 @@ FROM contacts`)
 	b.WriteString(` ORDER BY name LIMIT ?`)
 	args = append(args, limit)
 
-	rows, err := s.db.Query(b.String(), args...)
+	rows, err := s.conn().Query(b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("search contacts: %w", err)
 	}
@@ -484,7 +484,7 @@ FROM contacts`)
 // chat (e.g. a participant's last message in a group). ok is false when
 // jid has no messages at all.
 func (s *Store) LastInteraction(jid string) (MessageRow, bool, error) {
-	row := s.db.QueryRow(
+	row := s.conn().QueryRow(
 		messageSelect+` WHERE m.chat_jid = ? OR m.sender_jid = ? ORDER BY m.ts DESC, m.id DESC LIMIT 1`,
 		jid, jid,
 	)
@@ -509,7 +509,7 @@ func (s *Store) LastInteraction(jid string) (MessageRow, bool, error) {
 // tiebreak) so that a chat whose oldest messages share a timestamp resolves
 // to the same row every time rather than an arbitrary one.
 func (s *Store) OldestMessage(chatJID string) (MessageRow, bool, error) {
-	row := s.db.QueryRow(
+	row := s.conn().QueryRow(
 		messageSelect+` WHERE m.chat_jid = ? ORDER BY m.ts ASC, m.id ASC LIMIT 1`,
 		chatJID,
 	)
@@ -546,7 +546,7 @@ func (s *Store) TailRowID(chatJID string, includeOwn bool, n int) (int64, error)
 	args = append(args, n-1)
 
 	var nth int64
-	err := s.db.QueryRow(b.String(), args...).Scan(&nth)
+	err := s.conn().QueryRow(b.String(), args...).Scan(&nth)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -562,7 +562,7 @@ func (s *Store) TailRowID(chatJID string, includeOwn bool, n int) (int64, error)
 // actually answered.
 func (s *Store) CountMessagesOlderThan(chatJID string, ts int64) (int, error) {
 	var n int
-	err := s.db.QueryRow(
+	err := s.conn().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE chat_jid = ? AND ts < ?`, chatJID, ts,
 	).Scan(&n)
 	if err != nil {
@@ -605,7 +605,7 @@ LEFT JOIN contacts c ON c.jid = ca.peer_jid WHERE 1 = 1`)
 	b.WriteString(` ORDER BY ca.ts DESC, ca.id DESC LIMIT ?`)
 	args = append(args, limit)
 
-	rows, err := s.db.Query(b.String(), args...)
+	rows, err := s.conn().Query(b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list calls: %w", err)
 	}
@@ -630,7 +630,7 @@ LEFT JOIN contacts c ON c.jid = ca.peer_jid WHERE 1 = 1`)
 // starts from ("from now").
 func (s *Store) LatestRowID() (int64, error) {
 	var id int64
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM messages`).Scan(&id); err != nil {
+	if err := s.conn().QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM messages`).Scan(&id); err != nil {
 		return 0, fmt.Errorf("latest row id: %w", err)
 	}
 	return id, nil
@@ -660,7 +660,7 @@ func (s *Store) MessagesAfterRowID(chatJID string, afterRowID int64, includeOwn 
 	b.WriteString(` ORDER BY m.rowid ASC LIMIT ?`)
 	args = append(args, limit)
 
-	dbRows, err := s.db.Query(b.String(), args...)
+	dbRows, err := s.conn().Query(b.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("poll messages: %w", err)
 	}
@@ -709,7 +709,7 @@ func (s *Store) MediaMessageIDs(chatJID string, beforeTS, afterTS int64, kind st
 	b.WriteString(` ORDER BY ts DESC, id DESC LIMIT ?`)
 	args = append(args, limit)
 
-	rows, err := s.db.Query(b.String(), args...)
+	rows, err := s.conn().Query(b.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list media messages: %w", err)
 	}
@@ -741,7 +741,7 @@ type Counts struct {
 // explicitly has neither problem.
 func (s *Store) Counts() (Counts, error) {
 	var c Counts
-	row := s.db.QueryRow(`SELECT
+	row := s.conn().QueryRow(`SELECT
 		(SELECT COUNT(*) FROM chats),
 		(SELECT COUNT(*) FROM messages),
 		(SELECT COUNT(*) FROM contacts),
@@ -756,7 +756,7 @@ func (s *Store) Counts() (Counts, error) {
 // message. err is non-nil (and ref/filename/kind zero) when the message
 // does not exist or carries no media.
 func (s *Store) MessageMediaRef(chatJID, id string) (ref []byte, filename, kind string, err error) {
-	row := s.db.QueryRow(`SELECT media_ref, media_filename, kind FROM messages WHERE chat_jid = ? AND id = ?`, chatJID, id)
+	row := s.conn().QueryRow(`SELECT media_ref, media_filename, kind FROM messages WHERE chat_jid = ? AND id = ?`, chatJID, id)
 	if scanErr := row.Scan(&ref, &filename, &kind); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return nil, "", "", fmt.Errorf("message media: message not found")

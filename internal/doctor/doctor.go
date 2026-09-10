@@ -56,7 +56,11 @@ type DBChecker interface {
 // checkSession uses; a nil NeedsPairing is treated the same as true (not
 // paired), the more cautious of the two findings.
 type Env struct {
-	DataDir      string
+	DataDir string
+	// AccountDir is the paired account's own directory, holding the
+	// settings that belong to it rather than to this machine. Empty falls
+	// back to DataDir.
+	AccountDir   string
 	BinaryPath   string
 	Home         string
 	Store        DBChecker

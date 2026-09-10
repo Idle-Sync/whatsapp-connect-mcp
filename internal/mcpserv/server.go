@@ -15,6 +15,10 @@ import (
 // read tools already share (the store and the data directory): the local
 // values only a diagnostic check has any use for.
 type DoctorEnv struct {
+	// DataDir is the machine's data directory, which doctor inspects for
+	// permissions and machine-wide settings. It is deliberately not the
+	// account directory media is written under — see New's mediaDir.
+	DataDir      string
 	Home         string
 	BinaryPath   string
 	NeedsPairing func() bool
@@ -79,13 +83,23 @@ const serverName = "whatsapp-connect-mcp"
 // read-only tools against st and live (media downloaded into dataDir), the
 // doctor tool against st and doc, and the gated send tools against st and
 // g, the sole path any of them has to an outbound WhatsApp send.
-func New(st Store, live Live, g *gate.Gate, sched *Scheduler, dataDir string, doc DoctorEnv) *mcp.Server {
+//
+// mediaDir is where downloaded media is written: the paired account's own
+// directory, so one account's attachments never land among another's.
+//
+// scope confines every read to the chats the local human has allowed; nil,
+// or a scope with an empty list, reads everything. It wraps st here rather
+// than at each call site so a tool added later cannot forget it. Nothing
+// in this package can widen its own scope: the allowlist lives in
+// config.json, which no MCP tool writes.
+func New(st Store, scope Scope, live Live, g *gate.Gate, sched *Scheduler, mediaDir string, doc DoctorEnv) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
 		Version: version.Version,
 	}, nil)
 
-	registerReadTools(server, st, live, dataDir, doc)
+	st = newScopedStore(st, scope)
+	registerReadTools(server, st, live, mediaDir, doc)
 	registerSendTools(server, st, g)
 	if sched != nil {
 		registerScheduleTools(server, st, sched)

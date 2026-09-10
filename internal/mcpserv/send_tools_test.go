@@ -621,7 +621,7 @@ func TestRegisterSendToolsBuildsAllFiveSchemasWithoutPanicking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schedule.Load: %v", err)
 	}
-	server := New(&fakeStore{}, &fakeLive{}, nil, &Scheduler{Gate: nil, Store: sched}, t.TempDir(), DoctorEnv{})
+	server := New(&fakeStore{}, nil, &fakeLive{}, nil, &Scheduler{Gate: nil, Store: sched}, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}

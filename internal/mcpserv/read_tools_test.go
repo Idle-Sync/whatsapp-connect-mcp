@@ -627,7 +627,7 @@ func TestDownloadMediaWritesUnderDataDirAndPathIsOutsideBanner(t *testing.T) {
 
 	st := &fakeStore{mediaRef: []byte("ref-bytes"), mediaFilename: "photo.jpg", mediaKind: "image"}
 	live := &fakeLive{downloadPath: wantPath}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat123@s.whatsapp.net", MessageID: "m1",
@@ -676,7 +676,7 @@ func TestDownloadMediaEmptyMediaFilenameStillDownloads(t *testing.T) {
 
 	st := &fakeStore{mediaRef: []byte("ref-bytes"), mediaFilename: "", mediaKind: "image"}
 	live := &fakeLive{downloadPath: wantPath}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat123@s.whatsapp.net", MessageID: "m1",
@@ -701,7 +701,7 @@ func TestDownloadMediaTwoMessagesInSameChatDoNotCollide(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "IMG_0001.jpg", mediaKind: "image"}
 	live := &fakeLive{}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	if _, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", MessageID: "m1",
@@ -729,7 +729,7 @@ func TestDownloadMediaSanitizesJIDForFilesystemUse(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "note.opus", mediaKind: "voice"}
 	live := &fakeLive{downloadPath: filepath.Join(dataDir, "media", "5511999_12@s.whatsapp.net", "note.opus")}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	_, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "5511999:12@s.whatsapp.net", MessageID: "m1",
@@ -748,7 +748,7 @@ func TestDownloadMediaSanitizesJIDForFilesystemUse(t *testing.T) {
 func TestDownloadMediaRejectsPathTraversalInChatJID(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "f.jpg", mediaKind: "image"}
-	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: dataDir}
+	d := &toolDeps{st: st, live: &fakeLive{}, mediaDir: dataDir}
 
 	_, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "../../etc", MessageID: "m1",
@@ -770,7 +770,7 @@ func TestDownloadMediaNeutralizesTraversalFilename(t *testing.T) {
 
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "../../../../evil.sh", mediaKind: "document"}
 	live := &fakeLive{downloadPath: wantPath}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", MessageID: "m1",
@@ -800,7 +800,7 @@ func TestDownloadMediaBatchIDs(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image"}
 	live := &fakeLive{}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", MessageIDs: []string{"m1", "m2"},
@@ -824,7 +824,7 @@ func TestDownloadMediaBatchContinuesPastFailure(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image"}
 	live := &fakeLive{downloadErrByName: map[string]error{"m1.jpg": errors.New("download media: WhatsApp request failed")}}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", MessageIDs: []string{"m1", "m2"},
@@ -851,7 +851,7 @@ func TestDownloadMediaWindowForm(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{mediaRef: []byte("ref"), mediaFilename: "", mediaKind: "image", mediaIDsRet: []string{"m9", "m8"}}
 	live := &fakeLive{}
-	d := &toolDeps{st: st, live: live, dataDir: dataDir, now: fixedNow}
+	d := &toolDeps{st: st, live: live, mediaDir: dataDir, now: fixedNow}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", Window: "yesterday", TZ: "Asia/Kolkata", Kind: "image",
@@ -878,7 +878,7 @@ func TestDownloadMediaWindowForm(t *testing.T) {
 
 func TestDownloadMediaWindowFormNoMatches(t *testing.T) {
 	st := &fakeStore{mediaIDsRet: nil}
-	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: t.TempDir(), now: fixedNow}
+	d := &toolDeps{st: st, live: &fakeLive{}, mediaDir: t.TempDir(), now: fixedNow}
 
 	result, _, err := d.downloadMedia(context.Background(), nil, downloadMediaInput{
 		ChatJID: "chat@s.whatsapp.net", Window: "yesterday",
@@ -892,7 +892,7 @@ func TestDownloadMediaWindowFormNoMatches(t *testing.T) {
 }
 
 func TestDownloadMediaSelectorValidation(t *testing.T) {
-	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}, dataDir: t.TempDir()}
+	d := &toolDeps{st: &fakeStore{}, live: &fakeLive{}, mediaDir: t.TempDir()}
 
 	for name, in := range map[string]downloadMediaInput{
 		"id and ids":    {ChatJID: "c@s.whatsapp.net", MessageID: "m1", MessageIDs: []string{"m2"}},
@@ -909,7 +909,7 @@ func TestDoctorResultIsNotBannerWrapped(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{}
 	env := DoctorEnv{Home: dataDir, BinaryPath: filepath.Join(dataDir, "bin"), LoggedIn: func() bool { return false }}
-	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: dataDir, doctorEnv: env}
+	d := &toolDeps{st: st, live: &fakeLive{}, mediaDir: dataDir, doctorEnv: env}
 
 	result, _, err := d.doctor(context.Background(), nil, struct{}{})
 	if err != nil {
@@ -928,7 +928,7 @@ func TestDoctorResultIsNotBannerWrapped(t *testing.T) {
 func TestDoctorPropagatesDatabaseIntegrityFailure(t *testing.T) {
 	dataDir := t.TempDir()
 	st := &fakeStore{quickCheckErr: errors.New("corrupt")}
-	d := &toolDeps{st: st, live: &fakeLive{}, dataDir: dataDir, doctorEnv: DoctorEnv{Home: dataDir, BinaryPath: filepath.Join(dataDir, "bin")}}
+	d := &toolDeps{st: st, live: &fakeLive{}, mediaDir: dataDir, doctorEnv: DoctorEnv{Home: dataDir, BinaryPath: filepath.Join(dataDir, "bin")}}
 
 	result, _, err := d.doctor(context.Background(), nil, struct{}{})
 	if err != nil {
@@ -985,7 +985,7 @@ func TestRegisterReadToolsBuildsAllElevenSchemasWithoutPanicking(t *testing.T) {
 	// schema. Exercising the full registration path (rather than only the
 	// handler methods, as the other tests in this file do) is what would
 	// catch a struct tag or type mistake in any of the eleven tools.
-	server := New(&fakeStore{}, &fakeLive{}, nil, nil, t.TempDir(), DoctorEnv{})
+	server := New(&fakeStore{}, nil, &fakeLive{}, nil, nil, t.TempDir(), DoctorEnv{})
 	if server == nil {
 		t.Fatal("New() returned a nil server")
 	}
@@ -1011,7 +1011,7 @@ func resultText(t *testing.T, result *mcp.CallToolResult) string {
 func TestStoreBackedReadsWaitForCatchUp(t *testing.T) {
 	st := &fakeStore{chatOK: true, lastInteractionOK: true, mediaRef: []byte("r"), mediaKind: "image"}
 	live := &fakeLive{}
-	d := &toolDeps{st: st, live: live, dataDir: t.TempDir()}
+	d := &toolDeps{st: st, live: live, mediaDir: t.TempDir()}
 	ctx := context.Background()
 
 	handlers := map[string]func(){

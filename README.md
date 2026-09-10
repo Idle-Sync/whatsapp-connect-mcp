@@ -94,6 +94,11 @@ connect at once.
 > never exits anyway). Creating the task may require an elevated
 > (Administrator) terminal.
 
+`setup` then asks what those clients may read: **every chat** (the
+default), **only your own self-chat**, or **nothing yet** — leaving you to
+name the chats afterwards in the dashboard or with `scope --allow`. See
+[Which chats an agent may read](#which-chats-an-agent-may-read).
+
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
 
@@ -162,6 +167,10 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 > How far back any of these reach is decided by the paired phone, not by this
 > server. "Search my whole history" can turn out to mean "search the last few
 > months" — see [Limitations](#limitations-stated-plainly).
+>
+> *Which* chats they reach is yours to decide: by default every chat, or an
+> allowlist you set — see
+> [Which chats an agent may read](#which-chats-an-agent-may-read).
 
 ### Send (gated — see below)
 
@@ -199,8 +208,9 @@ the model to "be careful":
 2. **Confirm to commit.** Re-issue the identical call with that
    `draft_token` and it sends. Drafts expire after 5 minutes; a byte
    difference in the resubmitted content invalidates the token.
-3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <jid>` marks a
-   contact or group as trusted, so sends to it commit on the first call
+3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <who>` marks a
+   contact or group as trusted — `<who>` being a name, a phone number, or a
+   JID; an ambiguous name lists the matches and asks rather than guessing — so sends to it commit on the first call
    instead of drafting. This is a CLI-only switch — no MCP tool can grant
    trust, so a model can't trust its way around the draft step. The list
    is re-read on every send decision, so `trust --add`/`--remove` apply
@@ -253,6 +263,62 @@ naming a file outside the list is refused on the first call — before a draft
 is minted and before it costs a rate-limit token — and the refusal names no
 path, like every other error this server returns.
 
+## Which chats an agent may read
+
+By default, connecting a client hands it every chat on the account. That is
+often more than you meant: you wanted help with one group, not standing
+access to a decade of correspondence.
+
+So the read surface can be confined to an allowlist. `setup` asks once, and
+either the dashboard's **clients** tab or the `scope` command changes it
+later:
+
+```sh
+whatsapp-connect-mcp scope --list                       # what agents can read now
+whatsapp-connect-mcp scope --allow 15551234567@s.whatsapp.net
+whatsapp-connect-mcp scope --deny  15551234567@s.whatsapp.net
+whatsapp-connect-mcp scope --all                        # drop the limit again
+```
+
+`--allow` turns the limit on as well as naming a chat — asking to allow one
+chat is asking to restrict the rest. `--all` turns it off but **keeps** the
+list, so turning the limit back on doesn't mean retyping it.
+
+What the limit covers, once on:
+
+- Messages, search, context, media and history in a chat outside the list
+  are refused — and the refusal says the chat is out of scope rather than
+  pretending it doesn't exist, so a model stops asking instead of retrying.
+- Questions asked across all chats — global search, `poll_new_messages`,
+  call history, contact search — come back filtered to the allowed set.
+  Contacts included: an agent that can still enumerate your address book
+  leaks exactly what the limit exists to withhold.
+- Enforcement wraps the store once, so every read tool is covered, present
+  and future.
+
+Three things worth knowing before you rely on it:
+
+- **The limit is on the server, not on each client.** Every client
+  authenticates with the same bearer token, so the server cannot tell
+  Cursor from Claude Desktop. One scope applies to all of them. Per-client
+  scopes need per-client tokens first.
+- **Only you can change it.** No MCP tool writes `config.json` — the same
+  rule the trust list follows. A scope its subject could widen would be
+  decoration.
+- **An empty allowlist means nothing is readable, not everything.** That is
+  the state `setup`'s third answer leaves behind, and it is deliberate: the
+  alternative reading is the one that silently hands out more access than
+  you asked for. Every read tool then returns empty, which looks exactly
+  like a broken install, so `check` names that state and says how to leave
+  it.
+
+The dashboard is not subject to any of this. It is your own window onto
+your own messages, not an agent's.
+
+This limits *reading*. Sending is governed separately by
+[the send gate](#the-send-gate), which asks you to confirm each recipient
+whether or not their chat is readable.
+
 ## Comparison with verygoodplugins/whatsapp-mcp
 
 The current best-known alternative works, but is painful to adopt and has
@@ -265,6 +331,7 @@ no send safety:
 | Pairing | QR in a terminal you keep open yourself | Wizard-managed QR pairing; session supervised by the binary |
 | Send safety | None — model can send immediately | Draft-first send gate + rate limiter |
 | Prompt-injection defense | None | Untrusted-data banner on every WhatsApp-originated result |
+| Read scope | All chats, always | All chats, or an allowlist you choose at setup and edit later |
 | Diagnostics | None | `doctor` (CLI subcommand and MCP tool), sanitized output |
 | Distribution | Git clone only | GitHub Releases, install script, MCP Registry, MCPB bundle, npm wrapper |
 
@@ -345,7 +412,11 @@ number appears in this document for that reason.
   first (e.g. `ffmpeg -i in.mp3 -c:a libopus out.ogg`).
 - **No outbound calls.** Call history is readable; initiating a call is not
   supported.
-- **One paired number per install.** Multi-account isn't supported in v1.
+- **One paired number at a time.** Each number keeps its own messages,
+  trust list, readable chats and schedules, so switching between them is
+  clean and nothing carries over. But only one can be linked at once —
+  two accounts live simultaneously, each bound to a different MCP client,
+  would need two servers and is not supported yet.
 - **whatsmeow tracks WhatsApp protocol changes**, not the other way around.
   A WhatsApp-side change can break pairing or sending until whatsmeow (and
   in turn this project) catches up.
@@ -376,6 +447,27 @@ The data directory:
 | macOS | `~/Library/Application Support/whatsapp-connect-mcp` |
 | Windows | `%AppData%\whatsapp-connect-mcp` |
 
+Inside it, anything that belongs to a WhatsApp account lives under that
+account's own number, and anything that belongs to the machine sits at the
+top:
+
+```
+config.json              rate limits, outbox roots — shared
+outbox/                  files a send may attach — shared
+session.db               the current pairing
+accounts/<number>/
+  messages.db            that number's messages
+  media/                 that number's downloaded attachments
+  backups/               that number's snapshots
+  account.json           that number's trust list and readable chats
+  schedules.json         that number's pending scheduled sends
+```
+
+Pair a different number and it gets its own directory; pair the first one
+back and its history, trust list and settings are exactly as they were.
+An existing install is moved into this shape on the next run, by renaming
+files rather than rewriting them.
+
 ## Diagnostics
 
 ```sh
@@ -386,7 +478,9 @@ Runs the same checks the `doctor` MCP tool exposes: session pairing/connect
 state, event-flow liveness (a connected session that has received no
 WhatsApp events for over 30 minutes gets a warning — the state where the
 socket looks healthy but ingestion has silently stalled), message database
-integrity, injected MCP client configs, data
+integrity, injected MCP client configs, the chat scope (including the
+switched-on-but-empty state, where every read tool correctly returns
+nothing and an install looks broken), data
 directory permissions (POSIX), and the version check above. Every finding
 is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
@@ -419,9 +513,19 @@ same tab offers Unlink: it signs the server out on WhatsApp's servers
 The `logout` command does the same from the terminal — unlike `remove`,
 which only deletes the local session and never tells WhatsApp.
 
+The Clients tab lists every MCP client detected on this machine — whether
+it is installed, whether this server is added to it, and where its entry
+points — and adds or removes that entry with one click, so a config the
+doctor calls broken can be fixed without dropping to a terminal. The same
+tab holds **Readable chats**, which limits what connected agents may read
+(see [Which chats an agent may read](#which-chats-an-agent-may-read)).
+
 The Trust tab lists and edits the trusted-contact list — the same
 config.json the `trust` command manages, so a change there takes effect
-immediately in a running server. The Schedules tab lists pending scheduled
+immediately in a running server. Both it and Readable chats take a
+contact or group **name** or a **phone number**, not just a raw JID; when
+a name matches several people they are listed for you to pick from, and
+nothing is written until you do. The Schedules tab lists pending scheduled
 sends and lets you cancel one. The Drafts tab lists sends an agent has
 proposed and is waiting on; approving delivers the exact content shown
 (rate-limited as always), and discarding drops it. A draft can be
@@ -435,8 +539,10 @@ exactly like the `backup` command below.
 whatsapp-connect-mcp backup [--dest path]
 ```
 
-Writes a consistent snapshot of the message database (`messages.db`) to
-`<data-dir>/backups/messages-<timestamp>.db` (or a custom path via `--dest`).
+Writes a consistent snapshot of the paired account's message database to
+`<data-dir>/accounts/<number>/backups/messages-<timestamp>.db` (or a custom
+path via `--dest`). Each number is backed up separately, so a snapshot you
+hand to someone carries only that account.
 The backup is a standalone, fully-usable SQLite database — not a copy of
 sessions or settings, just messages. Unlike a phone backup, a `backup`
 snapshot is safe to take while `serve` is running; SQLite's WAL mode and
@@ -454,7 +560,9 @@ Task Scheduler on Windows) is the simplest insurance against losing them.
 whatsapp-connect-mcp setup [--full-history]  # pair (again) and configure MCP clients
 whatsapp-connect-mcp status                  # pairing state, row counts, injected clients
 whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entries
-whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
+whatsapp-connect-mcp trust [--session] [--add who|--remove who|--list]
+whatsapp-connect-mcp scope [--allow who|--deny who|--all|--list]
+                                             # limit which chats agents may read
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]
                                              # manage a background serve --http service (macOS/Linux/Windows)
@@ -522,7 +630,8 @@ release on every run, and warn with both versions named when they differ.
   you unlink it there yourself. Prompts for a typed `yes` before doing
   anything.
 - **`whatsapp-connect-mcp reset`** does everything `remove` does, plus
-  deletes stored messages, media, and settings — a full wipe back to a
+  deletes stored messages, media, and settings for **every** account this
+  install has paired, not just the current one — a full wipe back to a
   fresh install. Also prompts for a typed `yes`.
 - **`whatsapp-connect-mcp clients --remove`** uninjects this program's
   entry from any MCP client config it was added to, without touching the

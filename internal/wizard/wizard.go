@@ -60,6 +60,24 @@ type Deps struct {
 	// BinaryPath is the absolute path to this binary, written into every
 	// injected entry.
 	BinaryPath string
+	// OwnJID returns the paired account's own chat JID, used for the
+	// self-chat-only scope. Empty when it cannot be determined, which
+	// drops that option from the menu rather than offering a choice that
+	// would silently allow nothing.
+	OwnJID func() string
+	// SaveScope persists the chat-scope answer: mode is config.ScopeAll or
+	// config.ScopeAllowlist, chats is the allowlist (empty under
+	// ScopeAllowlist means nothing is readable until the user adds some in
+	// the dashboard). Called once, with the rest of the writes.
+	SaveScope func(mode string, chats []string) error
+}
+
+// scopeChoice is the user's answer to what connected agents may read.
+type scopeChoice struct {
+	mode  string
+	chats []string
+	// label is the one-line summary shown in the confirmation block.
+	label string
 }
 
 // defaultHTTPPort is the port the http transport prompt offers when the
@@ -121,8 +139,22 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, deps Deps) error {
 		return abortOr(err)
 	}
 
-	if !confirmTargets(ctx, r, out, targets, tr) {
+	scope, err := askScope(ctx, r, out, deps)
+	if err != nil {
+		return abortOr(err)
+	}
+
+	if !confirmTargets(ctx, r, out, targets, tr, scope) {
 		return ErrAborted
+	}
+
+	// The scope is written before the client entries: it decides what those
+	// clients may read, and a run that fails halfway should leave the
+	// narrower state, not connected clients with no scope applied.
+	if deps.SaveScope != nil {
+		if err := deps.SaveScope(scope.mode, scope.chats); err != nil {
+			return fmt.Errorf("save chat scope: %w", err)
+		}
 	}
 
 	return injectAll(out, deps, targets, tr)
@@ -165,6 +197,58 @@ func askTransport(ctx context.Context, r *bufio.Reader, out io.Writer) (transpor
 		}
 	}
 	return transport{http: true, port: port}, nil
+}
+
+// askScope asks what connected agents may read. The three answers are the
+// three that differ in kind: everything, one chat that is only ever the
+// user talking to themselves, or nothing yet with the choosing done later
+// in the dashboard. Empty keeps today's behaviour, so an existing user
+// pressing enter through setup ends up where they started.
+//
+// The self-chat option is offered only when the paired account's own JID
+// is known. Offering it otherwise would produce an empty allowlist wearing
+// a label that promised one chat.
+func askScope(ctx context.Context, r *bufio.Reader, out io.Writer, deps Deps) (scopeChoice, error) {
+	own := ""
+	if deps.OwnJID != nil {
+		own = deps.OwnJID()
+	}
+
+	_, _ = fmt.Fprintln(out, "\nWhat should connected agents be allowed to read?")
+	_, _ = fmt.Fprintln(out, "  1) Every chat (default)")
+	if own != "" {
+		_, _ = fmt.Fprintf(out, "  2) Only your own self-chat (%s)\n", own)
+	} else {
+		_, _ = fmt.Fprintln(out, "  2) Only your own self-chat (unavailable — own number not known yet)")
+	}
+	_, _ = fmt.Fprintln(out, "  3) Nothing yet — pick the chats yourself in the dashboard")
+	_, _ = fmt.Fprintln(out, "You can change this at any time from the dashboard's clients tab.")
+	_, _ = fmt.Fprint(out, "Choose [1/2/3, default 1]: ")
+
+	answer, err := readLine(ctx, r)
+	if err != nil {
+		return scopeChoice{}, err
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "", "1", "all":
+		return scopeChoice{mode: config.ScopeAll, label: "every chat"}, nil
+	case "2", "self":
+		if own == "" {
+			return scopeChoice{}, errors.New("self-chat only is unavailable: this install does not know its own number yet")
+		}
+		return scopeChoice{
+			mode:  config.ScopeAllowlist,
+			chats: []string{own},
+			label: "only your self-chat (" + own + ")",
+		}, nil
+	case "3", "none", "dashboard":
+		return scopeChoice{
+			mode:  config.ScopeAllowlist,
+			label: "nothing until you add chats in the dashboard",
+		}, nil
+	default:
+		return scopeChoice{}, fmt.Errorf("invalid choice %q: enter 1, 2 or 3", answer)
+	}
 }
 
 // runPairing prints the pairing prompt and drives Deps.PairQR, rendering
@@ -225,7 +309,7 @@ func resolveTargets(ctx context.Context, r *bufio.Reader, out io.Writer, clients
 
 // confirmTargets prints the summary and reads the final yes/no answer.
 // A read error (including context cancellation) counts as declined.
-func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets []Client, tr transport) bool {
+func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets []Client, tr transport, scope scopeChoice) bool {
 	_, _ = fmt.Fprintln(out, "\nWill configure:")
 	for _, c := range targets {
 		_, _ = fmt.Fprintf(out, "  - %s (%s)\n", c.Name, c.ConfigPath)
@@ -234,6 +318,9 @@ func confirmTargets(ctx context.Context, r *bufio.Reader, out io.Writer, targets
 		_, _ = fmt.Fprintf(out, "Transport: http — shared server at http://127.0.0.1:%d\n", tr.port)
 	} else {
 		_, _ = fmt.Fprintln(out, "Transport: stdio — each client starts its own server")
+	}
+	if scope.label != "" {
+		_, _ = fmt.Fprintf(out, "Agents may read: %s\n", scope.label)
 	}
 	_, _ = fmt.Fprint(out, "\nProceed? [y/N]: ")
 

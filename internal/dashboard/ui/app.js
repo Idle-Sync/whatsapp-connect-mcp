@@ -205,7 +205,7 @@ async function refreshDraftsCount() {
 
 /* ---------- tabs ---------- */
 
-const loaders = { chats: loadChats, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
+const loaders = { chats: loadChats, clients: loadClientsTab, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
 const tabs = document.querySelectorAll("nav button");
 for (const b of tabs) b.addEventListener("click", () => {
   for (const t of tabs) t.classList.toggle("active", t === b);
@@ -843,6 +843,233 @@ searchBox.addEventListener("keydown", (ev) => {
 });
 searchClear.addEventListener("click", clearSearch);
 
+/* ---------- clients ---------- */
+
+// The clients tab holds two related things: who may connect, and what
+// they may read. One loader keeps them in step.
+async function loadClientsTab() {
+  await loadClients();
+  await loadScope();
+}
+
+// clientState reduces a client row to the one badge worth showing: a
+// broken entry outranks a working one, and "not installed" is only worth
+// saying when there is no entry to talk about.
+function clientState(c) {
+  if (c.broken) return { label: "needs fixing", cls: "bad" };
+  if (c.connected) return { label: "connected", cls: "ok" };
+  if (c.installed) return { label: "not added", cls: "" };
+  return { label: "not installed", cls: "dim-badge" };
+}
+
+async function loadClients() {
+  const ul = document.getElementById("clients-list");
+  skeleton(ul, 4, "3.2rem");
+  let rows;
+  try { rows = await api("/api/clients"); } catch (e) { empty(ul, "Couldn't detect MCP clients."); return; }
+  ul.replaceChildren();
+  if (rows.length === 0) { empty(ul, "No known MCP clients on this machine."); return; }
+  for (const c of rows) {
+    const li = document.createElement("li");
+    li.className = "client";
+
+    const info = el("div", undefined, "client-info");
+    const head = el("div", undefined, "client-head");
+    head.appendChild(el("span", c.name, "client-name"));
+    const st = clientState(c);
+    head.appendChild(el("span", st.label, "badge-sm " + st.cls));
+    info.appendChild(head);
+    info.appendChild(el("div", c.config_path, "mono dim client-path"));
+    if (c.connected && c.target) {
+      info.appendChild(el("div", c.transport + " → " + c.target, "mono dim client-path"));
+    }
+    li.appendChild(info);
+
+    const act = el("button", c.connected ? "remove" : "add", c.connected ? "danger" : "primary");
+    // A client that is not installed can still be added: the config file
+    // is created for it, and picked up whenever the app first runs.
+    act.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+      try {
+        say("clients-msg", "");
+        if (c.connected) {
+          await api("/api/clients/" + encodeURIComponent(c.name), { method: "DELETE" });
+          say("clients-msg", "removed from " + c.name, "ok");
+        } else {
+          await api("/api/clients", { method: "POST", body: JSON.stringify({ name: c.name }) });
+          say("clients-msg", "added to " + c.name + " — restart it to pick this up", "ok");
+        }
+        loadClients();
+        refreshDoctor();
+      } catch (e) { say("clients-msg", errorMessage(e), "bad"); }
+    }));
+    li.appendChild(act);
+    ul.appendChild(li);
+  }
+  stagger(ul);
+}
+
+document.getElementById("clients-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  say("clients-msg", "");
+  await loadClients();
+  await loadScope();
+}));
+
+/* ---------- readable-chat scope ---------- */
+
+// An allowlist that is switched on and empty is a real state, not a bug:
+// it is where "I'll pick my chats later" lands. It reads as a broken
+// server unless it says so, so it gets the loudest of the three banners.
+function scopeBanner(mode, count) {
+  if (mode !== "allowlist") return { text: "Every chat is readable by connected agents.", kind: "" };
+  if (count === 0) return { text: "No chats are readable — agents can read nothing until you add one below.", kind: "bad" };
+  return { text: "Only the " + count + (count === 1 ? " chat" : " chats") + " listed below are readable.", kind: "ok" };
+}
+
+async function loadScope() {
+  const ul = document.getElementById("scope-list");
+  skeleton(ul, 2, "2.4rem");
+  let data;
+  try { data = await api("/api/scope"); } catch (e) { empty(ul, "Couldn't load the readable-chat list."); return; }
+
+  const chats = data.chats || [];
+  const banner = scopeBanner(data.mode, chats.length);
+  say("scope-state", banner.text, banner.kind);
+
+  ul.replaceChildren();
+  if (data.mode !== "allowlist") {
+    empty(ul, "No limit set. Add a chat to restrict agents to it.");
+  } else if (chats.length === 0) {
+    empty(ul, "Nothing allowed yet.");
+  } else {
+    for (const c of chats) {
+      const li = document.createElement("li");
+      const info = el("div", undefined, "client-info");
+      info.appendChild(el("span", c.name || c.jid, "client-name"));
+      const sub = el("div", c.jid, "mono dim client-path");
+      info.appendChild(sub);
+      if (!c.known) info.appendChild(el("div", "no chat with this JID in the store yet", "dim client-path"));
+      li.appendChild(info);
+
+      const del = el("button", "remove", "danger");
+      del.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+        try {
+          say("scope-msg", "");
+          await api("/api/scope/" + encodeURIComponent(c.jid), { method: "DELETE" });
+          await loadScope();
+          refreshDoctor();
+        } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+      }));
+      li.appendChild(del);
+      ul.appendChild(li);
+    }
+  }
+  stagger(ul);
+
+  // Turning the limit off is a widening, so it is a deliberate button
+  // rather than a side effect of removing the last chat.
+  if (data.mode === "allowlist") {
+    const off = el("button", "Allow every chat again");
+    off.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+      try {
+        say("scope-msg", "");
+        await api("/api/scope", { method: "POST", body: JSON.stringify({ mode: "all" }) });
+        await loadScope();
+        refreshDoctor();
+      } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+    }));
+    const wrap = el("div", undefined, "scope-off");
+    wrap.appendChild(off);
+    ul.appendChild(wrap);
+  }
+
+  fillChatSuggestions("scope-suggest");
+}
+
+// fillChatSuggestions offers the chats already in the store as completions,
+// by name — the box resolves a name server-side, so the name is what a
+// person should be typing. Best-effort: the box still takes a number.
+async function fillChatSuggestions(listID) {
+  try {
+    const list = document.getElementById(listID);
+    list.replaceChildren();
+    for (const c of await api("/api/chats?limit=100")) {
+      if (!c.name) continue;
+      const o = document.createElement("option");
+      o.value = c.name;
+      list.appendChild(o);
+    }
+  } catch (e) { /* suggestions are a convenience, not a requirement */ }
+}
+
+// candidatesOf pulls the chooser list out of a 409. Anything else — a
+// real failure, a 404 for a name nothing matches — has no candidates and
+// falls through to the ordinary error path.
+function candidatesOf(err) {
+  return err && err.body && Array.isArray(err.body.candidates) ? err.body.candidates : null;
+}
+
+function describeCandidate(c) {
+  if (c.is_group) return (c.name || c.jid) + " (group)";
+  if (c.phone) return (c.name || c.jid) + " (+" + c.phone + ")";
+  return c.name || c.jid;
+}
+
+// askWhichContact renders the matches as buttons under the input and
+// resolves to the JID the person picks, or null if they dismiss it. The
+// page never guesses: picking the wrong one here exposes the wrong chat.
+function askWhichContact(mountID, msgID, candidates) {
+  return new Promise((resolve) => {
+    const mount = document.getElementById(mountID);
+    mount.replaceChildren();
+    mount.hidden = false;
+    mount.appendChild(el("div", "Several contacts match. Which one?", "dim"));
+    for (const c of candidates) {
+      const b = el("button", describeCandidate(c));
+      b.addEventListener("click", () => { mount.hidden = true; mount.replaceChildren(); resolve(c.jid); });
+      mount.appendChild(b);
+    }
+    const cancel = el("button", "none of these", "danger");
+    cancel.addEventListener("click", () => {
+      mount.hidden = true;
+      mount.replaceChildren();
+      say(msgID, "Nothing added — type the phone number instead.", "");
+      resolve(null);
+    });
+    mount.appendChild(cancel);
+  });
+}
+
+// addScope posts one entry, and on an ambiguous name asks which contact
+// was meant and posts again with the chosen JID.
+async function addScope(value) {
+  try {
+    await api("/api/scope", { method: "POST", body: JSON.stringify({ jid: value }) });
+    return true;
+  } catch (e) {
+    const candidates = candidatesOf(e);
+    if (!candidates) { say("scope-msg", errorMessage(e), "bad"); return false; }
+    const jid = await askWhichContact("scope-choice", "scope-msg", candidates);
+    if (!jid) return false;
+    try {
+      await api("/api/scope", { method: "POST", body: JSON.stringify({ jid }) });
+      return true;
+    } catch (e2) { say("scope-msg", errorMessage(e2), "bad"); return false; }
+  }
+}
+
+document.getElementById("scope-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const box = document.getElementById("scope-jid");
+  const value = box.value.trim();
+  if (!value) return;
+  say("scope-msg", "");
+  if (await addScope(value)) {
+    box.value = "";
+    say("scope-msg", "allowed: " + value, "ok");
+    await loadScope();
+    refreshDoctor();
+  }
+}));
+
 /* ---------- trust ---------- */
 
 async function loadTrust() {
@@ -867,18 +1094,35 @@ async function loadTrust() {
     ul.appendChild(li);
   }
   stagger(ul);
+  fillChatSuggestions("trust-suggest");
+}
+
+async function addTrust(value) {
+  try {
+    await api("/api/trust", { method: "POST", body: JSON.stringify({ jid: value }) });
+    return true;
+  } catch (e) {
+    const candidates = candidatesOf(e);
+    if (!candidates) { say("trust-msg", errorMessage(e), "bad"); return false; }
+    const jid = await askWhichContact("trust-choice", "trust-msg", candidates);
+    if (!jid) return false;
+    try {
+      await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
+      return true;
+    } catch (e2) { say("trust-msg", errorMessage(e2), "bad"); return false; }
+  }
 }
 
 document.getElementById("trust-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  const jid = document.getElementById("trust-jid").value.trim();
-  if (!jid) return;
-  try {
-    say("trust-msg", "");
-    await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
-    document.getElementById("trust-jid").value = "";
-    say("trust-msg", "trusted: " + jid, "ok");
+  const box = document.getElementById("trust-jid");
+  const value = box.value.trim();
+  if (!value) return;
+  say("trust-msg", "");
+  if (await addTrust(value)) {
+    box.value = "";
+    say("trust-msg", "trusted: " + value, "ok");
     loadTrust();
-  } catch (e) { say("trust-msg", errorMessage(e), "bad"); }
+  }
 }));
 
 /* ---------- schedules ---------- */

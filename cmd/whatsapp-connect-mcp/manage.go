@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/accounts"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/bridge"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
@@ -38,7 +39,12 @@ func runCheck(args []string) int {
 		return 1
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "status: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "check: %v\n", err)
 		return 1
@@ -69,6 +75,7 @@ func runCheck(args []string) int {
 
 	env := doctor.Env{
 		DataDir:        dataDir,
+		AccountDir:     acct.Dir,
 		BinaryPath:     binaryPath,
 		Home:           home,
 		Store:          st,
@@ -106,7 +113,12 @@ func runStatus(args []string) int {
 		return 1
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "status: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "status: %v\n", err)
 		return 1
@@ -205,8 +217,8 @@ func runClients(args []string) int {
 // make one, the same property the persistent list has.
 func runTrust(args []string) int {
 	fs := flag.NewFlagSet("trust", flag.ContinueOnError)
-	add := fs.String("add", "", "add a JID to the trusted list")
-	remove := fs.String("remove", "", "remove a JID from the trusted list")
+	add := fs.String("add", "", "trust a contact or group — a name, phone number, or JID")
+	remove := fs.String("remove", "", "untrust a contact or group — a name, phone number, or JID")
 	session := fs.Bool("session", false, "operate on session-scoped grants: honored by the running serve immediately, cleared when serve restarts")
 	fs.Bool("list", false, "list trusted JIDs (default with no flags)")
 	if err := fs.Parse(args); err != nil {
@@ -218,19 +230,34 @@ func runTrust(args []string) int {
 		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
 		return 1
 	}
+	// Trust belongs to the paired account: a contact trusted on one number
+	// must not auto-send from another.
+	acctCfg, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
+		return 1
+	}
 
 	if *session {
 		switch {
 		case *add != "":
-			return sessionTrustAdd(dataDir, *add)
+			jid, ok := resolveTarget("trust", *add, os.Stdin, os.Stdout)
+			if !ok {
+				return 1
+			}
+			return sessionTrustAdd(acctCfg.Dir, jid)
 		case *remove != "":
-			return sessionTrustRemove(dataDir, *remove)
+			jid, ok := resolveTarget("trust", *remove, os.Stdin, os.Stdout)
+			if !ok {
+				return 1
+			}
+			return sessionTrustRemove(acctCfg.Dir, jid)
 		default:
-			return sessionTrustList(dataDir)
+			return sessionTrustList(acctCfg.Dir)
 		}
 	}
 
-	cfg, err := config.Load(dataDir)
+	cfg, err := config.LoadFor(dataDir, acctCfg.Dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "trust: %v\n", err)
 		return 1
@@ -238,9 +265,17 @@ func runTrust(args []string) int {
 
 	switch {
 	case *add != "":
-		return trustAdd(dataDir, cfg, *add)
+		jid, ok := resolveTarget("trust", *add, os.Stdin, os.Stdout)
+		if !ok {
+			return 1
+		}
+		return trustAdd(dataDir, acctCfg.Dir, cfg, jid)
 	case *remove != "":
-		return trustRemove(dataDir, cfg, *remove)
+		jid, ok := resolveTarget("trust", *remove, os.Stdin, os.Stdout)
+		if !ok {
+			return 1
+		}
+		return trustRemove(dataDir, acctCfg.Dir, cfg, jid)
 	default:
 		return trustList(cfg)
 	}
@@ -282,11 +317,11 @@ func sessionTrustList(dataDir string) int {
 	return 0
 }
 
-func trustAdd(dataDir string, cfg config.Config, jid string) int {
+func trustAdd(dataDir, accountDir string, cfg config.Config, jid string) int {
 	if !cfg.IsTrusted(jid) {
 		cfg.TrustedJIDs = append(cfg.TrustedJIDs, jid)
 		sort.Strings(cfg.TrustedJIDs)
-		if err := config.Save(dataDir, cfg); err != nil {
+		if err := config.SaveFor(dataDir, accountDir, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "trust: %v\n", err)
 			return 1
 		}
@@ -296,7 +331,7 @@ func trustAdd(dataDir string, cfg config.Config, jid string) int {
 	return 0
 }
 
-func trustRemove(dataDir string, cfg config.Config, jid string) int {
+func trustRemove(dataDir, accountDir string, cfg config.Config, jid string) int {
 	idx := -1
 	for i, t := range cfg.TrustedJIDs {
 		if t == jid {
@@ -306,7 +341,7 @@ func trustRemove(dataDir string, cfg config.Config, jid string) int {
 	}
 	if idx >= 0 {
 		cfg.TrustedJIDs = append(cfg.TrustedJIDs[:idx], cfg.TrustedJIDs[idx+1:]...)
-		if err := config.Save(dataDir, cfg); err != nil {
+		if err := config.SaveFor(dataDir, accountDir, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "trust: %v\n", err)
 			return 1
 		}
@@ -379,8 +414,10 @@ func runReset(args []string) int {
 		return 1
 	}
 
-	fmt.Println("This deletes the local WhatsApp session, all stored messages, downloaded")
-	fmt.Println("media, and settings (trust list, rate limits). Client configuration")
+	fmt.Println("This deletes the local WhatsApp session and every account's stored")
+	fmt.Println("messages, downloaded media, and settings (trust list, readable chats,")
+	fmt.Println("rate limits) — including accounts other than the one paired now.")
+	fmt.Println("Client configuration")
 	fmt.Println("entries are left as-is; run \"clients --remove\" separately for those.")
 	fmt.Print(`Type "yes" to continue: `)
 	if !readConfirmYes(os.Stdin) {
@@ -398,6 +435,13 @@ func runReset(args []string) int {
 	}
 	if err := os.RemoveAll(filepath.Join(dataDir, "media")); err != nil {
 		fmt.Fprintf(os.Stderr, "reset: delete media directory: %v\n", err)
+		return 1
+	}
+	// Every account's directory, not just the paired one: reset means back
+	// to a fresh install, and leaving another number's messages behind
+	// would be a surprising thing to find after asking for a full wipe.
+	if err := os.RemoveAll(accounts.Root(dataDir)); err != nil {
+		fmt.Fprintf(os.Stderr, "reset: delete account directories: %v\n", err)
 		return 1
 	}
 	if err := os.Remove(filepath.Join(dataDir, "config.json")); err != nil && !errors.Is(err, os.ErrNotExist) {

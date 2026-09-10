@@ -566,6 +566,45 @@ body.lightbox-open { overflow: hidden; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes corner { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+/* ---------- clients ---------- */
+
+.client-rows li { align-items: flex-start; padding: 0.6rem 0.6rem 0.6rem 0.8rem; }
+.client-rows li > button { flex: none; }
+.client-info { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.client-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.client-name { font-family: var(--sans); font-size: 0.9rem; }
+.client-path { font-size: 0.75rem; overflow-wrap: anywhere; }
+
+.badge-sm {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.badge-sm.ok { color: var(--ok); border-color: rgba(0, 168, 132, 0.45); background: var(--ok-soft); }
+.badge-sm.bad { color: var(--bad); border-color: rgba(241, 92, 109, 0.45); background: var(--bad-soft); }
+.badge-sm.dim-badge { opacity: 0.65; }
+.scope-off { display: flex; justify-content: flex-end; margin-top: 0.2rem; }
+
+/* The disambiguation chooser: shown only when a typed name matched more
+   than one contact, and dismissed as soon as one is picked. */
+.chooser {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.8rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  animation: rise 0.25s var(--ease) both;
+}
+.chooser .dim { width: 100%; margin-bottom: 0.15rem; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

@@ -56,7 +56,7 @@ func (s *Store) mentionName(digits string) string {
 	lid := digits + "@lid"
 
 	var pn string
-	_ = s.db.QueryRow(`SELECT pn FROM lid_map WHERE lid = ?`, lid).Scan(&pn)
+	_ = s.conn().QueryRow(`SELECT pn FROM lid_map WHERE lid = ?`, lid).Scan(&pn)
 
 	candidates := []string{lid}
 	if pn != "" {
@@ -66,7 +66,7 @@ func (s *Store) mentionName(digits string) string {
 
 	for _, jid := range candidates {
 		var full, push, business string
-		if err := s.db.QueryRow(
+		if err := s.conn().QueryRow(
 			`SELECT full_name, push_name, business_name FROM contacts WHERE jid = ?`, jid,
 		).Scan(&full, &push, &business); err != nil {
 			continue

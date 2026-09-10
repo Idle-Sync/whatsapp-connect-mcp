@@ -43,7 +43,7 @@ func seedFixture(t *testing.T, s *Store) fixture {
 
 	mustExec := func(query string, args ...any) {
 		t.Helper()
-		if _, err := s.db.Exec(query, args...); err != nil {
+		if _, err := s.conn().Exec(query, args...); err != nil {
 			t.Fatalf("seed exec %q: %v", query, err)
 		}
 	}

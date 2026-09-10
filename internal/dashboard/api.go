@@ -308,7 +308,7 @@ func (h *Handler) handleMedia(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "no media for that message"})
 		return
 	}
-	dir, err := medianame.ChatDir(h.deps.DataDir, chat)
+	dir, err := medianame.ChatDir(h.accountFiles(), chat)
 	if err != nil {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid chat"})
 		return
@@ -370,7 +370,7 @@ func (h *Handler) handleMedia(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleTrust(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		cfg, err := config.Load(h.deps.DataDir)
+		cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 		if err != nil {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 			return
@@ -394,8 +394,11 @@ func (h *Handler) handleTrustAdd(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid is required"})
 		return
 	}
-	jid := strings.TrimSpace(in.JID)
-	cfg, err := config.Load(h.deps.DataDir)
+	jid, ok := h.resolveOrOffer(w, strings.TrimSpace(in.JID))
+	if !ok {
+		return
+	}
+	cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 		return
@@ -403,7 +406,7 @@ func (h *Handler) handleTrustAdd(w http.ResponseWriter, r *http.Request) {
 	if !cfg.IsTrusted(jid) {
 		cfg.TrustedJIDs = append(cfg.TrustedJIDs, jid)
 		sort.Strings(cfg.TrustedJIDs)
-		if err := config.Save(h.deps.DataDir, cfg); err != nil {
+		if err := config.SaveFor(h.deps.DataDir, h.accountDir(), cfg); err != nil {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config write failed"})
 			return
 		}
@@ -417,7 +420,7 @@ func (h *Handler) handleTrustRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jid := strings.TrimPrefix(r.URL.Path, "/api/trust/")
-	cfg, err := config.Load(h.deps.DataDir)
+	cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 		return
@@ -429,7 +432,7 @@ func (h *Handler) handleTrustRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.TrustedJIDs = kept
-	if err := config.Save(h.deps.DataDir, cfg); err != nil {
+	if err := config.SaveFor(h.deps.DataDir, h.accountDir(), cfg); err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config write failed"})
 		return
 	}
@@ -519,7 +522,7 @@ func (h *Handler) handleBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	path := store.DefaultBackupPath(h.deps.DataDir, time.Now())
+	path := store.DefaultBackupPath(h.accountFiles(), time.Now())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create backups directory"})
 		return

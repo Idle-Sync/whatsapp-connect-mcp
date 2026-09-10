@@ -302,6 +302,18 @@ func (b *Bridge) NeedsPairing() bool {
 	return b.wa().Store.ID == nil
 }
 
+// OwnJID returns the paired account's own chat JID — the phone JID with
+// the device suffix stripped, which is both what a self-chat is addressed
+// by and what stays stable across re-pairs of the same number. Empty when
+// this install is not paired.
+func (b *Bridge) OwnJID() string {
+	own := b.wa().Store.ID
+	if own == nil {
+		return ""
+	}
+	return own.ToNonAD().String()
+}
+
 // LoggedIn reports whether the client is currently connected and
 // authenticated with WhatsApp.
 func (b *Bridge) LoggedIn() bool {

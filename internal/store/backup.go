@@ -21,7 +21,7 @@ func (s *Store) BackupTo(path string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("backup destination could not be checked")
 	}
-	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
+	if _, err := s.conn().Exec(`VACUUM INTO ?`, path); err != nil {
 		return errors.New("back up database: write failed — check free disk space and that the destination directory exists")
 	}
 	return nil

@@ -249,7 +249,7 @@ func TestTrustReaderSeesAdditionsLive(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	r := NewTrustReader(dir)
+	r := NewTrustReader(dir, "")
 	const jid = "111@s.whatsapp.net"
 	if r.Trusted(jid) {
 		t.Fatal("Trusted() = true before the JID was added")
@@ -270,7 +270,7 @@ func TestTrustReaderSeesRemovalsLive(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	r := NewTrustReader(dir)
+	r := NewTrustReader(dir, "")
 	if !r.Trusted(jid) {
 		t.Fatal("Trusted() = false for a listed JID")
 	}
@@ -292,7 +292,7 @@ func TestTrustReaderKeepsLastGoodListOnBrokenFile(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	r := NewTrustReader(dir)
+	r := NewTrustReader(dir, "")
 	if !r.Trusted(jid) {
 		t.Fatal("Trusted() = false for a listed JID")
 	}
@@ -309,8 +309,176 @@ func TestTrustReaderKeepsLastGoodListOnBrokenFile(t *testing.T) {
 }
 
 func TestTrustReaderNoFileMeansNoTrust(t *testing.T) {
-	r := NewTrustReader(t.TempDir())
+	r := NewTrustReader(t.TempDir(), "")
 	if r.Trusted("111@s.whatsapp.net") {
 		t.Fatal("Trusted() = true with no config file at all")
+	}
+}
+
+// The scope mode is what separates "no limit" from "nothing allowed yet",
+// so an empty list has to mean opposite things under the two modes.
+func TestChatScopeSemantics(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantActive bool
+		readable   map[string]bool
+	}{
+		{
+			name:       "zero value reads everything",
+			cfg:        Config{},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": true},
+		},
+		{
+			name:       "explicit all ignores a leftover list",
+			cfg:        Config{ChatScope: ScopeAll, ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": true},
+		},
+		{
+			name:       "allowlist permits only what it lists",
+			cfg:        Config{ChatScope: ScopeAllowlist, ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "allowlist with an empty list permits nothing",
+			cfg:        Config{ChatScope: ScopeAllowlist},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": false, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "a hand-added list with no mode is read as a restriction",
+			cfg:        Config{ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "an unrecognised mode falls back to reading everything",
+			cfg:        Config{ChatScope: "banana"},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ScopeActive(); got != tt.wantActive {
+				t.Errorf("ScopeActive() = %v, want %v", got, tt.wantActive)
+			}
+			for jid, want := range tt.readable {
+				if got := tt.cfg.IsReadable(jid); got != want {
+					t.Errorf("IsReadable(%q) = %v, want %v", jid, got, want)
+				}
+			}
+		})
+	}
+}
+
+// ScopeReader answers from the file as it stands now, so an edit lands in
+// a running serve without a restart.
+func TestScopeReaderTracksTheFile(t *testing.T) {
+	dir := t.TempDir()
+	r := NewScopeReader(dir, "")
+
+	if !r.Readable("a@s.whatsapp.net") || r.Active() {
+		t.Fatal("a fresh data dir should read every chat")
+	}
+
+	if err := Save(dir, Config{ChatScope: ScopeAllowlist, ReadableChats: []string{"a@s.whatsapp.net"}}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !r.Active() {
+		t.Error("Active() = false after the file turned the scope on")
+	}
+	if !r.Readable("a@s.whatsapp.net") || r.Readable("b@s.whatsapp.net") {
+		t.Error("Readable did not follow the file")
+	}
+	if got := r.List(); len(got) != 1 || got[0] != "a@s.whatsapp.net" {
+		t.Errorf("List() = %v", got)
+	}
+}
+
+// A trust grant and a readable-chat list belong to one WhatsApp account;
+// the rate limits and outbox roots belong to this machine. Saving must put
+// each in the file that survives the right events.
+func TestConfigSplitsAccountFromMachine(t *testing.T) {
+	dir, acctA, acctB := t.TempDir(), t.TempDir(), t.TempDir()
+
+	err := SaveFor(dir, acctA, Config{
+		TrustedJIDs:    []string{"a@s.whatsapp.net"},
+		ChatScope:      ScopeAllowlist,
+		ReadableChats:  []string{"a@s.whatsapp.net"},
+		RateBurst:      7,
+		RatePerSeconds: 30,
+		MediaRoots:     []string{"/tmp/roots"},
+	})
+	if err != nil {
+		t.Fatalf("SaveFor: %v", err)
+	}
+
+	// Account A sees its own trust and scope.
+	got, err := LoadFor(dir, acctA)
+	if err != nil {
+		t.Fatalf("LoadFor: %v", err)
+	}
+	if len(got.TrustedJIDs) != 1 || !got.ScopeActive() {
+		t.Errorf("account A lost its own settings: %+v", got)
+	}
+	if got.RateBurst != 7 || got.MediaRoots[0] != "/tmp/roots" {
+		t.Errorf("machine settings did not survive: %+v", got)
+	}
+
+	// Account B, on the same machine, starts clean — nobody it trusts, no
+	// chat list — but shares the machine's limits and roots.
+	got, err = LoadFor(dir, acctB)
+	if err != nil {
+		t.Fatalf("LoadFor: %v", err)
+	}
+	if len(got.TrustedJIDs) != 0 {
+		t.Errorf("account B inherited account A's trust list: %v", got.TrustedJIDs)
+	}
+	if got.ScopeActive() || len(got.ReadableChats) != 0 {
+		t.Errorf("account B inherited account A's readable chats: %+v", got)
+	}
+	if got.RateBurst != 7 || got.MediaRoots[0] != "/tmp/roots" {
+		t.Errorf("account B did not share the machine settings: %+v", got)
+	}
+}
+
+// Between upgrading and the next serve there is no account file yet. The
+// values still in config.json are this account's — it is the only one
+// there has ever been — so they must be read, not blanked.
+func TestConfigReadsLegacyValuesBeforeTheSplit(t *testing.T) {
+	dir, acct := t.TempDir(), t.TempDir()
+	if err := Save(dir, Config{TrustedJIDs: []string{"legacy@s.whatsapp.net"}, ChatScope: ScopeAllowlist}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := LoadFor(dir, acct)
+	if err != nil {
+		t.Fatalf("LoadFor: %v", err)
+	}
+	if len(got.TrustedJIDs) != 1 || got.TrustedJIDs[0] != "legacy@s.whatsapp.net" {
+		t.Fatalf("legacy trust list was dropped: %+v", got)
+	}
+
+	// Splitting moves them across, after which the account file is the one
+	// that counts.
+	split, err := SplitLegacy(dir, acct)
+	if err != nil || !split {
+		t.Fatalf("SplitLegacy = %v, %v", split, err)
+	}
+	got, err = LoadFor(dir, acct)
+	if err != nil {
+		t.Fatalf("LoadFor: %v", err)
+	}
+	if len(got.TrustedJIDs) != 1 {
+		t.Errorf("trust list lost in the split: %+v", got)
+	}
+
+	// A second run has nothing left to move.
+	if split, err := SplitLegacy(dir, acct); err != nil || split {
+		t.Errorf("second SplitLegacy = %v, %v; want no-op", split, err)
 	}
 }

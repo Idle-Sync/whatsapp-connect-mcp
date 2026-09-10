@@ -25,6 +25,7 @@
     <button data-tab="status" class="active">status</button>
     <button data-tab="pair">pair</button>
     <button data-tab="chats">chats</button>
+    <button data-tab="clients">clients</button>
     <button data-tab="trust">trust</button>
     <button data-tab="schedules">schedules</button>
     <button data-tab="drafts">drafts<span id="drafts-count" class="count" hidden></span></button>
@@ -85,15 +86,45 @@
       </div>
     </section>
 
+    <section id="tab-clients" hidden>
+      <div class="pane-head">
+        <h2>MCP clients</h2>
+        <button id="clients-refresh" class="refresh" title="Re-scan for MCP clients">&#8635;</button>
+      </div>
+      <p class="dim">Apps on this machine that can talk to this server. Adding one
+        writes a <span class="mono">whatsapp</span> entry into that app's MCP config —
+        restart the app afterwards for it to pick the entry up.</p>
+      <p id="clients-msg" class="chip" hidden></p>
+      <ul id="clients-list" class="rows client-rows"></ul>
+
+      <h2>Readable chats</h2>
+      <p class="dim">Limit what any connected agent can read. With nothing listed
+        here every chat is readable. Add a chat and the list becomes an allowlist:
+        everything outside it is invisible to an agent — messages, search results,
+        contacts and calls alike. This page and the CLI are the only places it can
+        be changed; no agent can widen its own scope.</p>
+      <p id="scope-state" class="chip" hidden></p>
+      <p id="scope-msg" class="chip" hidden></p>
+      <div class="searchbar">
+        <input id="scope-jid" placeholder="Name, phone number, or JID" list="scope-suggest">
+        <datalist id="scope-suggest"></datalist>
+        <button id="scope-add" class="primary">Allow</button>
+      </div>
+      <div id="scope-choice" class="chooser" hidden></div>
+      <ul id="scope-list" class="rows"></ul>
+    </section>
+
     <section id="tab-trust" hidden>
       <h2>Trusted contacts</h2>
       <p class="dim">Trusted contacts auto-send without a draft preview. Add only
         people you'd let an agent message directly.</p>
       <p id="trust-msg" class="chip" hidden></p>
       <div class="searchbar">
-        <input id="trust-jid" placeholder="15551234567@s.whatsapp.net" class="mono">
+        <input id="trust-jid" placeholder="Name, phone number, or JID" list="trust-suggest">
+        <datalist id="trust-suggest"></datalist>
         <button id="trust-add" class="primary">Trust</button>
       </div>
+      <div id="trust-choice" class="chooser" hidden></div>
       <ul id="trust-list" class="rows"></ul>
     </section>
 

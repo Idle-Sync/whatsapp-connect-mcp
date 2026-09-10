@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 )
 
 // fakeDetect returns three clients, all installed (so "all" behaves the
@@ -53,28 +55,28 @@ func TestRunCommitAtEnd(t *testing.T) {
 	}{
 		{
 			name:       "confirm injects only the selected clients",
-			input:      "1,3\n\ny\n",
+			input:      "1,3\n\n\ny\n",
 			wantInject: []string{"/cfg/alpha.json", "/cfg/gamma.json"},
 		},
 		{
 			name:       "yes spelled out also confirms",
-			input:      "2\n\nyes\n",
+			input:      "2\n\n\nyes\n",
 			wantInject: []string{"/cfg/beta.json"},
 		},
 		{
 			name:       "all selects every detected client, never the custom entry",
-			input:      "all\n\ny\n",
+			input:      "all\n\n\ny\n",
 			wantInject: []string{"/cfg/alpha.json", "/cfg/beta.json", "/cfg/gamma.json"},
 		},
 		{
 			name:       "declining the confirm injects nothing",
-			input:      "1\n\nn\n",
+			input:      "1\n\n\nn\n",
 			wantErr:    ErrAborted,
 			wantInject: nil,
 		},
 		{
 			name:       "empty confirm answer is a decline",
-			input:      "1\n\n",
+			input:      "1\n\n\n",
 			wantErr:    ErrAborted,
 			wantInject: nil,
 		},
@@ -92,7 +94,7 @@ func TestRunCommitAtEnd(t *testing.T) {
 		},
 		{
 			name:       "custom path entry prompts for a path and injects it",
-			input:      "4\n/custom/config.json\n\ny\n",
+			input:      "4\n/custom/config.json\n\n\ny\n",
 			wantInject: []string{"/custom/config.json"},
 		},
 		{
@@ -149,7 +151,7 @@ func TestRunAllSelectionExcludesNotInstalledClients(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("all\n\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("all\n\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -173,7 +175,7 @@ func TestRunExplicitSelectionCanStillPickANotInstalledClient(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("2\n\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("2\n\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -196,7 +198,7 @@ func TestRunPairingSuccessThenInjects(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("1\n\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("1\n\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -265,7 +267,7 @@ func TestRunCtxCancelledBeforeStartAbortsImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := Run(ctx, strings.NewReader("1\n\ny\n"), &bytes.Buffer{}, deps)
+	err := Run(ctx, strings.NewReader("1\n\n\ny\n"), &bytes.Buffer{}, deps)
 	if !errors.Is(err, ErrAborted) {
 		t.Fatalf("Run() error = %v, want ErrAborted", err)
 	}
@@ -356,7 +358,7 @@ func TestRunHTTPTransportDefaultPort(t *testing.T) {
 
 	var out bytes.Buffer
 	// select Alpha, transport 2 (http), empty port (default), confirm.
-	err := Run(context.Background(), strings.NewReader("1\n2\n\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("1\n2\n\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -375,7 +377,7 @@ func TestRunHTTPTransportExplicitPort(t *testing.T) {
 	deps := httpDeps(t, &injected, &ports)
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("1,2\n2\n9137\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("1,2\n2\n9137\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -426,11 +428,126 @@ func TestRunTransportDefaultsToStdio(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := Run(context.Background(), strings.NewReader("1\n\ny\n"), &out, deps)
+	err := Run(context.Background(), strings.NewReader("1\n\n\ny\n"), &out, deps)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !slices.Equal(injected, []string{"/cfg/alpha.json"}) {
 		t.Fatalf("injected = %v, want alpha via stdio Inject", injected)
+	}
+}
+
+// savedScope captures what SaveScope was handed.
+type savedScope struct {
+	called bool
+	mode   string
+	chats  []string
+}
+
+// The three setup answers differ in kind, and each has to land as a
+// different config: everything, one self-chat, or an allowlist that is on
+// and empty because the user will pick chats later.
+func TestRunScopeChoices(t *testing.T) {
+	const ownJID = "15551234567@s.whatsapp.net"
+	tests := []struct {
+		name      string
+		answer    string
+		wantMode  string
+		wantChats []string
+		wantOut   string
+	}{
+		{
+			name:     "empty keeps every chat readable",
+			answer:   "",
+			wantMode: config.ScopeAll,
+			wantOut:  "every chat",
+		},
+		{
+			name:     "1 keeps every chat readable",
+			answer:   "1",
+			wantMode: config.ScopeAll,
+			wantOut:  "every chat",
+		},
+		{
+			name:      "2 allows only the self-chat",
+			answer:    "2",
+			wantMode:  config.ScopeAllowlist,
+			wantChats: []string{ownJID},
+			wantOut:   "only your self-chat",
+		},
+		{
+			name:     "3 allows nothing until the dashboard says so",
+			answer:   "3",
+			wantMode: config.ScopeAllowlist,
+			wantOut:  "nothing until you add chats",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var injected []string
+			var got savedScope
+			deps := baseDeps(t, &injected)
+			deps.OwnJID = func() string { return ownJID }
+			deps.SaveScope = func(mode string, chats []string) error {
+				got = savedScope{called: true, mode: mode, chats: chats}
+				return nil
+			}
+
+			var out bytes.Buffer
+			input := "1\n\n" + tt.answer + "\ny\n"
+			if err := Run(context.Background(), strings.NewReader(input), &out, deps); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			if !got.called {
+				t.Fatal("SaveScope was never called")
+			}
+			if got.mode != tt.wantMode {
+				t.Errorf("mode = %q, want %q", got.mode, tt.wantMode)
+			}
+			if !slices.Equal(got.chats, tt.wantChats) {
+				t.Errorf("chats = %v, want %v", got.chats, tt.wantChats)
+			}
+			if !strings.Contains(out.String(), tt.wantOut) {
+				t.Errorf("confirmation did not mention %q:\n%s", tt.wantOut, out.String())
+			}
+		})
+	}
+}
+
+// Without a known own JID the self-chat answer is refused rather than
+// silently saving an allowlist that permits nothing under a label that
+// promised one chat.
+func TestRunScopeSelfChatNeedsOwnJID(t *testing.T) {
+	var injected []string
+	var saved bool
+	deps := baseDeps(t, &injected)
+	deps.OwnJID = func() string { return "" }
+	deps.SaveScope = func(string, []string) error { saved = true; return nil }
+
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("1\n\n2\ny\n"), &out, deps)
+	if err == nil || !strings.Contains(err.Error(), "own number") {
+		t.Fatalf("Run() error = %v, want an own-number complaint", err)
+	}
+	if saved || len(injected) != 0 {
+		t.Error("a refused scope answer must not write anything")
+	}
+}
+
+// An unrecognised answer is a category error, not a silent default to the
+// widest setting.
+func TestRunScopeRejectsGarbage(t *testing.T) {
+	var injected []string
+	deps := baseDeps(t, &injected)
+	deps.SaveScope = func(string, []string) error { t.Fatal("SaveScope called"); return nil }
+
+	err := Run(context.Background(), strings.NewReader("1\n\nbanana\n"), &bytes.Buffer{}, deps)
+	if err == nil || !strings.Contains(err.Error(), "invalid choice") {
+		t.Fatalf("Run() error = %v, want invalid choice", err)
+	}
+	if len(injected) != 0 {
+		t.Error("nothing should have been injected")
 	}
 }
