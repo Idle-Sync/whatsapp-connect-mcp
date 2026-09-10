@@ -15,6 +15,9 @@ import (
 const (
 	dirName  = "whatsapp-connect-mcp"
 	fileName = "config.json"
+	// accountFileName holds the settings that belong to one WhatsApp
+	// account rather than to this machine.
+	accountFileName = "account.json"
 
 	// mediaDirName is the directory outbound media may be read from unless
 	// config.json widens it.
@@ -96,24 +99,46 @@ func Dir() (string, error) {
 // (or has them explicitly zeroed), so a hand-edited config.json missing
 // "rate_burst"/"rate_per_seconds" doesn't leave every send permanently
 // rate-limited to zero.
-func Load(dir string) (Config, error) {
-	data, err := os.ReadFile(filepath.Join(dir, fileName)) // #nosec G304 -- dir is caller-supplied (config.Dir() or a test dir), not network input
+func Load(dir string) (Config, error) { return LoadFor(dir, "") }
+
+// LoadFor reads the machine-wide settings from dir's config.json and, when
+// accountDir is non-empty, this account's own settings from its
+// account.json — merging both into one Config, so every caller keeps
+// reading cfg.TrustedJIDs and cfg.ReadableChats without caring which file
+// they came from.
+//
+// The split is by ownership. A trust grant and a readable-chat allowlist
+// are statements about one WhatsApp account's contacts, and carrying them
+// across a re-pair would auto-send from the wrong number and expose the
+// wrong chats. Rate limits, the outbox roots, and the HTTP port are
+// statements about this machine, and are shared deliberately: one rate
+// limiter across accounts is safer than one per account, not worse.
+//
+// An empty accountDir keeps the whole config in one file, which is what
+// an unpaired install and the config package's own tests want.
+func LoadFor(dir, accountDir string) (Config, error) {
+	c, err := readFile(filepath.Join(dir, fileName))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Config{
-				RateBurst:      defaultRateBurst,
-				RatePerSeconds: defaultRatePerSeconds,
-				MediaRoots:     []string{DefaultMediaDir(dir)},
-			}, nil
-		}
-		return Config{}, fmt.Errorf("read config file: %w", err)
+		return Config{}, err
 	}
 
-	var c Config
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
-		return Config{}, errors.New("config file is not valid JSON")
+	if accountDir != "" {
+		path := filepath.Join(accountDir, accountFileName)
+		if _, statErr := os.Stat(path); statErr == nil {
+			acct, err := readFile(path)
+			if err != nil {
+				return Config{}, err
+			}
+			// Once written, the account file is authoritative for the keys it
+			// owns; anything left in config.json for them is pre-split residue.
+			c.TrustedJIDs = acct.TrustedJIDs
+			c.ChatScope = acct.ChatScope
+			c.ReadableChats = acct.ReadableChats
+		}
+		// No account file yet means SplitLegacy has not run. The values still
+		// in config.json are this account's — it is the only one there has
+		// ever been — so they are kept rather than blanked, and a `trust
+		// --list` between upgrading and the next serve shows the truth.
 	}
 
 	if c.RateBurst <= 0 {
@@ -131,15 +156,84 @@ func Load(dir string) (Config, error) {
 	return c, nil
 }
 
-// Save atomically writes c to config.json in dir via a temp file plus
-// rename, with file mode 0600.
-func Save(dir string, c Config) error {
+// readFile decodes one settings file. A missing file is the zero Config,
+// not an error: both halves are optional until something is written.
+func readFile(path string) (Config, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path is caller-supplied (config.Dir() or a test dir), not network input
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, nil
+		}
+		return Config{}, fmt.Errorf("read config file: %w", err)
+	}
+	var c Config
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return Config{}, errors.New("config file is not valid JSON")
+	}
+	return c, nil
+}
+
+// Save writes c to dir's config.json.
+func Save(dir string, c Config) error { return SaveFor(dir, "", c) }
+
+// SaveFor writes c back to the two files LoadFor read it from. With an
+// empty accountDir everything goes to config.json.
+func SaveFor(dir, accountDir string, c Config) error {
+	if accountDir == "" {
+		return writeFile(dir, fileName, c)
+	}
+	if err := writeFile(accountDir, accountFileName, Config{
+		TrustedJIDs:   c.TrustedJIDs,
+		ChatScope:     c.ChatScope,
+		ReadableChats: c.ReadableChats,
+	}); err != nil {
+		return err
+	}
+	return writeFile(dir, fileName, Config{
+		RateBurst:      c.RateBurst,
+		RatePerSeconds: c.RatePerSeconds,
+		MediaRoots:     c.MediaRoots,
+	})
+}
+
+// SplitLegacy moves the account-owned keys out of a pre-0.3.8 config.json
+// into accountDir's account.json, leaving the machine-wide keys behind.
+//
+// It runs once, and only when there is no account.json yet: after that the
+// account file is authoritative and a stale key left in config.json is
+// ignored rather than re-applied. Doing nothing when there is nothing to
+// move makes it safe to call on every start.
+func SplitLegacy(dir, accountDir string) (bool, error) {
+	if accountDir == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(filepath.Join(accountDir, accountFileName)); err == nil {
+		return false, nil // already split
+	}
+	legacy, err := readFile(filepath.Join(dir, fileName))
+	if err != nil {
+		return false, err
+	}
+	if len(legacy.TrustedJIDs) == 0 && legacy.ChatScope == "" && len(legacy.ReadableChats) == 0 {
+		return false, nil // nothing account-owned to move
+	}
+	if err := SaveFor(dir, accountDir, legacy); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// writeFile atomically writes c to dir/name via a temp file plus rename,
+// with file mode 0600.
+func writeFile(dir, name string, c Config) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, fileName+".tmp-*")
+	tmp, err := os.CreateTemp(dir, name+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp config file: %w", err)
 	}
@@ -156,7 +250,7 @@ func Save(dir string, c Config) error {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return fmt.Errorf("set config file mode: %w", err)
 	}
-	if err := os.Rename(tmpPath, filepath.Join(dir, fileName)); err != nil {
+	if err := os.Rename(tmpPath, filepath.Join(dir, name)); err != nil {
 		return fmt.Errorf("rename temp config file: %w", err)
 	}
 	return nil
@@ -214,16 +308,19 @@ func normalizeScope(c Config) string {
 // half-written config can neither widen the scope nor lock an agent out of
 // chats it was allowed a moment ago.
 type ScopeReader struct {
-	dir string
+	dir        string
+	accountDir string
 
 	mu       sync.Mutex
 	lastGood Config
 }
 
-// NewScopeReader builds a ScopeReader over dir's config.json.
-func NewScopeReader(dir string) *ScopeReader {
-	r := &ScopeReader{dir: dir}
-	if c, err := Load(dir); err == nil {
+// NewScopeReader builds a ScopeReader over dir's config.json and the
+// account settings in accountDir. An empty accountDir reads everything
+// from config.json.
+func NewScopeReader(dir, accountDir string) *ScopeReader {
+	r := &ScopeReader{dir: dir, accountDir: accountDir}
+	if c, err := LoadFor(dir, accountDir); err == nil {
 		r.lastGood = c
 	}
 	return r
@@ -248,7 +345,7 @@ func (r *ScopeReader) List() []string {
 func (r *ScopeReader) current() Config {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c, err := Load(r.dir); err == nil {
+	if c, err := LoadFor(r.dir, r.accountDir); err == nil {
 		r.lastGood = c
 	}
 	return r.lastGood
@@ -263,16 +360,19 @@ func (r *ScopeReader) current() Config {
 // stays in force. The trust decision stays CLI-only exactly as before: no
 // MCP tool writes config.json.
 type TrustReader struct {
-	dir string
+	dir        string
+	accountDir string
 
 	mu       sync.Mutex
 	lastGood []string
 }
 
-// NewTrustReader builds a TrustReader over dir's config.json.
-func NewTrustReader(dir string) *TrustReader {
-	r := &TrustReader{dir: dir}
-	if c, err := Load(dir); err == nil {
+// NewTrustReader builds a TrustReader over dir's config.json and the
+// account settings in accountDir. An empty accountDir reads everything
+// from config.json.
+func NewTrustReader(dir, accountDir string) *TrustReader {
+	r := &TrustReader{dir: dir, accountDir: accountDir}
+	if c, err := LoadFor(dir, accountDir); err == nil {
 		r.lastGood = c.TrustedJIDs
 	}
 	return r
@@ -285,7 +385,7 @@ func (r *TrustReader) Trusted(jid string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if c, err := Load(r.dir); err == nil {
+	if c, err := LoadFor(r.dir, r.accountDir); err == nil {
 		r.lastGood = c.TrustedJIDs
 	}
 	for _, t := range r.lastGood {

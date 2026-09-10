@@ -60,6 +60,17 @@ func (h *Handler) runPairing() {
 		h.pair.code = code
 		h.pair.mu.Unlock()
 	})
+	// Pairing has just revealed which account this is, so the store can
+	// finally be pointed at that account's own messages. Done before the
+	// state is published, so nothing observes "paired" against the pending
+	// store. A failure here is reported the same way a pairing failure is:
+	// silently carrying on would leave messages landing in the wrong place.
+	if err == nil && h.deps.OnPaired != nil {
+		if aerr := h.deps.OnPaired(); aerr != nil {
+			err = aerr
+		}
+	}
+
 	h.pair.mu.Lock()
 	h.pair.active = false
 	h.pair.code = ""

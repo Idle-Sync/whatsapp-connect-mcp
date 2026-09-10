@@ -46,7 +46,7 @@ func registry() []Check {
 // pick their chats later — so this warns rather than fails, and says how
 // to move on from it.
 func checkChatScope(_ context.Context, env Env) Finding {
-	cfg, err := config.Load(env.DataDir)
+	cfg, err := config.LoadFor(env.DataDir, env.AccountDir)
 	if err != nil {
 		return Finding{Check: "chat scope", Status: StatusWarn, Detail: "config unreadable — cannot report the chat scope"}
 	}

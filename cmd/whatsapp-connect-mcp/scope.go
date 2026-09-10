@@ -32,7 +32,12 @@ func runScope(args []string) int {
 		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
 		return 1
 	}
-	cfg, err := config.Load(dataDir)
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
+		return 1
+	}
+	cfg, err := config.LoadFor(dataDir, acct.Dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
 		return 1
@@ -44,15 +49,15 @@ func runScope(args []string) int {
 		if !ok {
 			return 1
 		}
-		return scopeAllow(dataDir, cfg, jid)
+		return scopeAllow(dataDir, acct.Dir, cfg, jid)
 	case *deny != "":
 		jid, ok := resolveTarget("scope", *deny, os.Stdin, os.Stdout)
 		if !ok {
 			return 1
 		}
-		return scopeDeny(dataDir, cfg, jid)
+		return scopeDeny(dataDir, acct.Dir, cfg, jid)
 	case *all:
-		return scopeAll(dataDir, cfg)
+		return scopeAll(dataDir, acct.Dir, cfg)
 	default:
 		return scopeList(cfg)
 	}
@@ -61,13 +66,13 @@ func runScope(args []string) int {
 // scopeAllow adds one chat and switches the limit on. Naming a chat to
 // allow is a request to restrict; leaving the mode alone would accept the
 // argument and change nothing an agent can observe.
-func scopeAllow(dataDir string, cfg config.Config, jid string) int {
+func scopeAllow(dataDir, accountDir string, cfg config.Config, jid string) int {
 	cfg.ChatScope = config.ScopeAllowlist
 	if !cfg.IsReadable(jid) {
 		cfg.ReadableChats = append(cfg.ReadableChats, jid)
 		sort.Strings(cfg.ReadableChats)
 	}
-	if err := config.Save(dataDir, cfg); err != nil {
+	if err := config.SaveFor(dataDir, accountDir, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
 		return 1
 	}
@@ -80,7 +85,7 @@ func scopeAllow(dataDir string, cfg config.Config, jid string) int {
 // scopeDeny removes one chat, leaving the mode alone. Emptying the list
 // leaves agents able to read nothing, which is the safe reading of
 // "remove the last chat I allowed"; widening is scopeAll's job.
-func scopeDeny(dataDir string, cfg config.Config, jid string) int {
+func scopeDeny(dataDir, accountDir string, cfg config.Config, jid string) int {
 	kept := cfg.ReadableChats[:0]
 	for _, c := range cfg.ReadableChats {
 		if c != jid {
@@ -88,7 +93,7 @@ func scopeDeny(dataDir string, cfg config.Config, jid string) int {
 		}
 	}
 	cfg.ReadableChats = kept
-	if err := config.Save(dataDir, cfg); err != nil {
+	if err := config.SaveFor(dataDir, accountDir, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
 		return 1
 	}
@@ -100,9 +105,9 @@ func scopeDeny(dataDir string, cfg config.Config, jid string) int {
 	return 0
 }
 
-func scopeAll(dataDir string, cfg config.Config) int {
+func scopeAll(dataDir, accountDir string, cfg config.Config) int {
 	cfg.ChatScope = config.ScopeAll
-	if err := config.Save(dataDir, cfg); err != nil {
+	if err := config.SaveFor(dataDir, accountDir, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "scope: %v\n", err)
 		return 1
 	}

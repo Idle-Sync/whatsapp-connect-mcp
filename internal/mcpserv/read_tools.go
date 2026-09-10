@@ -79,7 +79,7 @@ func textResult(text string) *mcp.CallToolResult {
 type toolDeps struct {
 	st        Store
 	live      Live
-	dataDir   string
+	mediaDir  string
 	doctorEnv DoctorEnv
 	// now is the clock named time windows ("today", "yesterday") resolve
 	// against; nil means the real time. Injectable so tests can pin it.
@@ -115,8 +115,8 @@ func (d *toolDeps) clock() time.Time {
 // read list, plus fetch_older_messages and doctor — against server. The
 // send tools are registered separately by registerSendTools onto the same
 // *mcp.Server this function is handed.
-func registerReadTools(server *mcp.Server, st Store, live Live, dataDir string, doc DoctorEnv) {
-	d := &toolDeps{st: st, live: live, dataDir: dataDir, doctorEnv: doc}
+func registerReadTools(server *mcp.Server, st Store, live Live, mediaDir string, doc DoctorEnv) {
+	d := &toolDeps{st: st, live: live, mediaDir: mediaDir, doctorEnv: doc}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_chats",
@@ -677,7 +677,7 @@ func (d *toolDeps) downloadMedia(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, nil, errors.New("use exactly one of message_id, message_ids, or a time window (before/after, date, window, kind, or limit)")
 	}
 
-	destDir, err := medianame.ChatDir(d.dataDir, in.ChatJID)
+	destDir, err := medianame.ChatDir(d.mediaDir, in.ChatJID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -861,7 +861,7 @@ func notifyPollProgress(ctx context.Context, req *mcp.CallToolRequest, remaining
 
 func (d *toolDeps) doctor(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 	env := doctor.Env{
-		DataDir:        d.dataDir,
+		DataDir:        d.doctorEnv.DataDir,
 		BinaryPath:     d.doctorEnv.BinaryPath,
 		Home:           d.doctorEnv.Home,
 		Store:          d.st,

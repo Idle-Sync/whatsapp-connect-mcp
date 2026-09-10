@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -55,7 +54,12 @@ func runLogout(args []string) int {
 	}
 	defer func() { _ = lock.Release() }()
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logout: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "logout: %v\n", err)
 		return 1

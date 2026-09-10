@@ -42,6 +42,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal. The broken flag repeats the doctor's own verdict rather than
   inventing a second opinion.
 
+### Fixed
+
+- **Pairing a second number no longer shows the first number's data.**
+  Everything that belongs to a WhatsApp account — its messages, downloaded
+  media, backups, trust list, readable-chat allowlist and pending
+  scheduled sends — now lives under `accounts/<number>/`, and only the
+  machine's own settings (rate limits, outbox roots, the HTTP token) stay
+  shared. Switching numbers is clean in both directions: pair the first
+  one back and its history and settings are exactly as they were.
+
+  The worst case this closes was not the visible one. A pending scheduled
+  send sat in a single shared file, so a message scheduled under one
+  number would have fired from whichever number happened to be paired when
+  its time came — a real message, to a real person, from an account they
+  did not expect.
+
+  Separation is by file rather than by a column every query has to
+  remember: two accounts cannot see each other because their rows are not
+  in the same database, including from code written long after this. The
+  upgrade moves an existing install into the new shape by renaming files,
+  never rewriting rows — deliberately, because adding an account column to
+  the existing tables would mean rebuilding them, and that renumbers
+  SQLite rowids, which here are both the full-text index's link to its
+  content and the cursor `poll_new_messages` hands out. Renumbering them
+  would have silently corrupted search results and made agents skip
+  messages they never received.
+
 ### Changed
 
 - **`trust` and `scope` take a name or a phone number, not just a JID.**

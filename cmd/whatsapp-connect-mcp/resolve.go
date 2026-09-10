@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,7 +35,12 @@ func resolveTarget(cmd, input string, in io.Reader, out io.Writer) (string, bool
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
 		return "", false
 	}
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
+		return "", false
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
 		return "", false

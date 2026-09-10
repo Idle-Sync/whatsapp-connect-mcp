@@ -70,8 +70,13 @@ type Deps struct {
 	Gate    *gate.Gate
 	Sched   *schedule.Store
 	DataDir string
-	Token   string
-	Version string
+	// AccountDir is the paired account's own directory: where its trust
+	// list, readable-chat allowlist, downloaded media and backups live.
+	// Empty falls back to DataDir, which is what an unpaired install and
+	// the dashboard's own tests want.
+	AccountDir string
+	Token      string
+	Version    string
 	// Home is the user's home directory, the root the MCP-client config
 	// paths are resolved under. Passed in rather than read from the
 	// environment so tests can point it at a temp directory.
@@ -84,6 +89,10 @@ type Deps struct {
 	// HTTP rather than stdio.
 	HTTPURL string
 	Doctor  func(ctx context.Context) []doctor.Finding
+	// OnPaired runs after a dashboard-driven pairing succeeds, so the
+	// caller can re-point the store at the account that has just become
+	// known. Nil skips it.
+	OnPaired func() error
 	// Now is the clock the history-backfill cooldowns measure against; nil
 	// means the real clock. Injectable so tests need not sleep.
 	Now func() time.Time

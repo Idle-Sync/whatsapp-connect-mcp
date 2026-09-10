@@ -412,10 +412,11 @@ number appears in this document for that reason.
   first (e.g. `ffmpeg -i in.mp3 -c:a libopus out.ogg`).
 - **No outbound calls.** Call history is readable; initiating a call is not
   supported.
-- **One paired number per install.** Multi-account isn't supported in v1.
-  Pairing a second number reuses the same message store, so the previous
-  account's chats stay visible under the new one. Run `reset` before
-  pairing a different number if that matters to you.
+- **One paired number at a time.** Each number keeps its own messages,
+  trust list, readable chats and schedules, so switching between them is
+  clean and nothing carries over. But only one can be linked at once —
+  two accounts live simultaneously, each bound to a different MCP client,
+  would need two servers and is not supported yet.
 - **whatsmeow tracks WhatsApp protocol changes**, not the other way around.
   A WhatsApp-side change can break pairing or sending until whatsmeow (and
   in turn this project) catches up.
@@ -445,6 +446,27 @@ The data directory:
 | Linux | `~/.config/whatsapp-connect-mcp` |
 | macOS | `~/Library/Application Support/whatsapp-connect-mcp` |
 | Windows | `%AppData%\whatsapp-connect-mcp` |
+
+Inside it, anything that belongs to a WhatsApp account lives under that
+account's own number, and anything that belongs to the machine sits at the
+top:
+
+```
+config.json              rate limits, outbox roots — shared
+outbox/                  files a send may attach — shared
+session.db               the current pairing
+accounts/<number>/
+  messages.db            that number's messages
+  media/                 that number's downloaded attachments
+  backups/               that number's snapshots
+  account.json           that number's trust list and readable chats
+  schedules.json         that number's pending scheduled sends
+```
+
+Pair a different number and it gets its own directory; pair the first one
+back and its history, trust list and settings are exactly as they were.
+An existing install is moved into this shape on the next run, by renaming
+files rather than rewriting them.
 
 ## Diagnostics
 
@@ -517,8 +539,10 @@ exactly like the `backup` command below.
 whatsapp-connect-mcp backup [--dest path]
 ```
 
-Writes a consistent snapshot of the message database (`messages.db`) to
-`<data-dir>/backups/messages-<timestamp>.db` (or a custom path via `--dest`).
+Writes a consistent snapshot of the paired account's message database to
+`<data-dir>/accounts/<number>/backups/messages-<timestamp>.db` (or a custom
+path via `--dest`). Each number is backed up separately, so a snapshot you
+hand to someone carries only that account.
 The backup is a standalone, fully-usable SQLite database — not a copy of
 sessions or settings, just messages. Unlike a phone backup, a `backup`
 snapshot is safe to take while `serve` is running; SQLite's WAL mode and
@@ -606,7 +630,8 @@ release on every run, and warn with both versions named when they differ.
   you unlink it there yourself. Prompts for a typed `yes` before doing
   anything.
 - **`whatsapp-connect-mcp reset`** does everything `remove` does, plus
-  deletes stored messages, media, and settings — a full wipe back to a
+  deletes stored messages, media, and settings for **every** account this
+  install has paired, not just the current one — a full wipe back to a
   fresh install. Also prompts for a typed `yes`.
 - **`whatsapp-connect-mcp clients --remove`** uninjects this program's
   entry from any MCP client config it was added to, without touching the

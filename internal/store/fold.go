@@ -36,7 +36,7 @@ func (s FoldStats) Total() int { return s.Chats + s.Messages + s.Contacts + s.Ca
 // the same resolver finds nothing left to move.
 func (s *Store) FoldLIDs(resolve func(lid string) string) (FoldStats, error) {
 	var stats FoldStats
-	tx, err := s.db.Begin()
+	tx, err := s.conn().Begin()
 	if err != nil {
 		return stats, fmt.Errorf("fold lids: %w", err)
 	}
@@ -274,7 +274,7 @@ func phoneDigits(pn string) string {
 // no message payload); the ingest path now skips those, and this clears
 // the ones stored before it did. Returns how many messages and chats went.
 func (s *Store) PruneStubMessages() (messages, chats int, err error) {
-	tx, err := s.db.Begin()
+	tx, err := s.conn().Begin()
 	if err != nil {
 		return 0, 0, fmt.Errorf("prune stub messages: %w", err)
 	}

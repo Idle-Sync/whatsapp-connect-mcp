@@ -12,7 +12,7 @@ func resolver(m map[string]string) func(string) string {
 
 func mustExec(t *testing.T, s *Store, query string, args ...any) {
 	t.Helper()
-	if _, err := s.db.Exec(query, args...); err != nil {
+	if _, err := s.conn().Exec(query, args...); err != nil {
 		t.Fatalf("%s: %v", query, err)
 	}
 }
@@ -20,7 +20,7 @@ func mustExec(t *testing.T, s *Store, query string, args ...any) {
 func count(t *testing.T, s *Store, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := s.db.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := s.conn().QueryRow(query, args...).Scan(&n); err != nil {
 		t.Fatalf("%s: %v", query, err)
 	}
 	return n
@@ -127,7 +127,7 @@ func TestFoldLIDsRewritesSendersContactsAndCalls(t *testing.T) {
 		t.Fatal("an unresolvable LID sender must be left alone")
 	}
 	var push, full string
-	if err := s.db.QueryRow(`SELECT push_name, full_name FROM contacts WHERE jid = ?`, pn).Scan(&push, &full); err != nil {
+	if err := s.conn().QueryRow(`SELECT push_name, full_name FROM contacts WHERE jid = ?`, pn).Scan(&push, &full); err != nil {
 		t.Fatalf("phone contact: %v", err)
 	}
 	if push != "Bobby" || full != "Robert Example" {

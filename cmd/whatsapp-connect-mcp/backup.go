@@ -28,7 +28,12 @@ func runBackup(args []string) int {
 		return 1
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "backup: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "backup: %v\n", err)
 		return 1
@@ -37,7 +42,7 @@ func runBackup(args []string) int {
 
 	path := *dest
 	if path == "" {
-		path = store.DefaultBackupPath(dataDir, time.Now())
+		path = store.DefaultBackupPath(acct.Dir, time.Now())
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			fmt.Fprintf(os.Stderr, "backup: create backups directory: %v\n", err)
 			return 1

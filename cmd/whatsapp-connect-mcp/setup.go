@@ -51,7 +51,12 @@ func runSetup(args []string) int {
 		return 1
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "messages.db"))
+	acct, err := cliAccount(dataDir, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "setup: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(acct.Messages())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "setup: %v\n", err)
 		return 1
@@ -134,16 +139,26 @@ func runSetup(args []string) int {
 		// in, merged into whatever is already there rather than replacing
 		// it: setup must not quietly drop a trust list or a rate limit.
 		SaveScope: func(mode string, chats []string) error {
-			cfg, err := config.Load(dataDir)
+			cfg, err := config.LoadFor(dataDir, acct.Dir)
 			if err != nil {
 				return err
 			}
 			cfg.ChatScope, cfg.ReadableChats = mode, chats
-			return config.Save(dataDir, cfg)
+			return config.SaveFor(dataDir, acct.Dir, cfg)
 		},
 	}
 
 	err = wizard.Run(ctx, os.Stdin, os.Stdout, deps)
+	if err == nil {
+		// Pairing may have just told us which account this is. Anything
+		// written before that went to the pending directory, which an
+		// unpaired install never writes to; from here the account's own
+		// directory is the one that matters.
+		if aerr := attachAccount(dataDir, br.OwnJID(), st, os.Stdout); aerr != nil {
+			fmt.Fprintf(os.Stderr, "setup: %v\n", aerr)
+			return 1
+		}
+	}
 	if err != nil {
 		if errors.Is(err, wizard.ErrAborted) {
 			fmt.Fprintln(os.Stderr, err.Error())

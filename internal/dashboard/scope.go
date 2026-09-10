@@ -31,7 +31,7 @@ type scopeRow struct {
 func (h *Handler) handleScope(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		cfg, err := config.Load(h.deps.DataDir)
+		cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 		if err != nil {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 			return
@@ -77,7 +77,7 @@ func (h *Handler) handleScopeAdd(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request body"})
 		return
 	}
-	cfg, err := config.Load(h.deps.DataDir)
+	cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 		return
@@ -108,7 +108,7 @@ func (h *Handler) handleScopeAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := config.Save(h.deps.DataDir, cfg); err != nil {
+	if err := config.SaveFor(h.deps.DataDir, h.accountDir(), cfg); err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config write failed"})
 		return
 	}
@@ -130,7 +130,7 @@ func (h *Handler) handleScopeRemove(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad jid"})
 		return
 	}
-	cfg, err := config.Load(h.deps.DataDir)
+	cfg, err := config.LoadFor(h.deps.DataDir, h.accountDir())
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})
 		return
@@ -142,7 +142,7 @@ func (h *Handler) handleScopeRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.ReadableChats = kept
-	if err := config.Save(h.deps.DataDir, cfg); err != nil {
+	if err := config.SaveFor(h.deps.DataDir, h.accountDir(), cfg); err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config write failed"})
 		return
 	}
@@ -184,4 +184,20 @@ func (h *Handler) resolveOrOffer(w http.ResponseWriter, input string) (string, b
 	}
 	h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lookup failed"})
 	return "", false
+}
+
+// accountDir is where this account's own settings live. It stays empty
+// when no account directory was wired, which config.LoadFor and SaveFor
+// read as "keep everything in one config.json" — the pre-accounts
+// behaviour an unpaired install and the tests rely on.
+func (h *Handler) accountDir() string { return h.deps.AccountDir }
+
+// accountFiles is where this account's media and backups are written.
+// Unlike accountDir it falls back to the data directory, because a path is
+// needed either way and the flat layout is where those files used to live.
+func (h *Handler) accountFiles() string {
+	if h.deps.AccountDir != "" {
+		return h.deps.AccountDir
+	}
+	return h.deps.DataDir
 }

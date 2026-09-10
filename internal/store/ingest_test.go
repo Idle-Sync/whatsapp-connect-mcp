@@ -28,7 +28,7 @@ func TestUpsertChatTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 
 	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM chats`).Scan(&count); err != nil {
+	if err := s.conn().QueryRow(`SELECT COUNT(*) FROM chats`).Scan(&count); err != nil {
 		t.Fatalf("count chats: %v", err)
 	}
 	if count != 1 {
@@ -38,7 +38,7 @@ func TestUpsertChatTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	var name string
 	var isGroup bool
 	var lastMessageAt int64
-	if err := s.db.QueryRow(
+	if err := s.conn().QueryRow(
 		`SELECT name, is_group, last_message_at FROM chats WHERE jid = ?`, jid,
 	).Scan(&name, &isGroup, &lastMessageAt); err != nil {
 		t.Fatalf("query chat: %v", err)
@@ -61,7 +61,7 @@ func TestUpsertChatEmptyNameDoesNotOverwriteExistingName(t *testing.T) {
 
 	var name string
 	var lastMessageAt int64
-	if err := s.db.QueryRow(
+	if err := s.conn().QueryRow(
 		`SELECT name, last_message_at FROM chats WHERE jid = ?`, jid,
 	).Scan(&name, &lastMessageAt); err != nil {
 		t.Fatalf("query chat: %v", err)
@@ -83,7 +83,7 @@ func TestUpsertChatFirstInsertWithEmptyNameLeavesRowBlank(t *testing.T) {
 	}
 
 	var name string
-	if err := s.db.QueryRow(`SELECT name FROM chats WHERE jid = ?`, jid).Scan(&name); err != nil {
+	if err := s.conn().QueryRow(`SELECT name FROM chats WHERE jid = ?`, jid).Scan(&name); err != nil {
 		t.Fatalf("query chat: %v", err)
 	}
 	if name != "" {
@@ -103,7 +103,7 @@ func TestUpsertChatLastMessageAtNeverGoesBackward(t *testing.T) {
 	}
 
 	var lastMessageAt int64
-	if err := s.db.QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
+	if err := s.conn().QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
 		t.Fatalf("query chat: %v", err)
 	}
 	if lastMessageAt != 200 {
@@ -128,7 +128,7 @@ func TestUpsertMessageTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 
 	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count); err != nil {
+	if err := s.conn().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count); err != nil {
 		t.Fatalf("count messages: %v", err)
 	}
 	if count != 1 {
@@ -138,7 +138,7 @@ func TestUpsertMessageTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	var text, quotedID string
 	var fromMe bool
 	var ts int64
-	if err := s.db.QueryRow(
+	if err := s.conn().QueryRow(
 		`SELECT text, quoted_id, from_me, ts FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1",
 	).Scan(&text, &quotedID, &fromMe, &ts); err != nil {
 		t.Fatalf("query message: %v", err)
@@ -163,7 +163,7 @@ func TestUpsertMessageBumpsChatLastMessageAtForwardOnly(t *testing.T) {
 	}
 
 	var lastMessageAt int64
-	if err := s.db.QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
+	if err := s.conn().QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
 		t.Fatalf("query chat: %v", err)
 	}
 	if lastMessageAt != 100 {
@@ -173,7 +173,7 @@ func TestUpsertMessageBumpsChatLastMessageAtForwardOnly(t *testing.T) {
 	if err := s.UpsertMessage(Message{ChatJID: jid, ID: "msg3", SenderJID: jid, TS: 200, Kind: "text", Text: "c"}); err != nil {
 		t.Fatalf("UpsertMessage msg3 (newer): %v", err)
 	}
-	if err := s.db.QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
+	if err := s.conn().QueryRow(`SELECT last_message_at FROM chats WHERE jid = ?`, jid).Scan(&lastMessageAt); err != nil {
 		t.Fatalf("query chat: %v", err)
 	}
 	if lastMessageAt != 200 {
@@ -193,7 +193,7 @@ func TestUpsertContactTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 
 	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM contacts`).Scan(&count); err != nil {
+	if err := s.conn().QueryRow(`SELECT COUNT(*) FROM contacts`).Scan(&count); err != nil {
 		t.Fatalf("count contacts: %v", err)
 	}
 	if count != 1 {
@@ -201,7 +201,7 @@ func TestUpsertContactTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 
 	var phone, pushName, fullName, businessName string
-	if err := s.db.QueryRow(
+	if err := s.conn().QueryRow(
 		`SELECT phone, push_name, full_name, business_name FROM contacts WHERE jid = ?`, jid,
 	).Scan(&phone, &pushName, &fullName, &businessName); err != nil {
 		t.Fatalf("query contact: %v", err)
@@ -223,7 +223,7 @@ func TestUpsertContactEmptyFieldsKeepOldValues(t *testing.T) {
 	}
 
 	var phone, pushName, fullName, businessName string
-	if err := s.db.QueryRow(
+	if err := s.conn().QueryRow(
 		`SELECT phone, push_name, full_name, business_name FROM contacts WHERE jid = ?`, jid,
 	).Scan(&phone, &pushName, &fullName, &businessName); err != nil {
 		t.Fatalf("query contact: %v", err)
@@ -264,7 +264,7 @@ func TestMarkReadSetsReadAtForKnownIDs(t *testing.T) {
 	}
 
 	var readAt int64
-	if err := s.db.QueryRow(`SELECT read_at FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1").Scan(&readAt); err != nil {
+	if err := s.conn().QueryRow(`SELECT read_at FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1").Scan(&readAt); err != nil {
 		t.Fatalf("query message: %v", err)
 	}
 	if readAt != 500 {
@@ -290,7 +290,7 @@ func TestMarkReadNeverGoesBackward(t *testing.T) {
 	}
 
 	var readAt int64
-	if err := s.db.QueryRow(`SELECT read_at FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1").Scan(&readAt); err != nil {
+	if err := s.conn().QueryRow(`SELECT read_at FROM messages WHERE chat_jid = ? AND id = ?`, jid, "msg1").Scan(&readAt); err != nil {
 		t.Fatalf("query message: %v", err)
 	}
 	if readAt != 500 {
@@ -309,7 +309,7 @@ func TestInsertCallTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 	}
 
 	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM calls`).Scan(&count); err != nil {
+	if err := s.conn().QueryRow(`SELECT COUNT(*) FROM calls`).Scan(&count); err != nil {
 		t.Fatalf("count calls: %v", err)
 	}
 	if count != 1 {
@@ -318,7 +318,7 @@ func TestInsertCallTwiceYieldsOneRowWithNewestValues(t *testing.T) {
 
 	var status string
 	var isVideo bool
-	if err := s.db.QueryRow(`SELECT status, is_video FROM calls WHERE id = ?`, "call1").Scan(&status, &isVideo); err != nil {
+	if err := s.conn().QueryRow(`SELECT status, is_video FROM calls WHERE id = ?`, "call1").Scan(&status, &isVideo); err != nil {
 		t.Fatalf("query call: %v", err)
 	}
 	if status != "answered" || !isVideo {
