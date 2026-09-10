@@ -355,3 +355,49 @@ func TestScopeUnknownNameRefused(t *testing.T) {
 		t.Errorf("refusal gives no way forward: %s", w.Body.String())
 	}
 }
+
+// Removing the last allowed chat leaves an empty allowlist — agents
+// reading nothing — which is a state a person must be able to walk out of
+// without having spotted a control that only exists inside it.
+func TestScopeModeIsAlwaysSwitchableBothWays(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, nil)
+
+	mode := func() string {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/scope", nil)
+		r.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return body.Mode
+	}
+
+	// Restrict with nothing listed: nothing readable, deliberately.
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"mode":"allowlist"}`); w.Code != http.StatusOK {
+		t.Fatalf("to allowlist = %d (%s)", w.Code, w.Body.String())
+	}
+	if mode() != "allowlist" {
+		t.Fatal("mode did not switch to allowlist")
+	}
+	cfg, _ := config.Load(h.deps.DataDir)
+	if !cfg.ScopeActive() || cfg.IsReadable("anyone@s.whatsapp.net") {
+		t.Error("an empty allowlist should make nothing readable")
+	}
+
+	// And straight back out again, from that same empty state.
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"mode":"all"}`); w.Code != http.StatusOK {
+		t.Fatalf("back to all = %d (%s)", w.Code, w.Body.String())
+	}
+	if mode() != "all" {
+		t.Fatal("could not get back to every chat from an empty allowlist")
+	}
+	cfg, _ = config.Load(h.deps.DataDir)
+	if !cfg.IsReadable("anyone@s.whatsapp.net") {
+		t.Error("switching back did not make chats readable again")
+	}
+}

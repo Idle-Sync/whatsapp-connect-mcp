@@ -282,7 +282,9 @@ whatsapp-connect-mcp scope --all                        # drop the limit again
 
 `--allow` turns the limit on as well as naming a chat — asking to allow one
 chat is asking to restrict the rest. `--all` turns it off but **keeps** the
-list, so turning the limit back on doesn't mean retyping it.
+list, so turning the limit back on doesn't mean retyping it. In the
+dashboard the same two modes sit side by side with the current one marked,
+so switching either way is one click.
 
 What the limit covers, once on:
 

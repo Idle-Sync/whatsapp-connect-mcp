@@ -921,7 +921,7 @@ document.getElementById("clients-refresh").addEventListener("click", (ev) => wit
 // server unless it says so, so it gets the loudest of the three banners.
 function scopeBanner(mode, count) {
   if (mode !== "allowlist") return { text: "Every chat is readable by connected agents.", kind: "" };
-  if (count === 0) return { text: "No chats are readable — agents can read nothing until you add one below.", kind: "bad" };
+  if (count === 0) return { text: "No chats are readable — agents can read nothing. Add one below, or switch back to Every chat.", kind: "bad" };
   return { text: "Only the " + count + (count === 1 ? " chat" : " chats") + " listed below are readable.", kind: "ok" };
 }
 
@@ -965,24 +965,29 @@ async function loadScope() {
   }
   stagger(ul);
 
-  // Turning the limit off is a widening, so it is a deliberate button
-  // rather than a side effect of removing the last chat.
-  if (data.mode === "allowlist") {
-    const off = el("button", "Allow every chat again");
-    off.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-      try {
-        say("scope-msg", "");
-        await api("/api/scope", { method: "POST", body: JSON.stringify({ mode: "all" }) });
-        await loadScope();
-        refreshDoctor();
-      } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
-    }));
-    const wrap = el("div", undefined, "scope-off");
-    wrap.appendChild(off);
-    ul.appendChild(wrap);
+  // Both modes are always on screen with the current one marked, so
+  // getting back to "every chat" never depends on spotting a control that
+  // only exists in the state you are trying to leave. Removing the last
+  // allowed chat leaves an empty allowlist — agents reading nothing — and
+  // that is a state you must be able to walk out of.
+  for (const b of document.querySelectorAll(".modes button")) {
+    b.classList.toggle("active", b.dataset.mode === data.mode);
   }
 
   fillChatSuggestions("scope-suggest");
+}
+
+async function setScopeMode(mode) {
+  try {
+    say("scope-msg", "");
+    await api("/api/scope", { method: "POST", body: JSON.stringify({ mode }) });
+    await loadScope();
+    refreshDoctor();
+  } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+}
+
+for (const b of document.querySelectorAll(".modes button")) {
+  b.addEventListener("click", (ev) => withBusy(ev.currentTarget, () => setScopeMode(b.dataset.mode)));
 }
 
 // fillChatSuggestions offers the chats already in the store as completions,

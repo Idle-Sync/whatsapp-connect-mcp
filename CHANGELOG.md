@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The readable-chat mode is now a standing choice, not a button that
+  appears in one state only.** Removing the last allowed chat correctly
+  left an empty allowlist — agents able to read nothing — but the way back
+  to "every chat" was a plain button at the foot of an empty list, easy to
+  miss at exactly the moment it mattered. Both modes are now always on
+  screen with the current one marked, so leaving the empty state never
+  depends on finding a control inside it, and the warning banner names the
+  way out rather than only the problem.
+
 ## [0.3.8] - 2026-09-10
 
 ### Added
