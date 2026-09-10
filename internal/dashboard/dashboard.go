@@ -69,6 +69,17 @@ type Deps struct {
 	DataDir string
 	Token   string
 	Version string
+	// Home is the user's home directory, the root the MCP-client config
+	// paths are resolved under. Passed in rather than read from the
+	// environment so tests can point it at a temp directory.
+	Home string
+	// BinaryPath is this executable's path, used for a stdio client entry
+	// and to tell a valid injected entry from one naming another binary.
+	BinaryPath string
+	// HTTPURL is the base URL this server is reachable at when serve was
+	// started with --http. Non-empty means client entries are injected as
+	// HTTP rather than stdio.
+	HTTPURL string
 	Doctor  func(ctx context.Context) []doctor.Finding
 	// Now is the clock the history-backfill cooldowns measure against; nil
 	// means the real clock. Injectable so tests need not sleep.
@@ -129,6 +140,8 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/backup", h.authed(h.mutating(h.handleBackup)))
 	h.mux.HandleFunc("/api/drafts", h.authed(h.handleDrafts))
 	h.mux.HandleFunc("/api/drafts/", h.authed(h.mutating(h.handleDraftAction)))
+	h.mux.HandleFunc("/api/clients", h.authed(h.handleClients))
+	h.mux.HandleFunc("/api/clients/", h.authed(h.mutating(h.handleClientRemove)))
 	return h
 }
 

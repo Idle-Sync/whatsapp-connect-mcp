@@ -25,6 +25,7 @@
     <button data-tab="status" class="active">status</button>
     <button data-tab="pair">pair</button>
     <button data-tab="chats">chats</button>
+    <button data-tab="clients">clients</button>
     <button data-tab="trust">trust</button>
     <button data-tab="schedules">schedules</button>
     <button data-tab="drafts">drafts<span id="drafts-count" class="count" hidden></span></button>
@@ -83,6 +84,18 @@
           <div id="messages-list" class="messages-list"></div>
         </div>
       </div>
+    </section>
+
+    <section id="tab-clients" hidden>
+      <div class="pane-head">
+        <h2>MCP clients</h2>
+        <button id="clients-refresh" class="refresh" title="Re-scan for MCP clients">&#8635;</button>
+      </div>
+      <p class="dim">Apps on this machine that can talk to this server. Adding one
+        writes a <span class="mono">whatsapp</span> entry into that app's MCP config —
+        restart the app afterwards for it to pick the entry up.</p>
+      <p id="clients-msg" class="chip" hidden></p>
+      <ul id="clients-list" class="rows client-rows"></ul>
     </section>
 
     <section id="tab-trust" hidden>

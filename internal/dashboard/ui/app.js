@@ -205,7 +205,7 @@ async function refreshDraftsCount() {
 
 /* ---------- tabs ---------- */
 
-const loaders = { chats: loadChats, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
+const loaders = { chats: loadChats, clients: loadClients, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
 const tabs = document.querySelectorAll("nav button");
 for (const b of tabs) b.addEventListener("click", () => {
   for (const t of tabs) t.classList.toggle("active", t === b);
@@ -842,6 +842,69 @@ searchBox.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape" && searchBox.value) { ev.stopPropagation(); clearSearch(); }
 });
 searchClear.addEventListener("click", clearSearch);
+
+/* ---------- clients ---------- */
+
+// clientState reduces a client row to the one badge worth showing: a
+// broken entry outranks a working one, and "not installed" is only worth
+// saying when there is no entry to talk about.
+function clientState(c) {
+  if (c.broken) return { label: "needs fixing", cls: "bad" };
+  if (c.connected) return { label: "connected", cls: "ok" };
+  if (c.installed) return { label: "not added", cls: "" };
+  return { label: "not installed", cls: "dim-badge" };
+}
+
+async function loadClients() {
+  const ul = document.getElementById("clients-list");
+  skeleton(ul, 4, "3.2rem");
+  let rows;
+  try { rows = await api("/api/clients"); } catch (e) { empty(ul, "Couldn't detect MCP clients."); return; }
+  ul.replaceChildren();
+  if (rows.length === 0) { empty(ul, "No known MCP clients on this machine."); return; }
+  for (const c of rows) {
+    const li = document.createElement("li");
+    li.className = "client";
+
+    const info = el("div", undefined, "client-info");
+    const head = el("div", undefined, "client-head");
+    head.appendChild(el("span", c.name, "client-name"));
+    const st = clientState(c);
+    head.appendChild(el("span", st.label, "badge-sm " + st.cls));
+    info.appendChild(head);
+    info.appendChild(el("div", c.config_path, "mono dim client-path"));
+    if (c.connected && c.target) {
+      info.appendChild(el("div", c.transport + " → " + c.target, "mono dim client-path"));
+    }
+    li.appendChild(info);
+
+    const act = el("button", c.connected ? "remove" : "add", c.connected ? "danger" : "primary");
+    // A client that is not installed can still be added: the config file
+    // is created for it, and picked up whenever the app first runs.
+    act.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+      try {
+        say("clients-msg", "");
+        if (c.connected) {
+          await api("/api/clients/" + encodeURIComponent(c.name), { method: "DELETE" });
+          say("clients-msg", "removed from " + c.name, "ok");
+        } else {
+          await api("/api/clients", { method: "POST", body: JSON.stringify({ name: c.name }) });
+          say("clients-msg", "added to " + c.name + " — restart it to pick this up", "ok");
+        }
+        loadClients();
+        refreshDoctor();
+      } catch (e) { say("clients-msg", errorMessage(e), "bad"); }
+    }));
+    li.appendChild(act);
+    ul.appendChild(li);
+  }
+  stagger(ul);
+}
+
+document.getElementById("clients-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  say("clients-msg", "");
+  await loadClients();
+}));
 
 /* ---------- trust ---------- */
 

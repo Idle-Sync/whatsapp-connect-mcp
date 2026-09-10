@@ -196,6 +196,7 @@ func runServe(args []string) int {
 		dash := dashboard.New(dashboard.Deps{
 			Ctx: ctx, Store: st, Bridge: br, Gate: g, Sched: schedStore,
 			DataDir: dataDir, Token: token, Version: version.String(),
+			Home: home, BinaryPath: binaryPath, HTTPURL: clientURL(*httpAddr),
 			Doctor: func(dctx context.Context) []doctor.Finding {
 				return doctor.Run(dctx, doctor.Env{
 					DataDir: dataDir, BinaryPath: binaryPath, Home: home, Store: st,
@@ -345,6 +346,22 @@ func browserToDashboard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// clientURL turns the --http listen address into the base URL an MCP
+// client should dial. A wildcard or empty host ("" or ":2178", "0.0.0.0",
+// "[::]") becomes loopback: the client runs on this same machine, and the
+// address the server binds is not necessarily one it can connect to.
+func clientURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func runHTTP(ctx context.Context, server *mcp.Server, dash http.Handler, addr, token string, errOut io.Writer) int {
