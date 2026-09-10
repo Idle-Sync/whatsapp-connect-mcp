@@ -314,3 +314,87 @@ func TestTrustReaderNoFileMeansNoTrust(t *testing.T) {
 		t.Fatal("Trusted() = true with no config file at all")
 	}
 }
+
+// The scope mode is what separates "no limit" from "nothing allowed yet",
+// so an empty list has to mean opposite things under the two modes.
+func TestChatScopeSemantics(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantActive bool
+		readable   map[string]bool
+	}{
+		{
+			name:       "zero value reads everything",
+			cfg:        Config{},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": true},
+		},
+		{
+			name:       "explicit all ignores a leftover list",
+			cfg:        Config{ChatScope: ScopeAll, ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": true},
+		},
+		{
+			name:       "allowlist permits only what it lists",
+			cfg:        Config{ChatScope: ScopeAllowlist, ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "allowlist with an empty list permits nothing",
+			cfg:        Config{ChatScope: ScopeAllowlist},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": false, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "a hand-added list with no mode is read as a restriction",
+			cfg:        Config{ReadableChats: []string{"a@s.whatsapp.net"}},
+			wantActive: true,
+			readable:   map[string]bool{"a@s.whatsapp.net": true, "b@s.whatsapp.net": false},
+		},
+		{
+			name:       "an unrecognised mode falls back to reading everything",
+			cfg:        Config{ChatScope: "banana"},
+			wantActive: false,
+			readable:   map[string]bool{"a@s.whatsapp.net": true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ScopeActive(); got != tt.wantActive {
+				t.Errorf("ScopeActive() = %v, want %v", got, tt.wantActive)
+			}
+			for jid, want := range tt.readable {
+				if got := tt.cfg.IsReadable(jid); got != want {
+					t.Errorf("IsReadable(%q) = %v, want %v", jid, got, want)
+				}
+			}
+		})
+	}
+}
+
+// ScopeReader answers from the file as it stands now, so an edit lands in
+// a running serve without a restart.
+func TestScopeReaderTracksTheFile(t *testing.T) {
+	dir := t.TempDir()
+	r := NewScopeReader(dir)
+
+	if !r.Readable("a@s.whatsapp.net") || r.Active() {
+		t.Fatal("a fresh data dir should read every chat")
+	}
+
+	if err := Save(dir, Config{ChatScope: ScopeAllowlist, ReadableChats: []string{"a@s.whatsapp.net"}}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !r.Active() {
+		t.Error("Active() = false after the file turned the scope on")
+	}
+	if !r.Readable("a@s.whatsapp.net") || r.Readable("b@s.whatsapp.net") {
+		t.Error("Readable did not follow the file")
+	}
+	if got := r.List(); len(got) != 1 || got[0] != "a@s.whatsapp.net" {
+		t.Errorf("List() = %v", got)
+	}
+}

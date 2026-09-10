@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/version"
 )
 
@@ -30,9 +31,49 @@ func registry() []Check {
 		{Name: "ingest", Run: checkIngest},
 		{Name: "database", Run: checkDatabase},
 		{Name: "clients", Run: checkClients},
+		{Name: "chat scope", Run: checkChatScope},
 		{Name: "permissions", Run: checkPermissions},
 		{Name: "version", Run: checkVersion(&http.Client{Timeout: versionCheckTimeout}, releaseAPIURL)},
 	}
+}
+
+// checkChatScope reports what the chat allowlist currently permits.
+//
+// The state worth naming is an allowlist that is switched on and empty:
+// every read tool then legitimately returns nothing, which is
+// indistinguishable from a broken install unless something says otherwise.
+// It is a real state — the one setup leaves behind when someone chooses to
+// pick their chats later — so this warns rather than fails, and says how
+// to move on from it.
+func checkChatScope(_ context.Context, env Env) Finding {
+	cfg, err := config.Load(env.DataDir)
+	if err != nil {
+		return Finding{Check: "chat scope", Status: StatusWarn, Detail: "config unreadable — cannot report the chat scope"}
+	}
+	if !cfg.ScopeActive() {
+		return Finding{Check: "chat scope", Status: StatusOK, Detail: "agents may read every chat"}
+	}
+	if len(cfg.ReadableChats) == 0 {
+		return Finding{
+			Check:  "chat scope",
+			Status: StatusWarn,
+			Detail: "no chats are readable — every read tool will come back empty",
+			Fix:    "add the chats agents should see on the dashboard's clients tab",
+		}
+	}
+	return Finding{
+		Check:  "chat scope",
+		Status: StatusOK,
+		Detail: fmt.Sprintf("agents may read %s", plural(len(cfg.ReadableChats), "chat", "chats")),
+	}
+}
+
+// plural renders "1 chat" / "3 chats".
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // checkSession reports whether a WhatsApp session has been paired

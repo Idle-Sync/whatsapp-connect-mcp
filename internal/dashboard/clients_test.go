@@ -164,7 +164,7 @@ func TestClientAddStdioFallback(t *testing.T) {
 	}
 	h, cookie, home := newClientsHandler(t, nil) // HTTPURL left empty
 	bin := filepath.Join(home, "whatsapp-connect-mcp")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o700); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o600); err != nil { // #nosec G306 -- a stand-in file, only stat-ed
 		t.Fatalf("write binary: %v", err)
 	}
 	if w := mutate(t, h, cookie, http.MethodPost, "/api/clients", `{"name":"Cursor"}`); w.Code != http.StatusOK {
@@ -176,5 +176,87 @@ func TestClientAddStdioFallback(t *testing.T) {
 	}
 	if row.Broken {
 		t.Error("stdio entry naming this binary reported broken")
+	}
+}
+
+// The scope round-trips through the dashboard, and adding a chat is what
+// turns the limit on: someone naming a chat to allow is asking for a
+// restriction, not filing it for later.
+func TestScopeRoundTrip(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, nil)
+
+	get := func() (string, []scopeRow) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/scope", nil)
+		r.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /api/scope = %d", w.Code)
+		}
+		var body struct {
+			Mode  string     `json:"mode"`
+			Chats []scopeRow `json:"chats"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode scope: %v", err)
+		}
+		return body.Mode, body.Chats
+	}
+
+	if mode, chats := get(); mode != "all" || len(chats) != 0 {
+		t.Fatalf("fresh scope = %q/%v, want all/none", mode, chats)
+	}
+
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"jid":"a@s.whatsapp.net"}`); w.Code != http.StatusOK {
+		t.Fatalf("add = %d (%s)", w.Code, w.Body.String())
+	}
+	mode, chats := get()
+	if mode != "allowlist" || len(chats) != 1 || chats[0].JID != "a@s.whatsapp.net" {
+		t.Fatalf("after add = %q/%+v", mode, chats)
+	}
+
+	// Removing the last chat leaves the limit ON and empty — nothing
+	// readable — rather than silently reopening every chat.
+	if w := mutate(t, h, cookie, http.MethodDelete, "/api/scope/a%40s.whatsapp.net", ""); w.Code != http.StatusOK {
+		t.Fatalf("remove = %d (%s)", w.Code, w.Body.String())
+	}
+	if mode, chats := get(); mode != "allowlist" || len(chats) != 0 {
+		t.Fatalf("after remove = %q/%+v, want allowlist with no chats", mode, chats)
+	}
+
+	// Reopening is its own explicit act.
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"mode":"all"}`); w.Code != http.StatusOK {
+		t.Fatalf("mode=all = %d (%s)", w.Code, w.Body.String())
+	}
+	if mode, _ := get(); mode != "all" {
+		t.Fatalf("after mode=all = %q", mode)
+	}
+}
+
+func TestScopeRejectsBadInput(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, nil)
+	for _, body := range []string{`{}`, `{"mode":"banana"}`, `{"jid":"   "}`, `nope`} {
+		if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", body); w.Code == http.StatusOK {
+			t.Errorf("body %q accepted, want refusal", body)
+		}
+	}
+}
+
+// Writing the scope is a human-only act: an agent that could widen its own
+// allowlist would make the setting decorative.
+func TestScopeMutationsNeedDashboardHeader(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, nil)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/scope"},
+		{http.MethodDelete, "/api/scope/a%40s.whatsapp.net"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, http.NoBody)
+		r.AddCookie(cookie) // no X-Requested-With
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s %s = %d, want 403", tc.method, tc.path, w.Code)
+		}
 	}
 }

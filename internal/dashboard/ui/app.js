@@ -205,7 +205,7 @@ async function refreshDraftsCount() {
 
 /* ---------- tabs ---------- */
 
-const loaders = { chats: loadChats, clients: loadClients, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
+const loaders = { chats: loadChats, clients: loadClientsTab, trust: loadTrust, schedules: loadSchedules, drafts: loadDrafts };
 const tabs = document.querySelectorAll("nav button");
 for (const b of tabs) b.addEventListener("click", () => {
   for (const t of tabs) t.classList.toggle("active", t === b);
@@ -845,6 +845,13 @@ searchClear.addEventListener("click", clearSearch);
 
 /* ---------- clients ---------- */
 
+// The clients tab holds two related things: who may connect, and what
+// they may read. One loader keeps them in step.
+async function loadClientsTab() {
+  await loadClients();
+  await loadScope();
+}
+
 // clientState reduces a client row to the one badge worth showing: a
 // broken entry outranks a working one, and "not installed" is only worth
 // saying when there is no entry to talk about.
@@ -904,6 +911,101 @@ async function loadClients() {
 document.getElementById("clients-refresh").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   say("clients-msg", "");
   await loadClients();
+  await loadScope();
+}));
+
+/* ---------- readable-chat scope ---------- */
+
+// An allowlist that is switched on and empty is a real state, not a bug:
+// it is where "I'll pick my chats later" lands. It reads as a broken
+// server unless it says so, so it gets the loudest of the three banners.
+function scopeBanner(mode, count) {
+  if (mode !== "allowlist") return { text: "Every chat is readable by connected agents.", kind: "" };
+  if (count === 0) return { text: "No chats are readable — agents can read nothing until you add one below.", kind: "bad" };
+  return { text: "Only the " + count + (count === 1 ? " chat" : " chats") + " listed below are readable.", kind: "ok" };
+}
+
+async function loadScope() {
+  const ul = document.getElementById("scope-list");
+  skeleton(ul, 2, "2.4rem");
+  let data;
+  try { data = await api("/api/scope"); } catch (e) { empty(ul, "Couldn't load the readable-chat list."); return; }
+
+  const chats = data.chats || [];
+  const banner = scopeBanner(data.mode, chats.length);
+  say("scope-state", banner.text, banner.kind);
+
+  ul.replaceChildren();
+  if (data.mode !== "allowlist") {
+    empty(ul, "No limit set. Add a chat to restrict agents to it.");
+  } else if (chats.length === 0) {
+    empty(ul, "Nothing allowed yet.");
+  } else {
+    for (const c of chats) {
+      const li = document.createElement("li");
+      const info = el("div", undefined, "client-info");
+      info.appendChild(el("span", c.name || c.jid, "client-name"));
+      const sub = el("div", c.jid, "mono dim client-path");
+      info.appendChild(sub);
+      if (!c.known) info.appendChild(el("div", "no chat with this JID in the store yet", "dim client-path"));
+      li.appendChild(info);
+
+      const del = el("button", "remove", "danger");
+      del.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+        try {
+          say("scope-msg", "");
+          await api("/api/scope/" + encodeURIComponent(c.jid), { method: "DELETE" });
+          await loadScope();
+          refreshDoctor();
+        } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+      }));
+      li.appendChild(del);
+      ul.appendChild(li);
+    }
+  }
+  stagger(ul);
+
+  // Turning the limit off is a widening, so it is a deliberate button
+  // rather than a side effect of removing the last chat.
+  if (data.mode === "allowlist") {
+    const off = el("button", "Allow every chat again");
+    off.addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+      try {
+        say("scope-msg", "");
+        await api("/api/scope", { method: "POST", body: JSON.stringify({ mode: "all" }) });
+        await loadScope();
+        refreshDoctor();
+      } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+    }));
+    const wrap = el("div", undefined, "scope-off");
+    wrap.appendChild(off);
+    ul.appendChild(wrap);
+  }
+
+  // Offer the chats already in the store as completions for the JID box.
+  try {
+    const list = document.getElementById("scope-suggest");
+    list.replaceChildren();
+    for (const c of await api("/api/chats?limit=100")) {
+      const o = document.createElement("option");
+      o.value = c.jid;
+      o.label = c.name || c.jid;
+      list.appendChild(o);
+    }
+  } catch (e) { /* suggestions are a convenience; the box still takes a JID */ }
+}
+
+document.getElementById("scope-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const jid = document.getElementById("scope-jid").value.trim();
+  if (!jid) return;
+  try {
+    say("scope-msg", "");
+    await api("/api/scope", { method: "POST", body: JSON.stringify({ jid }) });
+    document.getElementById("scope-jid").value = "";
+    say("scope-msg", "allowed: " + jid, "ok");
+    await loadScope();
+    refreshDoctor();
+  } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
 }));
 
 /* ---------- trust ---------- */

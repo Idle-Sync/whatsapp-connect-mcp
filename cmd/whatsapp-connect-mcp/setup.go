@@ -129,6 +129,18 @@ func runSetup(args []string) int {
 			return clients.InjectHTTP(configPath, fmt.Sprintf("http://127.0.0.1:%d", port), token)
 		},
 		BinaryPath: binaryPath,
+		OwnJID:     br.OwnJID,
+		// The scope lands in the same config.json every other setting lives
+		// in, merged into whatever is already there rather than replacing
+		// it: setup must not quietly drop a trust list or a rate limit.
+		SaveScope: func(mode string, chats []string) error {
+			cfg, err := config.Load(dataDir)
+			if err != nil {
+				return err
+			}
+			cfg.ChatScope, cfg.ReadableChats = mode, chats
+			return config.Save(dataDir, cfg)
+		},
 	}
 
 	err = wizard.Run(ctx, os.Stdin, os.Stdout, deps)

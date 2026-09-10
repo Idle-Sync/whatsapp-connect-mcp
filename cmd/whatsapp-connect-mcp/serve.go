@@ -166,7 +166,7 @@ func runServe(args []string) int {
 		LastEventAt: br.LastEventAt, OpenedAt: br.OpenedAt,
 		IngestErrors: br.IngestErrors, LastDisconnect: br.LastDisconnect,
 	}
-	server := mcpserv.New(st, br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, dataDir, doc)
+	server := mcpserv.New(st, config.NewScopeReader(dataDir), br, g, &mcpserv.Scheduler{Gate: schedGate, Store: schedStore}, dataDir, doc)
 
 	if *httpAddr != "" {
 		token, created, err := httpauth.LoadOrCreateToken(dataDir)

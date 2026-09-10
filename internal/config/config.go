@@ -40,7 +40,35 @@ type Config struct {
 	// the whole filesystem, is what keeps a send tool from being able to
 	// attach an arbitrary readable file.
 	MediaRoots []string `json:"media_roots"`
+	// ChatScope selects which chats the MCP tool surface may read:
+	// ScopeAll (the default, and the behaviour before this setting
+	// existed) or ScopeAllowlist, where ReadableChats is a strict
+	// allowlist. The mode is separate from the list precisely so that an
+	// EMPTY allowlist can mean "nothing readable yet" — the state right
+	// after someone chooses to pick their chats later — instead of
+	// collapsing into "everything readable", which is the one reading that
+	// would silently hand out more access than was asked for.
+	//
+	// The dashboard is deliberately not subject to any of this: it is the
+	// local human's own window onto their own messages, not an agent's.
+	//
+	// This is one setting for the whole server, not one per MCP client.
+	// Every client authenticates with the same bearer token, so the server
+	// cannot tell one from another; per-client scopes need per-client
+	// tokens first.
+	ChatScope     string   `json:"chat_scope"`
+	ReadableChats []string `json:"readable_chats"`
 }
+
+// The two values ChatScope takes. An unrecognised or empty value is
+// normalised to ScopeAll by Load, except that a config carrying a
+// non-empty ReadableChats with no mode set is read as ScopeAllowlist: that
+// combination can only come from a hand-edit meaning to restrict, and
+// honouring the list is the reading that cannot leak.
+const (
+	ScopeAll       = "all"
+	ScopeAllowlist = "allowlist"
+)
 
 // DefaultMediaDir returns the directory outbound media is read from when
 // config.json does not say otherwise.
@@ -142,6 +170,88 @@ func (c Config) IsTrusted(jid string) bool {
 		}
 	}
 	return false
+}
+
+// ScopeActive reports whether a chat allowlist is in force.
+func (c Config) ScopeActive() bool { return normalizeScope(c) == ScopeAllowlist }
+
+// IsReadable reports whether an agent may read chat jid.
+func (c Config) IsReadable(jid string) bool {
+	if !c.ScopeActive() {
+		return true
+	}
+	for _, r := range c.ReadableChats {
+		if r == jid {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeScope resolves the stored mode, treating a bare list with no
+// mode as an allowlist and anything unrecognised as ScopeAll.
+func normalizeScope(c Config) string {
+	switch c.ChatScope {
+	case ScopeAllowlist:
+		return ScopeAllowlist
+	case ScopeAll:
+		return ScopeAll
+	default:
+		if len(c.ReadableChats) > 0 {
+			return ScopeAllowlist
+		}
+		return ScopeAll
+	}
+}
+
+// ScopeReader answers readable-chat checks against the CURRENT config.json
+// rather than a startup snapshot, so editing the scope takes effect in a
+// running serve without a restart — the same stance, and the same cost
+// argument, as TrustReader.
+//
+// The failure mode is deliberately asymmetric with TrustReader's. A
+// transiently unreadable file keeps the last good list in force, so a
+// half-written config can neither widen the scope nor lock an agent out of
+// chats it was allowed a moment ago.
+type ScopeReader struct {
+	dir string
+
+	mu       sync.Mutex
+	lastGood Config
+}
+
+// NewScopeReader builds a ScopeReader over dir's config.json.
+func NewScopeReader(dir string) *ScopeReader {
+	r := &ScopeReader{dir: dir}
+	if c, err := Load(dir); err == nil {
+		r.lastGood = c
+	}
+	return r
+}
+
+// Readable reports whether chat jid is inside the configured scope as of
+// the file's current content (or the last good read).
+func (r *ScopeReader) Readable(jid string) bool { return r.current().IsReadable(jid) }
+
+// Active reports whether an allowlist is in force. Callers use it to skip
+// filtering work entirely in the common unscoped case.
+func (r *ScopeReader) Active() bool { return r.current().ScopeActive() }
+
+// List returns the current allowlist. The caller owns the copy.
+func (r *ScopeReader) List() []string {
+	l := r.current().ReadableChats
+	out := make([]string, len(l))
+	copy(out, l)
+	return out
+}
+
+func (r *ScopeReader) current() Config {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, err := Load(r.dir); err == nil {
+		r.lastGood = c
+	}
+	return r.lastGood
 }
 
 // TrustReader answers trust checks against the CURRENT config.json rather

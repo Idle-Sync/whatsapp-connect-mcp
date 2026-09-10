@@ -142,6 +142,8 @@ func New(deps Deps) *Handler {
 	h.mux.HandleFunc("/api/drafts/", h.authed(h.mutating(h.handleDraftAction)))
 	h.mux.HandleFunc("/api/clients", h.authed(h.handleClients))
 	h.mux.HandleFunc("/api/clients/", h.authed(h.mutating(h.handleClientRemove)))
+	h.mux.HandleFunc("/api/scope", h.authed(h.handleScope))
+	h.mux.HandleFunc("/api/scope/", h.authed(h.mutating(h.handleScopeRemove)))
 	return h
 }
 

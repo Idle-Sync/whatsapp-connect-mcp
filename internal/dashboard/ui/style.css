@@ -587,6 +587,7 @@ body.lightbox-open { overflow: hidden; }
 .badge-sm.ok { color: var(--ok); border-color: rgba(0, 168, 132, 0.45); background: var(--ok-soft); }
 .badge-sm.bad { color: var(--bad); border-color: rgba(241, 92, 109, 0.45); background: var(--bad-soft); }
 .badge-sm.dim-badge { opacity: 0.65; }
+.scope-off { display: flex; justify-content: flex-end; margin-top: 0.2rem; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

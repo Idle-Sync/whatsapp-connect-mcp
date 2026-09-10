@@ -79,12 +79,19 @@ const serverName = "whatsapp-connect-mcp"
 // read-only tools against st and live (media downloaded into dataDir), the
 // doctor tool against st and doc, and the gated send tools against st and
 // g, the sole path any of them has to an outbound WhatsApp send.
-func New(st Store, live Live, g *gate.Gate, sched *Scheduler, dataDir string, doc DoctorEnv) *mcp.Server {
+//
+// scope confines every read to the chats the local human has allowed; nil,
+// or a scope with an empty list, reads everything. It wraps st here rather
+// than at each call site so a tool added later cannot forget it. Nothing
+// in this package can widen its own scope: the allowlist lives in
+// config.json, which no MCP tool writes.
+func New(st Store, scope Scope, live Live, g *gate.Gate, sched *Scheduler, dataDir string, doc DoctorEnv) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,
 		Version: version.Version,
 	}, nil)
 
+	st = newScopedStore(st, scope)
 	registerReadTools(server, st, live, dataDir, doc)
 	registerSendTools(server, st, g)
 	if sched != nil {
