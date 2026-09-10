@@ -167,6 +167,10 @@ Twenty-four tools: fourteen read-only, ten gated, described below.
 > How far back any of these reach is decided by the paired phone, not by this
 > server. "Search my whole history" can turn out to mean "search the last few
 > months" — see [Limitations](#limitations-stated-plainly).
+>
+> *Which* chats they reach is yours to decide: by default every chat, or an
+> allowlist you set — see
+> [Which chats an agent may read](#which-chats-an-agent-may-read).
 
 ### Send (gated — see below)
 
@@ -204,8 +208,9 @@ the model to "be careful":
 2. **Confirm to commit.** Re-issue the identical call with that
    `draft_token` and it sends. Drafts expire after 5 minutes; a byte
    difference in the resubmitted content invalidates the token.
-3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <jid>` marks a
-   contact or group as trusted, so sends to it commit on the first call
+3. **Trust, deliberately.** `whatsapp-connect-mcp trust --add <who>` marks a
+   contact or group as trusted — `<who>` being a name, a phone number, or a
+   JID; an ambiguous name lists the matches and asks rather than guessing — so sends to it commit on the first call
    instead of drafting. This is a CLI-only switch — no MCP tool can grant
    trust, so a model can't trust its way around the draft step. The list
    is re-read on every send decision, so `trust --add`/`--remove` apply
@@ -326,6 +331,7 @@ no send safety:
 | Pairing | QR in a terminal you keep open yourself | Wizard-managed QR pairing; session supervised by the binary |
 | Send safety | None — model can send immediately | Draft-first send gate + rate limiter |
 | Prompt-injection defense | None | Untrusted-data banner on every WhatsApp-originated result |
+| Read scope | All chats, always | All chats, or an allowlist you choose at setup and edit later |
 | Diagnostics | None | `doctor` (CLI subcommand and MCP tool), sanitized output |
 | Distribution | Git clone only | GitHub Releases, install script, MCP Registry, MCPB bundle, npm wrapper |
 
@@ -407,6 +413,9 @@ number appears in this document for that reason.
 - **No outbound calls.** Call history is readable; initiating a call is not
   supported.
 - **One paired number per install.** Multi-account isn't supported in v1.
+  Pairing a second number reuses the same message store, so the previous
+  account's chats stay visible under the new one. Run `reset` before
+  pairing a different number if that matters to you.
 - **whatsmeow tracks WhatsApp protocol changes**, not the other way around.
   A WhatsApp-side change can break pairing or sending until whatsmeow (and
   in turn this project) catches up.
@@ -447,7 +456,9 @@ Runs the same checks the `doctor` MCP tool exposes: session pairing/connect
 state, event-flow liveness (a connected session that has received no
 WhatsApp events for over 30 minutes gets a warning — the state where the
 socket looks healthy but ingestion has silently stalled), message database
-integrity, injected MCP client configs, data
+integrity, injected MCP client configs, the chat scope (including the
+switched-on-but-empty state, where every read tool correctly returns
+nothing and an install looks broken), data
 directory permissions (POSIX), and the version check above. Every finding
 is sanitized — no JID, phone number, message content, or filesystem path
 ever appears in a status line; a broken client config is named by the
@@ -480,9 +491,19 @@ same tab offers Unlink: it signs the server out on WhatsApp's servers
 The `logout` command does the same from the terminal — unlike `remove`,
 which only deletes the local session and never tells WhatsApp.
 
+The Clients tab lists every MCP client detected on this machine — whether
+it is installed, whether this server is added to it, and where its entry
+points — and adds or removes that entry with one click, so a config the
+doctor calls broken can be fixed without dropping to a terminal. The same
+tab holds **Readable chats**, which limits what connected agents may read
+(see [Which chats an agent may read](#which-chats-an-agent-may-read)).
+
 The Trust tab lists and edits the trusted-contact list — the same
 config.json the `trust` command manages, so a change there takes effect
-immediately in a running server. The Schedules tab lists pending scheduled
+immediately in a running server. Both it and Readable chats take a
+contact or group **name** or a **phone number**, not just a raw JID; when
+a name matches several people they are listed for you to pick from, and
+nothing is written until you do. The Schedules tab lists pending scheduled
 sends and lets you cancel one. The Drafts tab lists sends an agent has
 proposed and is waiting on; approving delivers the exact content shown
 (rate-limited as always), and discarding drops it. A draft can be
@@ -515,7 +536,9 @@ Task Scheduler on Windows) is the simplest insurance against losing them.
 whatsapp-connect-mcp setup [--full-history]  # pair (again) and configure MCP clients
 whatsapp-connect-mcp status                  # pairing state, row counts, injected clients
 whatsapp-connect-mcp clients [--remove]      # list or uninject MCP client entries
-whatsapp-connect-mcp trust [--session] [--add jid|--remove jid|--list]
+whatsapp-connect-mcp trust [--session] [--add who|--remove who|--list]
+whatsapp-connect-mcp scope [--allow who|--deny who|--all|--list]
+                                             # limit which chats agents may read
 whatsapp-connect-mcp serve [--http addr]     # run the MCP server directly (stdio by default)
 whatsapp-connect-mcp service <install|uninstall|restart> [--http addr]
                                              # manage a background serve --http service (macOS/Linux/Windows)
