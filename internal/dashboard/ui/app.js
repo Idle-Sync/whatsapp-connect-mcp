@@ -982,30 +982,92 @@ async function loadScope() {
     ul.appendChild(wrap);
   }
 
-  // Offer the chats already in the store as completions for the JID box.
+  fillChatSuggestions("scope-suggest");
+}
+
+// fillChatSuggestions offers the chats already in the store as completions,
+// by name — the box resolves a name server-side, so the name is what a
+// person should be typing. Best-effort: the box still takes a number.
+async function fillChatSuggestions(listID) {
   try {
-    const list = document.getElementById("scope-suggest");
+    const list = document.getElementById(listID);
     list.replaceChildren();
     for (const c of await api("/api/chats?limit=100")) {
+      if (!c.name) continue;
       const o = document.createElement("option");
-      o.value = c.jid;
-      o.label = c.name || c.jid;
+      o.value = c.name;
       list.appendChild(o);
     }
-  } catch (e) { /* suggestions are a convenience; the box still takes a JID */ }
+  } catch (e) { /* suggestions are a convenience, not a requirement */ }
+}
+
+// candidatesOf pulls the chooser list out of a 409. Anything else — a
+// real failure, a 404 for a name nothing matches — has no candidates and
+// falls through to the ordinary error path.
+function candidatesOf(err) {
+  return err && err.body && Array.isArray(err.body.candidates) ? err.body.candidates : null;
+}
+
+function describeCandidate(c) {
+  if (c.is_group) return (c.name || c.jid) + " (group)";
+  if (c.phone) return (c.name || c.jid) + " (+" + c.phone + ")";
+  return c.name || c.jid;
+}
+
+// askWhichContact renders the matches as buttons under the input and
+// resolves to the JID the person picks, or null if they dismiss it. The
+// page never guesses: picking the wrong one here exposes the wrong chat.
+function askWhichContact(mountID, msgID, candidates) {
+  return new Promise((resolve) => {
+    const mount = document.getElementById(mountID);
+    mount.replaceChildren();
+    mount.hidden = false;
+    mount.appendChild(el("div", "Several contacts match. Which one?", "dim"));
+    for (const c of candidates) {
+      const b = el("button", describeCandidate(c));
+      b.addEventListener("click", () => { mount.hidden = true; mount.replaceChildren(); resolve(c.jid); });
+      mount.appendChild(b);
+    }
+    const cancel = el("button", "none of these", "danger");
+    cancel.addEventListener("click", () => {
+      mount.hidden = true;
+      mount.replaceChildren();
+      say(msgID, "Nothing added — type the phone number instead.", "");
+      resolve(null);
+    });
+    mount.appendChild(cancel);
+  });
+}
+
+// addScope posts one entry, and on an ambiguous name asks which contact
+// was meant and posts again with the chosen JID.
+async function addScope(value) {
+  try {
+    await api("/api/scope", { method: "POST", body: JSON.stringify({ jid: value }) });
+    return true;
+  } catch (e) {
+    const candidates = candidatesOf(e);
+    if (!candidates) { say("scope-msg", errorMessage(e), "bad"); return false; }
+    const jid = await askWhichContact("scope-choice", "scope-msg", candidates);
+    if (!jid) return false;
+    try {
+      await api("/api/scope", { method: "POST", body: JSON.stringify({ jid }) });
+      return true;
+    } catch (e2) { say("scope-msg", errorMessage(e2), "bad"); return false; }
+  }
 }
 
 document.getElementById("scope-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  const jid = document.getElementById("scope-jid").value.trim();
-  if (!jid) return;
-  try {
-    say("scope-msg", "");
-    await api("/api/scope", { method: "POST", body: JSON.stringify({ jid }) });
-    document.getElementById("scope-jid").value = "";
-    say("scope-msg", "allowed: " + jid, "ok");
+  const box = document.getElementById("scope-jid");
+  const value = box.value.trim();
+  if (!value) return;
+  say("scope-msg", "");
+  if (await addScope(value)) {
+    box.value = "";
+    say("scope-msg", "allowed: " + value, "ok");
     await loadScope();
     refreshDoctor();
-  } catch (e) { say("scope-msg", errorMessage(e), "bad"); }
+  }
 }));
 
 /* ---------- trust ---------- */
@@ -1032,18 +1094,35 @@ async function loadTrust() {
     ul.appendChild(li);
   }
   stagger(ul);
+  fillChatSuggestions("trust-suggest");
+}
+
+async function addTrust(value) {
+  try {
+    await api("/api/trust", { method: "POST", body: JSON.stringify({ jid: value }) });
+    return true;
+  } catch (e) {
+    const candidates = candidatesOf(e);
+    if (!candidates) { say("trust-msg", errorMessage(e), "bad"); return false; }
+    const jid = await askWhichContact("trust-choice", "trust-msg", candidates);
+    if (!jid) return false;
+    try {
+      await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
+      return true;
+    } catch (e2) { say("trust-msg", errorMessage(e2), "bad"); return false; }
+  }
 }
 
 document.getElementById("trust-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  const jid = document.getElementById("trust-jid").value.trim();
-  if (!jid) return;
-  try {
-    say("trust-msg", "");
-    await api("/api/trust", { method: "POST", body: JSON.stringify({ jid }) });
-    document.getElementById("trust-jid").value = "";
-    say("trust-msg", "trusted: " + jid, "ok");
+  const box = document.getElementById("trust-jid");
+  const value = box.value.trim();
+  if (!value) return;
+  say("trust-msg", "");
+  if (await addTrust(value)) {
+    box.value = "";
+    say("trust-msg", "trusted: " + value, "ok");
     loadTrust();
-  } catch (e) { say("trust-msg", errorMessage(e), "bad"); }
+  }
 }));
 
 /* ---------- schedules ---------- */

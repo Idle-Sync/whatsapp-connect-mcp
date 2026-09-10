@@ -2,12 +2,14 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/target"
 )
 
 // scopeRow is one allowlisted chat, carrying the name so the UI can show
@@ -92,7 +94,10 @@ func (h *Handler) handleScopeAdd(w http.ResponseWriter, r *http.Request) {
 		// on, and an ignored list is not a leak.
 		cfg.ChatScope = in.Mode
 	case strings.TrimSpace(in.JID) != "":
-		jid := strings.TrimSpace(in.JID)
+		jid, ok := h.resolveOrOffer(w, strings.TrimSpace(in.JID))
+		if !ok {
+			return
+		}
 		cfg.ChatScope = config.ScopeAllowlist
 		if !containsString(cfg.ReadableChats, jid) {
 			cfg.ReadableChats = append(cfg.ReadableChats, jid)
@@ -151,4 +156,32 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// resolveOrOffer turns what someone typed into the box — a name, a phone
+// number, or a JID — into a JID. An ambiguous name is answered with 409
+// and the candidates, so the page can ask which was meant instead of
+// picking one; writing the wrong JID here exposes the wrong chat.
+func (h *Handler) resolveOrOffer(w http.ResponseWriter, input string) (string, bool) {
+	jid, err := target.Resolve(h.deps.Store, input)
+	if err == nil {
+		return jid, true
+	}
+
+	var amb *target.AmbiguousError
+	if errors.As(err, &amb) {
+		h.writeJSON(w, http.StatusConflict, map[string]any{
+			"error":      "several contacts match that name",
+			"candidates": amb.Candidates,
+		})
+		return "", false
+	}
+	if errors.Is(err, target.ErrNoMatch) {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "no contact or chat matches that name — try the phone number",
+		})
+		return "", false
+	}
+	h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lookup failed"})
+	return "", false
 }

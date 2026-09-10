@@ -394,7 +394,10 @@ func (h *Handler) handleTrustAdd(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid is required"})
 		return
 	}
-	jid := strings.TrimSpace(in.JID)
+	jid, ok := h.resolveOrOffer(w, strings.TrimSpace(in.JID))
+	if !ok {
+		return
+	}
 	cfg, err := config.Load(h.deps.DataDir)
 	if err != nil {
 		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config unreadable"})

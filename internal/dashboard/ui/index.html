@@ -106,10 +106,11 @@
       <p id="scope-state" class="chip" hidden></p>
       <p id="scope-msg" class="chip" hidden></p>
       <div class="searchbar">
-        <input id="scope-jid" placeholder="15551234567@s.whatsapp.net" class="mono" list="scope-suggest">
+        <input id="scope-jid" placeholder="Name, phone number, or JID" list="scope-suggest">
         <datalist id="scope-suggest"></datalist>
         <button id="scope-add" class="primary">Allow</button>
       </div>
+      <div id="scope-choice" class="chooser" hidden></div>
       <ul id="scope-list" class="rows"></ul>
     </section>
 
@@ -119,9 +120,11 @@
         people you'd let an agent message directly.</p>
       <p id="trust-msg" class="chip" hidden></p>
       <div class="searchbar">
-        <input id="trust-jid" placeholder="15551234567@s.whatsapp.net" class="mono">
+        <input id="trust-jid" placeholder="Name, phone number, or JID" list="trust-suggest">
+        <datalist id="trust-suggest"></datalist>
         <button id="trust-add" class="primary">Trust</button>
       </div>
+      <div id="trust-choice" class="chooser" hidden></div>
       <ul id="trust-list" class="rows"></ul>
     </section>
 

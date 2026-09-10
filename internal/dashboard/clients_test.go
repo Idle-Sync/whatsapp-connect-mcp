@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/idle-sync/whatsapp-connect-mcp/internal/clients"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/config"
+	"github.com/idle-sync/whatsapp-connect-mcp/internal/store"
 )
 
 // newClientsHandler builds a handler whose client detection is rooted at a
@@ -258,5 +261,97 @@ func TestScopeMutationsNeedDashboardHeader(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Errorf("%s %s = %d, want 403", tc.method, tc.path, w.Code)
 		}
+	}
+}
+
+// Trust and scope take a name or a number, not just a raw JID: nobody
+// knows their friend as 15551234567@s.whatsapp.net, and a mistyped JID is
+// accepted and then silently never matches.
+func TestScopeAcceptsNameAndNumber(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, func(d *Deps) {
+		d.Store = &fakeStore{contacts: []store.ContactRow{
+			{JID: "1@s.whatsapp.net", Name: "Ashmi", Phone: "15551234567"},
+			{JID: "2@s.whatsapp.net", Name: "Bhaskar", Phone: "15559876543"},
+		}}
+	})
+
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"jid":"Ashmi"}`); w.Code != http.StatusOK {
+		t.Fatalf("add by name = %d (%s)", w.Code, w.Body.String())
+	}
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"jid":"+1 555 000 1111"}`); w.Code != http.StatusOK {
+		t.Fatalf("add by number = %d (%s)", w.Code, w.Body.String())
+	}
+
+	cfg, err := config.Load(h.deps.DataDir)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	want := map[string]bool{"1@s.whatsapp.net": true, "15550001111@s.whatsapp.net": true}
+	if len(cfg.ReadableChats) != 2 {
+		t.Fatalf("readable = %v, want 2 entries", cfg.ReadableChats)
+	}
+	for _, jid := range cfg.ReadableChats {
+		if !want[jid] {
+			t.Errorf("unexpected entry %q", jid)
+		}
+	}
+}
+
+// An ambiguous name is answered with the candidates so the page can ask,
+// and nothing is written until one is picked.
+func TestScopeAmbiguousNameOffersCandidates(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, func(d *Deps) {
+		d.Store = &fakeStore{contacts: []store.ContactRow{
+			{JID: "1@s.whatsapp.net", Name: "Ashmi B", Phone: "15551234567"},
+			{JID: "2@s.whatsapp.net", Name: "Ashmi G", Phone: "15559876543"},
+		}}
+	})
+
+	w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"jid":"Ashmi"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("ambiguous add = %d (%s), want 409", w.Code, w.Body.String())
+	}
+	var body struct {
+		Candidates []struct {
+			JID   string `json:"jid"`
+			Name  string `json:"name"`
+			Phone string `json:"phone"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want 2", body.Candidates)
+	}
+	if body.Candidates[0].Phone == "" {
+		t.Error("candidate carries no phone number to disambiguate by")
+	}
+
+	cfg, _ := config.Load(h.deps.DataDir)
+	if len(cfg.ReadableChats) != 0 || cfg.ScopeActive() {
+		t.Error("an unresolved name changed the config")
+	}
+
+	// Picking one commits it.
+	if w := mutate(t, h, cookie, http.MethodPost, "/api/scope",
+		`{"jid":"`+body.Candidates[1].JID+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("commit chosen = %d (%s)", w.Code, w.Body.String())
+	}
+	cfg, _ = config.Load(h.deps.DataDir)
+	if len(cfg.ReadableChats) != 1 || cfg.ReadableChats[0] != "2@s.whatsapp.net" {
+		t.Errorf("readable = %v", cfg.ReadableChats)
+	}
+}
+
+// A name nothing matches is refused with advice, not stored verbatim.
+func TestScopeUnknownNameRefused(t *testing.T) {
+	h, cookie, _ := newClientsHandler(t, nil)
+	w := mutate(t, h, cookie, http.MethodPost, "/api/scope", `{"jid":"Nobody At All"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown name = %d (%s), want 404", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "phone number") {
+		t.Errorf("refusal gives no way forward: %s", w.Body.String())
 	}
 }

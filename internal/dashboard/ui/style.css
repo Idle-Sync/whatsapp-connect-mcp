@@ -589,6 +589,22 @@ body.lightbox-open { overflow: hidden; }
 .badge-sm.dim-badge { opacity: 0.65; }
 .scope-off { display: flex; justify-content: flex-end; margin-top: 0.2rem; }
 
+/* The disambiguation chooser: shown only when a typed name matched more
+   than one contact, and dismissed as soon as one is picked. */
+.chooser {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.8rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  animation: rise 0.25s var(--ease) both;
+}
+.chooser .dim { width: 100%; margin-bottom: 0.15rem; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

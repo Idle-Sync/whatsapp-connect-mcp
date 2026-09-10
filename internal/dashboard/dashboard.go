@@ -42,6 +42,9 @@ type Store interface {
 	SearchMessages(query, chatJID string, limit int) ([]store.MessageRow, error)
 	Chat(jid string) (store.ChatRow, bool, error)
 	MessageContext(chatJID, id string, before, after int) ([]store.MessageRow, error)
+	// SearchContacts backs name resolution, so the trust and scope boxes
+	// take a person's name or number rather than a raw JID.
+	SearchContacts(query string, limit int) ([]store.ContactRow, error)
 	BackupTo(path string) error
 }
 

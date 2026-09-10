@@ -19,6 +19,7 @@ import (
 // task tests extend it alongside the interface.
 type fakeStore struct {
 	counts       store.Counts
+	contacts     []store.ContactRow
 	chats        []store.ChatRow
 	msgs         []store.MessageRow
 	gotLimit     int
@@ -107,6 +108,18 @@ func (f *fakeStore) MessageMediaRef(_, _ string) ([]byte, string, string, error)
 		return nil, "", "", f.mediaRefErr
 	}
 	return f.mediaRef, f.mediaFilename, f.mediaKind, nil
+}
+
+// SearchContacts matches names case-insensitively, like the real store's
+// LIKE query, so resolution tests exercise the same shape.
+func (f *fakeStore) SearchContacts(query string, _ int) ([]store.ContactRow, error) {
+	var out []store.ContactRow
+	for _, c := range f.contacts {
+		if strings.Contains(strings.ToLower(c.Name), strings.ToLower(query)) {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) BackupTo(path string) error {

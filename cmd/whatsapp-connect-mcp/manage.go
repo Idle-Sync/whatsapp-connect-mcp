@@ -205,8 +205,8 @@ func runClients(args []string) int {
 // make one, the same property the persistent list has.
 func runTrust(args []string) int {
 	fs := flag.NewFlagSet("trust", flag.ContinueOnError)
-	add := fs.String("add", "", "add a JID to the trusted list")
-	remove := fs.String("remove", "", "remove a JID from the trusted list")
+	add := fs.String("add", "", "trust a contact or group — a name, phone number, or JID")
+	remove := fs.String("remove", "", "untrust a contact or group — a name, phone number, or JID")
 	session := fs.Bool("session", false, "operate on session-scoped grants: honored by the running serve immediately, cleared when serve restarts")
 	fs.Bool("list", false, "list trusted JIDs (default with no flags)")
 	if err := fs.Parse(args); err != nil {
@@ -222,9 +222,17 @@ func runTrust(args []string) int {
 	if *session {
 		switch {
 		case *add != "":
-			return sessionTrustAdd(dataDir, *add)
+			jid, ok := resolveTarget("trust", *add, os.Stdin, os.Stdout)
+			if !ok {
+				return 1
+			}
+			return sessionTrustAdd(dataDir, jid)
 		case *remove != "":
-			return sessionTrustRemove(dataDir, *remove)
+			jid, ok := resolveTarget("trust", *remove, os.Stdin, os.Stdout)
+			if !ok {
+				return 1
+			}
+			return sessionTrustRemove(dataDir, jid)
 		default:
 			return sessionTrustList(dataDir)
 		}
@@ -238,9 +246,17 @@ func runTrust(args []string) int {
 
 	switch {
 	case *add != "":
-		return trustAdd(dataDir, cfg, *add)
+		jid, ok := resolveTarget("trust", *add, os.Stdin, os.Stdout)
+		if !ok {
+			return 1
+		}
+		return trustAdd(dataDir, cfg, jid)
 	case *remove != "":
-		return trustRemove(dataDir, cfg, *remove)
+		jid, ok := resolveTarget("trust", *remove, os.Stdin, os.Stdout)
+		if !ok {
+			return 1
+		}
+		return trustRemove(dataDir, cfg, jid)
 	default:
 		return trustList(cfg)
 	}

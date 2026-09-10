@@ -94,6 +94,11 @@ connect at once.
 > never exits anyway). Creating the task may require an elevated
 > (Administrator) terminal.
 
+`setup` then asks what those clients may read: **every chat** (the
+default), **only your own self-chat**, or **nothing yet** — leaving you to
+name the chats afterwards in the dashboard or with `scope --allow`. See
+[Which chats an agent may read](#which-chats-an-agent-may-read).
+
 `setup` can be re-run any time — to pair again, or to add a client you
 installed later.
 
@@ -252,6 +257,62 @@ directory is judged by where it actually leads, not where it sits. A send
 naming a file outside the list is refused on the first call — before a draft
 is minted and before it costs a rate-limit token — and the refusal names no
 path, like every other error this server returns.
+
+## Which chats an agent may read
+
+By default, connecting a client hands it every chat on the account. That is
+often more than you meant: you wanted help with one group, not standing
+access to a decade of correspondence.
+
+So the read surface can be confined to an allowlist. `setup` asks once, and
+either the dashboard's **clients** tab or the `scope` command changes it
+later:
+
+```sh
+whatsapp-connect-mcp scope --list                       # what agents can read now
+whatsapp-connect-mcp scope --allow 15551234567@s.whatsapp.net
+whatsapp-connect-mcp scope --deny  15551234567@s.whatsapp.net
+whatsapp-connect-mcp scope --all                        # drop the limit again
+```
+
+`--allow` turns the limit on as well as naming a chat — asking to allow one
+chat is asking to restrict the rest. `--all` turns it off but **keeps** the
+list, so turning the limit back on doesn't mean retyping it.
+
+What the limit covers, once on:
+
+- Messages, search, context, media and history in a chat outside the list
+  are refused — and the refusal says the chat is out of scope rather than
+  pretending it doesn't exist, so a model stops asking instead of retrying.
+- Questions asked across all chats — global search, `poll_new_messages`,
+  call history, contact search — come back filtered to the allowed set.
+  Contacts included: an agent that can still enumerate your address book
+  leaks exactly what the limit exists to withhold.
+- Enforcement wraps the store once, so every read tool is covered, present
+  and future.
+
+Three things worth knowing before you rely on it:
+
+- **The limit is on the server, not on each client.** Every client
+  authenticates with the same bearer token, so the server cannot tell
+  Cursor from Claude Desktop. One scope applies to all of them. Per-client
+  scopes need per-client tokens first.
+- **Only you can change it.** No MCP tool writes `config.json` — the same
+  rule the trust list follows. A scope its subject could widen would be
+  decoration.
+- **An empty allowlist means nothing is readable, not everything.** That is
+  the state `setup`'s third answer leaves behind, and it is deliberate: the
+  alternative reading is the one that silently hands out more access than
+  you asked for. Every read tool then returns empty, which looks exactly
+  like a broken install, so `check` names that state and says how to leave
+  it.
+
+The dashboard is not subject to any of this. It is your own window onto
+your own messages, not an agent's.
+
+This limits *reading*. Sending is governed separately by
+[the send gate](#the-send-gate), which asks you to confirm each recipient
+whether or not their chat is readable.
 
 ## Comparison with verygoodplugins/whatsapp-mcp
 

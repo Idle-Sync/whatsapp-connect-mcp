@@ -33,6 +33,8 @@ func run(args []string) int {
 			return runClients(args[1:])
 		case "trust":
 			return runTrust(args[1:])
+		case "scope":
+			return runScope(args[1:])
 		case "service":
 			return runService(args[1:])
 		case "logout":
@@ -56,6 +58,7 @@ func run(args []string) int {
 	fmt.Fprintln(os.Stderr, "  check                  run diagnostic checks (session, database, clients, ...)")
 	fmt.Fprintln(os.Stderr, "  clients [--remove]     list or uninject MCP client entries")
 	fmt.Fprintln(os.Stderr, "  trust [--add|--remove jid|--list]   manage the send-trust list")
+	fmt.Fprintln(os.Stderr, "  scope [--allow|--deny jid|--all|--list]   limit which chats agents may read")
 	fmt.Fprintln(os.Stderr, "  service <install|uninstall|restart> [--http addr]   manage a background serve --http service (macOS/Linux/Windows)")
 	fmt.Fprintln(os.Stderr, "  logout                 sign this device out on WhatsApp's servers (unlink), keeping local data")
 	fmt.Fprintln(os.Stderr, "  remove                 delete the local session (unpair)")
