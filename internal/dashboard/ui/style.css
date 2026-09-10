@@ -587,7 +587,19 @@ body.lightbox-open { overflow: hidden; }
 .badge-sm.ok { color: var(--ok); border-color: rgba(0, 168, 132, 0.45); background: var(--ok-soft); }
 .badge-sm.bad { color: var(--bad); border-color: rgba(241, 92, 109, 0.45); background: var(--bad-soft); }
 .badge-sm.dim-badge { opacity: 0.65; }
-.scope-off { display: flex; justify-content: flex-end; margin-top: 0.2rem; }
+/* A standing two-way choice. The current mode is marked rather than
+   hidden, so the way back is always on screen. */
+.modes { display: inline-flex; gap: 2px; margin: 0.1rem 0 0.7rem; }
+.modes button { border-radius: 0; }
+.modes button:first-child { border-radius: 8px 0 0 8px; }
+.modes button:last-child { border-radius: 0 8px 8px 0; }
+.modes button.active {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--ok-ink);
+  font-weight: 600;
+}
+.modes button.active:hover { background: #06cf9c; border-color: #06cf9c; }
 
 /* The disambiguation chooser: shown only when a typed name matched more
    than one contact, and dismissed as soon as one is picked. */

@@ -103,6 +103,10 @@
         everything outside it is invisible to an agent — messages, search results,
         contacts and calls alike. This page and the CLI are the only places it can
         be changed; no agent can widen its own scope.</p>
+      <div class="modes" role="group" aria-label="What agents may read">
+        <button id="scope-mode-all" data-mode="all">Every chat</button>
+        <button id="scope-mode-list" data-mode="allowlist">Only the chats I list</button>
+      </div>
       <p id="scope-state" class="chip" hidden></p>
       <p id="scope-msg" class="chip" hidden></p>
       <div class="searchbar">
