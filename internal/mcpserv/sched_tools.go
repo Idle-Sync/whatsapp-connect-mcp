@@ -36,7 +36,8 @@ func registerScheduleTools(server *mcp.Server, st Store, sched *Scheduler) {
 	d := &schedDeps{st: st, g: sched.Gate, sched: sched.Store}
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "schedule_send",
+		Name:        "schedule_send",
+		Annotations: sendNew(),
 		Description: "Schedules a message (or media file) to send at a future time, up to 30 days " +
 			"ahead. Give the fire time as `send_at` (RFC 3339 or Unix seconds) or `delay_minutes` " +
 			"— exactly one. The same gate as live sends applies AT SCHEDULING TIME: an untrusted " +
@@ -46,20 +47,25 @@ func registerScheduleTools(server *mcp.Server, st Store, sched *Scheduler) {
 			"send rate limiter like any other send. Schedules persist across server restarts, " +
 			"but only fire while the server is RUNNING — one that comes due while the server is " +
 			"down fires on the next start only if it is less than 15 minutes late, and is " +
-			"dropped otherwise. Cancel with cancel_scheduled.",
+			"dropped otherwise. Cancel with cancel_scheduled. " +
+			"To send now, use send_message or send_media; to see what is pending, use list_scheduled.",
 	}, d.scheduleSend)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "list_scheduled",
+		Name:        "list_scheduled",
+		Annotations: readLocal(),
 		Description: "Lists pending scheduled sends, soonest first, one per line: id, fire time " +
 			"(RFC 3339 UTC), description. These are this server's own pending sends, not WhatsApp " +
-			"content — no untrusted-data banner applies.",
+			"content — no untrusted-data banner applies. " +
+			"To cancel one, use cancel_scheduled.",
 	}, d.listScheduled)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "cancel_scheduled",
+		Name:        "cancel_scheduled",
+		Annotations: removes(false),
 		Description: "Cancels one pending scheduled send by its id (from schedule_send or " +
-			"list_scheduled). Cancelling is always allowed — it only ever prevents a send.",
+			"list_scheduled). Cancelling is always allowed — it only ever prevents a send. " +
+			"To find the id, use list_scheduled.",
 	}, d.cancelScheduled)
 }
 

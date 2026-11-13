@@ -110,7 +110,7 @@ decides what it really sends.
 
 ## What this is for
 
-The fourteen read tools are the product; the ten gated write tools are a convenience.
+The fifteen read tools are the product; the thirteen send tools are a convenience.
 In practice that means:
 
 - **Searching your own history.** WhatsApp's own search has no date filters
@@ -142,7 +142,14 @@ Point it at customers and you will lose the number.
 
 ## What it gives your MCP client
 
-Twenty-four tools: fourteen read-only, ten gated, described below.
+Twenty-eight tools: fifteen read tools and thirteen send tools, described
+below. Each one carries MCP tool annotations (read-only, destructive,
+idempotent, open-world), so a client can tell a local lookup from a call
+that reaches WhatsApp or changes something there.
+
+A server started before pairing still answers: it lists every tool, and
+every call except `doctor` returns a "not paired, run `setup`" error until
+pairing completes. The tools then start working without a restart.
 
 ### Read / search (no gate)
 
