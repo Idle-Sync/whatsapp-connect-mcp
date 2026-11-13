@@ -86,7 +86,7 @@ func TestRunStdioAnnouncesReady(t *testing.T) {
 
 // TestConnectWhenPairedCancelledWhileWaiting: an unpaired bridge plus a
 // cancelled context must return context.Canceled without any network
-// dial — the stdio path's clean-shutdown contract.
+// dial — the background connect's clean-shutdown contract.
 func TestConnectWhenPairedCancelledWhileWaiting(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "messages.db"))
@@ -160,5 +160,24 @@ func TestRetryConnectStopsOnCancel(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("a cancelled attempt must not be reported as a retry; got %q", out.String())
+	}
+}
+
+// TestUntilPairedStaysLiftedAfterALaterLogout: the pairing guard is for a
+// server that started unpaired. Once pairing has been seen, a later logout
+// (NeedsPairing true again) must not bring the guard back.
+func TestUntilPairedStaysLiftedAfterALaterLogout(t *testing.T) {
+	needs := true
+	guard := untilPaired(func() bool { return needs })
+	if !guard() {
+		t.Fatal("guard = false before pairing, want true")
+	}
+	needs = false
+	if guard() {
+		t.Fatal("guard = true after pairing, want false")
+	}
+	needs = true // a WhatsApp-side logout
+	if guard() {
+		t.Fatal("guard came back after a logout, want it to stay lifted")
 	}
 }

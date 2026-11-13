@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking / Behaviour changes
+
+- **An unpaired stdio server now starts and answers tool calls with a
+  pairing error instead of waiting.** `serve` over stdio used to sit
+  silent until a pairing existed, so a client set up before pairing hung
+  at startup and a directory scanner, which can never scan a QR code, got
+  no tool list at all. It now answers `initialize` and `tools/list` right
+  away. Every tool call except `doctor` returns "not paired, run
+  `whatsapp-connect-mcp setup`" until pairing completes, and the tools
+  then start working without a restart. This applies only to a server
+  that started unpaired: after a WhatsApp-side logout later in the run,
+  local reads keep working as before. The WhatsApp connect also moves
+  into the background with the same retry `serve --http` already had, so
+  a stdio server whose first connect fails stays up and retries instead of
+  exiting. `serve --http` is unchanged.
+
+### Added
+
+- **Tool annotations on all 28 tools.** Each tool now declares MCP's
+  `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`,
+  so a client can tell a local lookup from a call that reaches WhatsApp or
+  removes something. A test pins the value for every tool.
+- **Tool descriptions say which tool to use instead.** For example,
+  `list_messages` points to `search_messages` for finding messages by text,
+  and `send_message` to `send_media`, `send_voice_note`, `create_poll` and
+  `schedule_send`.
+- `glama.json`, naming the listing's maintainers on Glama.
+
+### Fixed
+
+- The README said 24 tools (14 read, 10 gated); the server has 28: 15 read
+  tools and 13 send tools.
+- `poll_new_messages`'s description repeated half a sentence and
+  contradicted itself about what the first call returns. It now describes
+  both ways to start (no cursor, or `tail: N`) once each.
+
 ## [0.3.9] - 2026-09-10
 
 ### Fixed

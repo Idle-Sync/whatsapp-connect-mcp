@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -231,24 +232,49 @@ func runServe(args []string) int {
 		return runHTTP(ctx, server, dash, *httpAddr, token, os.Stderr)
 	}
 
-	// stdio keeps the blocking behavior: one client, no dashboard, no
-	// reason to accept traffic before the session is usable.
-	if err := connectWhenPaired(ctx, br, os.Stderr); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return 0 // shutdown signal while waiting — a clean stop
-		}
-		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-		return 1
+	// stdio answers MCP straight away, paired or not. An unpaired server
+	// that waited before answering left a client set up ahead of pairing
+	// hanging at startup, and gave a directory scanner (which can never
+	// scan a QR code) no tool list at all. If it starts unpaired, every
+	// tool but doctor returns the pairing error until pairing lands; the
+	// connect runs in the background and is retried, as in http mode.
+	if br.NeedsPairing() {
+		_, _ = fmt.Fprintln(os.Stderr, "serve: answering MCP now; tool calls return a pairing error until `whatsapp-connect-mcp setup` completes")
+		mcpserv.RequirePairing(server, untilPaired(br.NeedsPairing))
 	}
+	go func() {
+		_ = retryConnect(ctx, func(ctx context.Context) error {
+			return connectWhenPaired(ctx, br, os.Stderr)
+		}, os.Stderr, connectRetryMin, connectRetryMax)
+	}()
 	return runStdio(ctx, server, os.Stderr)
+}
+
+// untilPaired wraps needsPairing so it reports true only until the first
+// time it reports false, then false for the rest of the process. The
+// pairing guard is for a server that started before any pairing existed,
+// when the store is empty and every answer would mislead. A later
+// WhatsApp-side logout must not re-engage it: local history is still
+// there and still readable, as it is over http.
+func untilPaired(needsPairing func() bool) func() bool {
+	var paired atomic.Bool
+	return func() bool {
+		if paired.Load() {
+			return false
+		}
+		if needsPairing() {
+			return true
+		}
+		paired.Store(true)
+		return false
+	}
 }
 
 // connectWhenPaired waits for a pairing if none exists (announcing the
 // wait, so an operator watching the log knows why nothing is happening),
 // refreshes the announced WhatsApp Web version best-effort, then connects.
-// In stdio mode runServe calls it synchronously before the transport; in
-// http mode it runs in the background so the listener — and the
-// dashboard's QR page — are reachable while unpaired.
+// Both transports run it in the background, so MCP (and, over http, the
+// dashboard's QR page) answers while unpaired.
 func connectWhenPaired(ctx context.Context, br *bridge.Bridge, errOut io.Writer) error {
 	if br.NeedsPairing() {
 		_, _ = fmt.Fprintln(errOut, "not paired — run: whatsapp-connect-mcp setup")
@@ -310,7 +336,7 @@ func retryConnect(ctx context.Context, connect func(context.Context) error, errO
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		_, _ = fmt.Fprintf(errOut, "serve: %v — retrying in %s (the server stays up: dashboard and local reads work meanwhile)\n", err, delay)
+		_, _ = fmt.Fprintf(errOut, "serve: %v — retrying in %s (the server stays up and keeps answering MCP meanwhile)\n", err, delay)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
